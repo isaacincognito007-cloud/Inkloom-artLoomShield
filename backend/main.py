@@ -1,0 +1,1674 @@
+from contextlib import asynccontextmanager
+import hashlib
+import json
+import os
+import re
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from .config import (
+    actor_label,
+    configured_user_name,
+    has_permission,
+    is_demo_mode,
+    resolve_role,
+    session_payload,
+)
+from .database import get_connection, get_db_path, init_db, record_audit_event, reset_demo_workspace
+from .engine import (
+    get_engine_status,
+    inspect_raster_image,
+    is_valid_hex,
+    parse_uploaded_file,
+    run_engine_selftest,
+    run_six_pillar_audit,
+)
+
+
+def current_role(x_loomshield_role: Optional[str] = Header(None)) -> str:
+    """Role enforced for this request (deployment-configured; demo workspace may preview roles)."""
+    return resolve_role(x_loomshield_role)
+
+
+def require_permission(role: str, permission: str, message: str) -> None:
+    if not has_permission(role, permission):
+        raise HTTPException(status_code=403, detail=f"{message} (signed-in role: {role}).")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(
+    title="LoomShield Brand Governance Workspace API",
+    description="Local-First Brand Auditing Platform with Two On-Device Engines (Tier 1 Deterministic + Tier 2 Embedded NLP)",
+    version="2.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================================
+# PYDANTIC VALIDATION SCHEMAS
+# ============================================================================
+
+class BrandVoiceUpdate(BaseModel):
+    description: str = Field(..., min_length=5)
+    tone_principles: str = Field(..., min_length=5)
+    writing_style: str = Field(..., min_length=5)
+    messaging_principles: str = Field(..., min_length=5)
+    do_examples: List[str] = Field(default_factory=list)
+    dont_examples: List[str] = Field(default_factory=list)
+
+
+class VisualSpecsUpdate(BaseModel):
+    typography_specs: str
+    spacing_rules: str
+    logo_placement_constraints: str
+
+
+class AccessibilitySpecsUpdate(BaseModel):
+    min_contrast_normal: float = Field(4.5, ge=1.0, le=21.0)
+    min_contrast_large: float = Field(3.0, ge=1.0, le=21.0)
+    require_alt_text: bool = True
+    enforce_heading_order: bool = True
+    target_reading_ease: float = Field(50.0, ge=0.0, le=100.0)
+
+
+class TerminologyCreate(BaseModel):
+    preferred_term: str = Field(..., min_length=1)
+    prohibited_term: str = Field(..., min_length=1)
+    replacement_term: str = Field(..., min_length=1)
+    case_sensitive: bool = False
+    notes: str = Field(..., min_length=3)
+    rule_id: str = "RULE-TERM-01"
+
+
+class VerifiedFactCreate(BaseModel):
+    statement: str = Field(..., min_length=5)
+    numeric_value: str = ""
+    numeric_units: str = ""
+    product_context: str = Field(..., min_length=2)
+    source_reference: str = Field(..., min_length=3)
+    applicable_conditions: str = Field(..., min_length=3)
+    date_version: str = "2026-10 (v1.0)"
+    verification_status: str = "Verified"  # "Verified", "Pending Verification", "Archived"
+
+
+class BrandColorCreate(BaseModel):
+    name: str = Field(..., min_length=2)
+    hex_code: str = Field(..., pattern=r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+    usage_role: str = Field(..., min_length=2)
+    max_delta_e: float = Field(14.0, ge=1.0, le=50.0)
+
+
+class RuleCreate(BaseModel):
+    pillar: str
+    title: str = Field(..., min_length=3)
+    description: str = Field(..., min_length=5)
+    severity: str = "high"
+    pattern_regex: str = ""
+    do_example: str = ""
+    dont_example: str = ""
+
+
+class NewAuditRequest(BaseModel):
+    brand_id: str = "novapay"
+    document_name: str = Field(..., min_length=1)
+    input_format: str = "markdown"
+    content: str = Field(..., min_length=1)
+    fg_color: str = ""
+    bg_color: str = ""
+    image_alt_text: str = ""
+    has_visual_asset: bool = False
+    confidential_mode: bool = True
+
+
+class FindingDecisionRequest(BaseModel):
+    decision: str  # "accept", "modify", "dismiss"
+    modified_replacement: Optional[str] = None
+    reason: Optional[str] = None
+    reviewer_role: str = "Content Creator"
+
+
+class WorkflowStateRequest(BaseModel):
+    new_state: str  # "Draft", "In Review", "Changes Requested", "Revised", "Approved"
+    approver_role: str = "Reviewer"
+    comment: str = ""
+    override_acknowledged: bool = False
+
+
+# ============================================================================
+# VAULT & DATA HELPERS
+# ============================================================================
+
+def get_brand_vault_bundle(brand_id: str) -> Dict[str, Any]:
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM brands WHERE id = ?", (brand_id,))
+    b_row = cur.fetchone()
+    if not b_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Brand '{brand_id}' not found.")
+
+    brand = dict(b_row)
+    brand["is_demo"] = is_demo_mode()
+    try:
+        brand["do_examples_list"] = json.loads(brand.get("do_examples") or "[]")
+    except Exception:
+        brand["do_examples_list"] = []
+    try:
+        brand["dont_examples_list"] = json.loads(brand.get("dont_examples") or "[]")
+    except Exception:
+        brand["dont_examples_list"] = []
+
+    cur.execute("SELECT * FROM rules WHERE brand_id = ? ORDER BY id", (brand_id,))
+    rules = [dict(r) for r in cur.fetchall()]
+
+    cur.execute("SELECT * FROM terminology WHERE brand_id = ? ORDER BY id", (brand_id,))
+    terms = [dict(t) for t in cur.fetchall()]
+
+    cur.execute("SELECT * FROM verified_facts WHERE brand_id = ? ORDER BY id", (brand_id,))
+    facts = []
+    for f_row in cur.fetchall():
+        fd = dict(f_row)
+        fd["is_demo"] = is_demo_mode()
+        facts.append(fd)
+
+    cur.execute("SELECT * FROM brand_colors WHERE brand_id = ? ORDER BY id", (brand_id,))
+    colors = [dict(c) for c in cur.fetchall()]
+
+    conn.close()
+    return {
+        "brand": brand,
+        "rules": rules,
+        "terminology": terms,
+        "verified_facts": facts,
+        "colors": colors,
+    }
+
+
+def persist_audit_record(
+    brand_id: str,
+    document_name: str,
+    input_format: str,
+    content: str,
+    fg_color: str,
+    bg_color: str,
+    image_alt_text: str,
+    has_visual_asset: bool,
+    visual_metadata: Dict[str, Any],
+    confidential_mode: bool,
+    audit_output: Dict[str, Any],
+    actor_role: str = "Content Creator",
+) -> str:
+    now = datetime.now(timezone.utc).isoformat()
+    vault = get_brand_vault_bundle(brand_id)
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) AS cnt FROM audits")
+    next_num = 1001 + int(cur.fetchone()["cnt"])
+    audit_id = f"AUD-{next_num}"
+    while True:
+        cur.execute("SELECT 1 FROM audits WHERE id = ?", (audit_id,))
+        if not cur.fetchone():
+            break
+        next_num += 1
+        audit_id = f"AUD-{next_num}"
+
+    cur.execute(
+        """
+        INSERT INTO audits VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Draft',
+            'Editorial & Brand Reviewer', ?, ?, ?, ?
+        )
+        """,
+        (
+            audit_id,
+            brand_id,
+            int(vault["brand"].get("version", 1)),
+            document_name,
+            input_format,
+            content,
+            content,
+            fg_color,
+            bg_color,
+            image_alt_text,
+            1 if has_visual_asset else 0,
+            json.dumps(visual_metadata),
+            1 if confidential_mode else 0,
+            json.dumps(audit_output["pillar_states"]),
+            float(audit_output.get("runtime_ms", 0.0)),
+            now,
+            now,
+        ),
+    )
+
+    finding_rows = []
+    for idx, f in enumerate(audit_output["findings"], start=1):
+        finding_pk = f"{audit_id}-F{idx:02d}"
+        finding_rows.append(
+            (
+                finding_pk,
+                audit_id,
+                f["pillar"],
+                f["issue_type"],
+                f["severity"],
+                f["flagged_text"],
+                f["paragraph_ref"],
+                int(f["start_index"]),
+                int(f["end_index"]),
+                f["rule_or_fact_id"],
+                f["source_evidence"],
+                f["explanation"],
+                f.get("suggested_correction") or "",
+                f["detection_method"],
+                f["engine_source"],
+                f.get("similarity_score"),
+                f.get("review_state", "open"),
+                now,
+            )
+        )
+    if finding_rows:
+        cur.executemany(
+            """
+            INSERT INTO findings VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?
+            )
+            """,
+            finding_rows,
+        )
+
+    cur.execute(
+        """
+        INSERT INTO revisions
+        (audit_id, version_number, previous_content, revised_content, editor_role, change_summary, created_at)
+        VALUES (?, 1, ?, ?, ?, 'Initial content submitted for pre-publication brand audit.', ?)
+        """,
+        (audit_id, content, content, actor_role, now),
+    )
+
+    open_cnt = sum(1 for f in audit_output["findings"] if f.get("review_state", "open") in ("open", "needs_review"))
+    record_audit_event(
+        cur,
+        audit_id,
+        "submitted",
+        configured_user_name(),
+        actor_role,
+        f"Submitted for audit (v1). {len(audit_output['findings'])} finding(s) recorded, {open_cnt} need review.",
+        {"findings": len(audit_output["findings"]), "open_findings": open_cnt, "input_format": input_format},
+        1,
+        now,
+    )
+
+    conn.commit()
+    conn.close()
+    return audit_id
+
+
+# ============================================================================
+# SYSTEM & OVERVIEW ENDPOINTS
+# ============================================================================
+
+@app.get("/api/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "service": "LoomShield Brand Governance Workspace",
+        "engine": get_engine_status(),
+    }
+
+
+@app.get("/api/engine-status")
+def engine_status_endpoint():
+    return get_engine_status()
+
+
+@app.post("/api/engine-selftest")
+def run_engine_selftest_endpoint():
+    result = run_engine_selftest()
+    return {
+        "selftest": result,
+        "self_test": result,
+        "engine_status": get_engine_status(),
+    }
+
+
+@app.get("/api/session")
+def get_session(x_loomshield_role: Optional[str] = Header(None)):
+    """Signed-in identity, enforced role and permissions for the current workspace."""
+    return session_payload(x_loomshield_role)
+
+
+@app.post("/api/demo/reset")
+def reset_demo_workspace_endpoint():
+    if not is_demo_mode() and "test" not in os.path.basename(get_db_path()).lower() and not os.environ.get("PYTEST_CURRENT_TEST"):
+        raise HTTPException(status_code=404, detail="Not found.")
+    reset_demo_workspace()
+    return {
+        "status": "reset",
+        "message": "Sample workspace restored to its initial state.",
+        "overview": get_overview_dashboard("novapay"),
+    }
+
+
+class BrandCreateRequest(BaseModel):
+    id: str = Field(..., min_length=2, pattern=r"^[a-z0-9_-]+$")
+    name: str = Field(..., min_length=2)
+    industry: str = "Enterprise SaaS"
+    description: str = "Organisational brand governance profile."
+    tone_principles: str = "Calm, accurate, evidence-backed, and transparent."
+    writing_style: str = "Clear active prose with defined technical terminology."
+    messaging_principles: str = "Highlight human oversight and verified product capabilities."
+
+
+@app.get("/api/brands")
+def list_brands():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM brands ORDER BY name")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return {"brands": rows}
+
+
+@app.post("/api/brands")
+def create_brand_profile(req: BrandCreateRequest, role: str = Depends(current_role)):
+    require_permission(role, "manage_brands", "Only a Brand Administrator can create brand profiles")
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM brands WHERE id = ?", (req.id,))
+    if cur.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Brand '{req.id}' already exists.")
+    cur.execute(
+        """
+        INSERT INTO brands VALUES (
+            ?, ?, ?, ?, ?, ?, ?, '[]', '[]',
+            'Inter / Geist headings and body',
+            '8px base spacing grid and 16px clear space',
+            'Maintain aspect ratio and high-contrast placement',
+            4.5, 3.0, 1, 1, 50.0, 1, ?
+        )
+        """,
+        (
+            req.id,
+            req.name.strip(),
+            req.industry.strip(),
+            req.description.strip(),
+            req.tone_principles.strip(),
+            req.writing_style.strip(),
+            req.messaging_principles.strip(),
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return get_brand_vault_bundle(req.id)
+
+
+@app.get("/api/overview/{brand_id}")
+def get_overview_dashboard(brand_id: str):
+    vault = get_brand_vault_bundle(brand_id)
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ?", (brand_id,))
+    docs_audited = int(cur.fetchone()["cnt"])
+
+    cur.execute(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM findings f
+        JOIN audits a ON f.audit_id = a.id
+        WHERE a.brand_id = ? AND f.review_state IN ('open', 'needs_review')
+        """,
+        (brand_id,),
+    )
+    findings_requiring_attention = int(cur.fetchone()["cnt"])
+
+    cur.execute(
+        "SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ? AND overall_status = 'Approved'",
+        (brand_id,),
+    )
+    approved_content = int(cur.fetchone()["cnt"])
+
+    cur.execute(
+        "SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ? AND overall_status != 'Approved'",
+        (brand_id,),
+    )
+    awaiting_review = int(cur.fetchone()["cnt"])
+
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT a.id) AS cnt
+        FROM audits a JOIN findings f ON f.audit_id = a.id
+        WHERE a.brand_id = ? AND f.review_state IN ('open', 'needs_review')
+        """,
+        (brand_id,),
+    )
+    documents_needing_attention = int(cur.fetchone()["cnt"])
+
+    active_rules_count = sum(1 for r in vault["rules"] if int(r.get("active", 1)) == 1)
+
+    cur.execute(
+        "SELECT * FROM audits WHERE brand_id = ? ORDER BY updated_at DESC LIMIT 20",
+        (brand_id,),
+    )
+    audit_rows = [dict(r) for r in cur.fetchall()]
+    recent_audits = []
+    for ar in audit_rows:
+        cur.execute(
+            "SELECT COUNT(*) AS total_cnt, SUM(CASE WHEN review_state IN ('open', 'needs_review') THEN 1 ELSE 0 END) AS open_cnt FROM findings WHERE audit_id = ?",
+            (ar["id"],),
+        )
+        cnt_row = cur.fetchone()
+        recent_audits.append({
+            "id": ar["id"],
+            "document_name": ar["document_name"],
+            "input_format": ar["input_format"],
+            "overall_status": ar["overall_status"],
+            "total_findings": int(cnt_row["total_cnt"] or 0),
+            "open_findings": int(cnt_row["open_cnt"] or 0),
+            "created_at": ar["created_at"],
+            "updated_at": ar["updated_at"],
+        })
+
+    conn.close()
+    return {
+        "brand_id": brand_id,
+        "brand_name": vault["brand"]["name"],
+        "brand_version": int(vault["brand"].get("version", 1)),
+        "is_demo": bool(vault["brand"].get("is_demo", False)),
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "metrics": {
+            "documents_audited": docs_audited,
+            "findings_requiring_attention": findings_requiring_attention,
+            "approved_content": approved_content,
+            "brand_rules": active_rules_count,
+            "awaiting_review": awaiting_review,
+            "documents_needing_attention": documents_needing_attention,
+        },
+        "recent_audits": recent_audits,
+    }
+
+
+# ============================================================================
+# BRAND VAULT ENDPOINTS (5 SECTIONS: VOICE, TERMINOLOGY, FACTS, VISUAL, A11Y)
+# ============================================================================
+
+@app.get("/api/vault/{brand_id}")
+def get_vault_endpoint(brand_id: str):
+    return get_brand_vault_bundle(brand_id)
+
+
+@app.put("/api/vault/{brand_id}/voice")
+def update_brand_voice(brand_id: str, req: BrandVoiceUpdate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    get_brand_vault_bundle(brand_id)
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE brands
+        SET description = ?, tone_principles = ?, writing_style = ?, messaging_principles = ?,
+            do_examples = ?, dont_examples = ?, version = version + 1, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            req.description.strip(),
+            req.tone_principles.strip(),
+            req.writing_style.strip(),
+            req.messaging_principles.strip(),
+            json.dumps(req.do_examples),
+            json.dumps(req.dont_examples),
+            now,
+            brand_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return get_brand_vault_bundle(brand_id)
+
+
+@app.put("/api/vault/{brand_id}/visual-specs")
+def update_visual_specs(brand_id: str, req: VisualSpecsUpdate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    get_brand_vault_bundle(brand_id)
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE brands
+        SET typography_specs = ?, spacing_rules = ?, logo_placement_constraints = ?,
+            version = version + 1, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            req.typography_specs.strip(),
+            req.spacing_rules.strip(),
+            req.logo_placement_constraints.strip(),
+            now,
+            brand_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return get_brand_vault_bundle(brand_id)
+
+
+@app.put("/api/vault/{brand_id}/accessibility-rules")
+def update_accessibility_specs(brand_id: str, req: AccessibilitySpecsUpdate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    get_brand_vault_bundle(brand_id)
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE brands
+        SET min_contrast_normal = ?, min_contrast_large = ?, require_alt_text = ?,
+            enforce_heading_order = ?, target_reading_ease = ?, version = version + 1, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            req.min_contrast_normal,
+            req.min_contrast_large,
+            1 if req.require_alt_text else 0,
+            1 if req.enforce_heading_order else 0,
+            req.target_reading_ease,
+            now,
+            brand_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return get_brand_vault_bundle(brand_id)
+
+
+@app.post("/api/vault/{brand_id}/terminology")
+def add_terminology_entry(brand_id: str, req: TerminologyCreate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    vault = get_brand_vault_bundle(brand_id)
+    now = datetime.now(timezone.utc).isoformat()
+    term_id = f"TERM-{len(vault['terminology']) + 1:02d}"
+    conn = get_connection()
+    cur = conn.cursor()
+    while True:
+        cur.execute("SELECT 1 FROM terminology WHERE id = ?", (term_id,))
+        if not cur.fetchone():
+            break
+        term_id = f"TERM-{int(term_id.split('-')[1]) + 1:02d}"
+
+    cur.execute(
+        "INSERT INTO terminology VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            term_id,
+            brand_id,
+            req.preferred_term.strip(),
+            req.prohibited_term.strip(),
+            req.replacement_term.strip(),
+            1 if req.case_sensitive else 0,
+            req.notes.strip(),
+            req.rule_id.strip(),
+            now,
+        ),
+    )
+    cur.execute("UPDATE brands SET version = version + 1, updated_at = ? WHERE id = ?", (now, brand_id))
+    conn.commit()
+    conn.close()
+    return {"status": "created", "term_id": term_id, "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.put("/api/vault/{brand_id}/terminology/{term_id}")
+def update_terminology_entry(brand_id: str, term_id: str, req: TerminologyCreate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE terminology
+        SET preferred_term = ?, prohibited_term = ?, replacement_term = ?,
+            case_sensitive = ?, notes = ?, rule_id = ?, updated_at = ?
+        WHERE id = ? AND brand_id = ?
+        """,
+        (
+            req.preferred_term.strip(),
+            req.prohibited_term.strip(),
+            req.replacement_term.strip(),
+            1 if req.case_sensitive else 0,
+            req.notes.strip(),
+            req.rule_id.strip(),
+            now,
+            term_id,
+            brand_id,
+        ),
+    )
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Terminology entry not found")
+    cur.execute("UPDATE brands SET version = version + 1, updated_at = ? WHERE id = ?", (now, brand_id))
+    conn.commit()
+    conn.close()
+    return {"status": "updated", "term_id": term_id, "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.delete("/api/vault/{brand_id}/terminology/{term_id}")
+def delete_terminology_entry(brand_id: str, term_id: str, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM terminology WHERE id = ? AND brand_id = ?", (term_id, brand_id))
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Terminology rule not found")
+    conn.commit()
+    conn.close()
+    return {"status": "deleted", "term_id": term_id}
+
+
+@app.post("/api/vault/{brand_id}/facts")
+def add_verified_fact(brand_id: str, req: VerifiedFactCreate, role: str = Depends(current_role)):
+    require_permission(role, "propose_facts", "Your role cannot add fact records")
+    if req.verification_status == "Verified":
+        require_permission(role, "verify_facts", "Only a Brand Administrator can mark a fact as Verified")
+    if req.verification_status not in ("Verified", "Pending Verification", "Archived"):
+        raise HTTPException(status_code=400, detail="Invalid verification_status")
+    vault = get_brand_vault_bundle(brand_id)
+    now = datetime.now(timezone.utc).isoformat()
+    fact_id = f"FACT-{101 + len(vault['verified_facts'])}"
+    conn = get_connection()
+    cur = conn.cursor()
+    while True:
+        cur.execute("SELECT 1 FROM verified_facts WHERE id = ?", (fact_id,))
+        if not cur.fetchone():
+            break
+        fact_id = f"FACT-{int(fact_id.split('-')[1]) + 1}"
+
+    cur.execute(
+        "INSERT INTO verified_facts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            fact_id,
+            brand_id,
+            req.statement.strip(),
+            req.numeric_value.strip(),
+            req.numeric_units.strip(),
+            req.product_context.strip(),
+            req.source_reference.strip(),
+            req.applicable_conditions.strip(),
+            req.date_version.strip(),
+            req.verification_status,
+            now,
+        ),
+    )
+    cur.execute("UPDATE brands SET version = version + 1, updated_at = ? WHERE id = ?", (now, brand_id))
+    conn.commit()
+    conn.close()
+    return {"status": "created", "fact_id": fact_id, "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.put("/api/vault/{brand_id}/facts/{fact_id}")
+def update_verified_fact(brand_id: str, fact_id: str, req: VerifiedFactCreate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    if req.verification_status not in ("Verified", "Pending Verification", "Archived"):
+        raise HTTPException(status_code=400, detail="Invalid verification_status")
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE verified_facts
+        SET statement = ?, numeric_value = ?, numeric_units = ?, product_context = ?,
+            source_reference = ?, applicable_conditions = ?, date_version = ?,
+            verification_status = ?, updated_at = ?
+        WHERE id = ? AND brand_id = ?
+        """,
+        (
+            req.statement.strip(),
+            req.numeric_value.strip(),
+            req.numeric_units.strip(),
+            req.product_context.strip(),
+            req.source_reference.strip(),
+            req.applicable_conditions.strip(),
+            req.date_version.strip(),
+            req.verification_status,
+            now,
+            fact_id,
+            brand_id,
+        ),
+    )
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Fact not found")
+    cur.execute("UPDATE brands SET version = version + 1, updated_at = ? WHERE id = ?", (now, brand_id))
+    conn.commit()
+    conn.close()
+    return {"status": "updated", "fact_id": fact_id, "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.put("/api/vault/{brand_id}/facts/{fact_id}/status")
+def update_fact_verification_status(brand_id: str, fact_id: str, verification_status: str = Form(...), role: str = Depends(current_role)):
+    require_permission(role, "verify_facts", "Only a Brand Administrator can change fact verification status")
+    if verification_status not in ("Verified", "Pending Verification", "Archived"):
+        raise HTTPException(status_code=400, detail="Invalid verification_status")
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE verified_facts SET verification_status = ?, updated_at = ? WHERE id = ? AND brand_id = ?",
+        (verification_status, now, fact_id, brand_id),
+    )
+    conn.commit()
+    conn.close()
+    return get_brand_vault_bundle(brand_id)
+
+
+@app.delete("/api/vault/{brand_id}/facts/{fact_id}")
+def delete_verified_fact(brand_id: str, fact_id: str, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM verified_facts WHERE id = ? AND brand_id = ?", (fact_id, brand_id))
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Fact not found")
+    conn.commit()
+    conn.close()
+    return {"status": "deleted", "fact_id": fact_id}
+
+
+@app.post("/api/vault/{brand_id}/colors")
+def add_brand_color(brand_id: str, req: BrandColorCreate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    vault = get_brand_vault_bundle(brand_id)
+    col_id = f"COL-{len(vault['colors']) + 1:02d}"
+    conn = get_connection()
+    cur = conn.cursor()
+    while True:
+        cur.execute("SELECT 1 FROM brand_colors WHERE id = ?", (col_id,))
+        if not cur.fetchone():
+            break
+        col_id = f"COL-{int(col_id.split('-')[1]) + 1:02d}"
+
+    cur.execute(
+        "INSERT INTO brand_colors VALUES (?, ?, ?, ?, ?, ?)",
+        (col_id, brand_id, req.name.strip(), req.hex_code.upper(), req.usage_role.strip(), req.max_delta_e),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "created", "color_id": col_id, "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.put("/api/vault/{brand_id}/colors/{color_id}")
+def update_brand_color(brand_id: str, color_id: str, req: BrandColorCreate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE brand_colors
+        SET name = ?, hex_code = ?, usage_role = ?, max_delta_e = ?
+        WHERE id = ? AND brand_id = ?
+        """,
+        (req.name.strip(), req.hex_code.upper(), req.usage_role.strip(), req.max_delta_e, color_id, brand_id),
+    )
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Brand color not found")
+    conn.commit()
+    conn.close()
+    return {"status": "updated", "color_id": color_id, "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.delete("/api/vault/{brand_id}/colors/{color_id}")
+def delete_brand_color(brand_id: str, color_id: str, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM brand_colors WHERE id = ? AND brand_id = ?", (color_id, brand_id))
+    conn.commit()
+    conn.close()
+    return {"status": "deleted", "color_id": color_id}
+
+
+@app.post("/api/vault/{brand_id}/rules")
+def add_brand_rule(brand_id: str, req: RuleCreate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    vault = get_brand_vault_bundle(brand_id)
+    now = datetime.now(timezone.utc).isoformat()
+    prefix = req.pillar.split()[0][:4].upper()
+    rule_id = f"RULE-{prefix}-{len(vault['rules']) + 1:02d}"
+    conn = get_connection()
+    cur = conn.cursor()
+    while True:
+        cur.execute("SELECT 1 FROM rules WHERE id = ?", (rule_id,))
+        if not cur.fetchone():
+            break
+        rule_id = f"RULE-{prefix}-{int(rule_id.split('-')[-1]) + 1:02d}"
+
+    cfg = {"patterns": [req.pattern_regex]} if req.pattern_regex.strip() else {}
+    cur.execute(
+        "INSERT INTO rules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)",
+        (
+            rule_id,
+            brand_id,
+            req.pillar,
+            req.title.strip(),
+            req.description.strip(),
+            json.dumps(cfg),
+            req.severity,
+            req.do_example.strip(),
+            req.dont_example.strip(),
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "created", "rule_id": rule_id, "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.put("/api/vault/{brand_id}/rules/{rule_id}")
+def update_brand_rule(brand_id: str, rule_id: str, req: RuleCreate, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM rules WHERE id = ? AND brand_id = ?", (rule_id, brand_id))
+    existing = cur.fetchone()
+    if not existing:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Rule not found")
+    cfg = json.loads(existing["rule_config_json"] or "{}")
+    if req.pattern_regex.strip():
+        cfg["patterns"] = [req.pattern_regex.strip()]
+    cur.execute(
+        """
+        UPDATE rules
+        SET pillar = ?, title = ?, description = ?, rule_config_json = ?,
+            severity = ?, do_example = ?, dont_example = ?, version = version + 1, updated_at = ?
+        WHERE id = ? AND brand_id = ?
+        """,
+        (
+            req.pillar,
+            req.title.strip(),
+            req.description.strip(),
+            json.dumps(cfg),
+            req.severity,
+            req.do_example.strip(),
+            req.dont_example.strip(),
+            now,
+            rule_id,
+            brand_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "updated", "rule_id": rule_id, "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.delete("/api/vault/{brand_id}/rules/{rule_id}")
+def delete_brand_rule(brand_id: str, rule_id: str, role: str = Depends(current_role)):
+    require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM rules WHERE id = ? AND brand_id = ?", (rule_id, brand_id))
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Rule not found")
+    conn.commit()
+    conn.close()
+    return {"status": "deleted", "rule_id": rule_id}
+
+
+# ============================================================================
+# AUDIT EXECUTION, PERSISTENCE & CORRECTION DECISIONS
+# ============================================================================
+
+@app.post("/api/audits")
+def create_and_run_audit(req: NewAuditRequest, role: str = Depends(current_role)):
+    vault = get_brand_vault_bundle(req.brand_id)
+    structural_findings = []
+    if req.input_format == "html" or re.search(r"<(?:h[1-6]|img|script)\b", req.content, re.IGNORECASE):
+        parsed_html = parse_uploaded_file("snippet.html", req.content.encode("utf-8"))
+        structural_findings = parsed_html.get("structural_findings", [])
+    elif req.input_format in ("markdown", "md") or re.search(r"^\s*#{1,6}\s+", req.content, re.MULTILINE):
+        parsed_md = parse_uploaded_file("snippet.md", req.content.encode("utf-8"))
+        structural_findings = parsed_md.get("structural_findings", [])
+
+    audit_output = run_six_pillar_audit(
+        content=req.content,
+        brand=vault["brand"],
+        rules=vault["rules"],
+        terminology_rows=vault["terminology"],
+        facts=vault["verified_facts"],
+        brand_colors=vault["colors"],
+        fg_color=req.fg_color,
+        bg_color=req.bg_color,
+        image_alt_text=req.image_alt_text,
+        has_visual_asset=req.has_visual_asset,
+        structural_findings=structural_findings,
+    )
+    timing_meta = {
+        "deterministic_ms": audit_output.get("deterministic_ms", 0.0),
+        "nlp_retrieval_ms": audit_output.get("nlp_retrieval_ms", 0.0),
+    }
+    audit_id = persist_audit_record(
+        brand_id=req.brand_id,
+        document_name=req.document_name,
+        input_format=req.input_format,
+        content=req.content,
+        fg_color=req.fg_color,
+        bg_color=req.bg_color,
+        image_alt_text=req.image_alt_text,
+        has_visual_asset=req.has_visual_asset,
+        visual_metadata=timing_meta,
+        confidential_mode=req.confidential_mode,
+        audit_output=audit_output,
+        actor_role=role,
+    )
+    return get_audit_detail(audit_id)
+
+
+@app.post("/api/audits/upload")
+async def create_audit_from_upload(
+    brand_id: str = Form("novapay"),
+    document_name: str = Form(""),
+    fg_color: str = Form(""),
+    bg_color: str = Form(""),
+    image_alt_text: str = Form(""),
+    confidential_mode: bool = Form(True),
+    file: UploadFile = File(...),
+    role: str = Depends(current_role),
+):
+    raw_bytes = await file.read()
+    if len(raw_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size exceeds the 5 MB safety limit.")
+
+    raw_fname = (file.filename or "uploaded_file").replace("\\", "/")
+    fname = os.path.basename(raw_fname).replace("..", "") or "uploaded_file"
+    safe_doc_name = os.path.basename((document_name or fname).replace("\\", "/")).replace("..", "") or fname
+    ext = os.path.splitext(fname.lower())[1]
+    vault = get_brand_vault_bundle(brand_id)
+
+    if ext in (".png", ".jpg", ".jpeg"):
+        vis_info = inspect_raster_image(raw_bytes, vault["colors"])
+        audit_output = run_six_pillar_audit(
+            content=f"[Visual Asset Audit: {fname}]",
+            brand=vault["brand"],
+            rules=vault["rules"],
+            terminology_rows=vault["terminology"],
+            facts=vault["verified_facts"],
+            brand_colors=vault["colors"],
+            fg_color=fg_color,
+            bg_color=bg_color,
+            image_alt_text=image_alt_text,
+            has_visual_asset=True,
+            visual_inspection=vis_info,
+        )
+        audit_id = persist_audit_record(
+            brand_id=brand_id,
+            document_name=safe_doc_name,
+            input_format=ext.lstrip("."),
+            content=f"[Visual Asset Audit: {fname}]",
+            fg_color=fg_color,
+            bg_color=bg_color,
+            image_alt_text=image_alt_text,
+            has_visual_asset=True,
+            visual_metadata=vis_info,
+            confidential_mode=confidential_mode,
+            audit_output=audit_output,
+            actor_role=role,
+        )
+        return get_audit_detail(audit_id)
+
+    parsed = parse_uploaded_file(fname, raw_bytes)
+    audit_output = run_six_pillar_audit(
+        content=parsed["extracted_text"],
+        brand=vault["brand"],
+        rules=vault["rules"],
+        terminology_rows=vault["terminology"],
+        facts=vault["verified_facts"],
+        brand_colors=vault["colors"],
+        fg_color=fg_color,
+        bg_color=bg_color,
+        image_alt_text=image_alt_text,
+        has_visual_asset=(parsed["input_format"] == "svg"),
+        structural_findings=parsed["structural_findings"],
+        parser_failed=not parsed["parse_ok"],
+        parser_error_msg=parsed["error"] or "",
+        page_spans=parsed.get("page_spans"),
+    )
+    pdf_meta = {
+        "format": "pdf",
+        "page_count": parsed.get("page_count", 0),
+        "page_spans": parsed.get("page_spans", []),
+    } if parsed["input_format"] == "pdf" else {}
+    audit_id = persist_audit_record(
+        brand_id=brand_id,
+        document_name=safe_doc_name,
+        input_format=parsed["input_format"],
+        content=parsed["extracted_text"] or f"[Unparseable file: {fname}]",
+        fg_color=fg_color,
+        bg_color=bg_color,
+        image_alt_text=image_alt_text,
+        has_visual_asset=(parsed["input_format"] == "svg"),
+        visual_metadata=pdf_meta,
+        confidential_mode=confidential_mode,
+        audit_output=audit_output,
+        actor_role=role,
+    )
+    return get_audit_detail(audit_id)
+
+
+@app.get("/api/audits")
+def list_audits(brand_id: Optional[str] = None):
+    conn = get_connection()
+    cur = conn.cursor()
+    if brand_id:
+        cur.execute("SELECT * FROM audits WHERE brand_id = ? ORDER BY updated_at DESC", (brand_id,))
+    else:
+        cur.execute("SELECT * FROM audits ORDER BY updated_at DESC")
+    rows = [dict(r) for r in cur.fetchall()]
+    result = []
+    for r in rows:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS total_cnt,
+                   SUM(CASE WHEN review_state IN ('open', 'needs_review') THEN 1 ELSE 0 END) AS open_cnt
+            FROM findings WHERE audit_id = ?
+            """,
+            (r["id"],),
+        )
+        c = cur.fetchone()
+        r["total_findings"] = int(c["total_cnt"] or 0)
+        r["open_findings"] = int(c["open_cnt"] or 0)
+        try:
+            r["pillar_states"] = json.loads(r.get("pillar_states_json") or "{}")
+        except Exception:
+            r["pillar_states"] = {}
+        result.append(r)
+    conn.close()
+    return {"audits": result}
+
+
+@app.get("/api/audits/{audit_id}")
+def get_audit_detail(audit_id: str):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM audits WHERE id = ?", (audit_id,))
+    a_row = cur.fetchone()
+    if not a_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Audit '{audit_id}' not found.")
+    audit = dict(a_row)
+
+    cur.execute("SELECT * FROM findings WHERE audit_id = ? ORDER BY id ASC", (audit_id,))
+    findings = [dict(f) for f in cur.fetchall()]
+
+    cur.execute("SELECT * FROM revisions WHERE audit_id = ? ORDER BY version_number ASC", (audit_id,))
+    revisions = [dict(r) for r in cur.fetchall()]
+
+    cur.execute("SELECT * FROM review_decisions WHERE audit_id = ? ORDER BY id ASC", (audit_id,))
+    decisions = [dict(d) for d in cur.fetchall()]
+
+    cur.execute("SELECT * FROM approvals WHERE audit_id = ? ORDER BY id ASC", (audit_id,))
+    approvals = [dict(ap) for ap in cur.fetchall()]
+
+    cur.execute("SELECT * FROM audit_events WHERE audit_id = ? ORDER BY id ASC", (audit_id,))
+    events = []
+    for ev in cur.fetchall():
+        evd = dict(ev)
+        try:
+            evd["detail"] = json.loads(evd.pop("detail_json") or "{}")
+        except Exception:
+            evd["detail"] = {}
+        events.append(evd)
+
+    conn.close()
+
+    try:
+        audit["pillar_states"] = json.loads(audit.get("pillar_states_json") or "{}")
+    except Exception:
+        audit["pillar_states"] = {}
+    try:
+        audit["visual_metadata"] = json.loads(audit.get("visual_metadata_json") or "{}")
+    except Exception:
+        audit["visual_metadata"] = {}
+
+    audit["findings"] = findings
+    audit["revisions"] = revisions
+    audit["review_decisions"] = decisions
+    audit["approvals"] = approvals
+    audit["events"] = events
+    audit["open_findings_count"] = sum(
+        1 for f in findings if f["review_state"] in ("open", "needs_review")
+    )
+    return audit
+
+
+@app.post("/api/audits/{audit_id}/findings/{finding_id}/decision")
+def apply_finding_decision(audit_id: str, finding_id: str, req: FindingDecisionRequest):
+    if req.decision not in ("accept", "modify", "dismiss"):
+        raise HTTPException(status_code=400, detail="Decision must be 'accept', 'modify', or 'dismiss'.")
+
+    detail = get_audit_detail(audit_id)
+    target = next((f for f in detail["findings"] if f["id"] == finding_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Finding '{finding_id}' not found.")
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+
+    current_text = detail["current_content"]
+    new_text = current_text
+    fg_color = detail["fg_color"]
+    image_alt_text = detail["image_alt_text"]
+    replacement_used = ""
+    new_finding_state = target["review_state"]
+
+    if req.decision in ("accept", "modify"):
+        replacement_used = (
+            req.modified_replacement.strip()
+            if (req.decision == "modify" and req.modified_replacement is not None)
+            else (target["suggested_correction"] or "")
+        )
+        if not replacement_used:
+            conn.close()
+            raise HTTPException(
+                status_code=400,
+                detail="No suggested replacement is available; provide a manual replacement via 'modify'.",
+            )
+
+        s_idx = int(target["start_index"])
+        e_idx = int(target["end_index"])
+        if s_idx >= 0 and e_idx > s_idx and e_idx <= len(current_text):
+            new_text = current_text[:s_idx] + replacement_used + current_text[e_idx:]
+            delta_len = len(replacement_used) - (e_idx - s_idx)
+
+            # Shift character offsets of subsequent findings in the same document
+            for other in detail["findings"]:
+                if other["id"] == finding_id:
+                    continue
+                o_s = int(other["start_index"])
+                o_e = int(other["end_index"])
+                if o_s >= e_idx:
+                    cur.execute(
+                        "UPDATE findings SET start_index = ?, end_index = ? WHERE id = ?",
+                        (o_s + delta_len, o_e + delta_len, other["id"]),
+                    )
+        elif target["pillar"] == "Accessibility" and "Contrast" in target["issue_type"]:
+            fg_color = replacement_used
+        elif target["pillar"] == "Accessibility" and "Alternative Text" in target["issue_type"]:
+            image_alt_text = replacement_used
+        elif target["pillar"] == "Visual and Logo Consistency" and is_valid_hex(replacement_used):
+            fg_color = replacement_used
+
+        new_finding_state = "accepted" if req.decision == "accept" else "modified"
+        change_desc = (
+            f"{req.decision.capitalize()}ed correction for {finding_id} ({target['rule_or_fact_id']}): "
+            f"replaced '{target['flagged_text']}' with '{replacement_used}'."
+        )
+
+        next_ver = len(detail["revisions"]) + 1
+        cur.execute(
+            """
+            INSERT INTO revisions
+            (audit_id, version_number, previous_content, revised_content, editor_role, change_summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (audit_id, next_ver, current_text, new_text, req.reviewer_role, change_desc, now),
+        )
+        record_audit_event(
+            cur,
+            audit_id,
+            "correction_applied",
+            configured_user_name(),
+            req.reviewer_role,
+            change_desc,
+            {
+                "finding_id": finding_id,
+                "rule_or_fact_id": target["rule_or_fact_id"],
+                "decision": req.decision,
+                "from": target["flagged_text"],
+                "to": replacement_used,
+            },
+            next_ver,
+            now,
+        )
+    else:
+        # Dismiss decision
+        reason_str = (req.reason or "").strip()
+        if not reason_str:
+            conn.close()
+            raise HTTPException(status_code=400, detail="A dismissal reason is required when dismissing a finding.")
+        new_finding_state = "dismissed"
+        primary_rule_id = target["rule_or_fact_id"].split("/")[0].strip()
+        cur.execute(
+            """
+            INSERT INTO guideline_feedback
+            (brand_id, rule_id, audit_id, finding_id, override_reason, suspected_cause, admin_review_state, created_at)
+            VALUES (?, ?, ?, ?, ?, 'Logged via creator/reviewer dismissal', 'Open', ?)
+            """,
+            (detail["brand_id"], primary_rule_id, audit_id, finding_id, reason_str, now),
+        )
+        record_audit_event(
+            cur,
+            audit_id,
+            "finding_dismissed",
+            configured_user_name(),
+            req.reviewer_role,
+            f'Dismissed {finding_id} ({target["rule_or_fact_id"]}): "{reason_str}"',
+            {
+                "finding_id": finding_id,
+                "rule_or_fact_id": target["rule_or_fact_id"],
+                "reason": reason_str,
+            },
+            len(detail["revisions"]),
+            now,
+        )
+
+    cur.execute(
+        "UPDATE findings SET review_state = ?, decision_note = ?, updated_at = ? WHERE id = ?",
+        (new_finding_state, req.reason or replacement_used, now, finding_id),
+    )
+
+    cur.execute(
+        """
+        INSERT INTO review_decisions
+        (audit_id, finding_id, decision, replacement_applied, reason, reviewer_role, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (audit_id, finding_id, req.decision, replacement_used, req.reason or "", req.reviewer_role, now),
+    )
+
+    # Recompute pillar states based on remaining open/needs_review findings
+    cur.execute("SELECT * FROM findings WHERE audit_id = ?", (audit_id,))
+    updated_findings = [dict(f) for f in cur.fetchall()]
+    pillar_states = dict(detail["pillar_states"])
+    for p in pillar_states:
+        if pillar_states[p] in ("Not Checked", "Check Failed"):
+            continue
+        p_open = [
+            f for f in updated_findings if f["pillar"] == p and f["review_state"] == "open"
+        ]
+        p_rev = [
+            f for f in updated_findings if f["pillar"] == p and f["review_state"] == "needs_review"
+        ]
+        if p_open:
+            pillar_states[p] = "Findings"
+        elif p_rev:
+            pillar_states[p] = "Needs Review"
+        else:
+            pillar_states[p] = "Passed"
+
+    new_overall_status = detail["overall_status"]
+    if detail["overall_status"] == "Changes Requested" and req.decision in ("accept", "modify"):
+        new_overall_status = "Revised"
+
+    cur.execute(
+        """
+        UPDATE audits
+        SET current_content = ?, fg_color = ?, image_alt_text = ?,
+            overall_status = ?, pillar_states_json = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            new_text,
+            fg_color,
+            image_alt_text,
+            new_overall_status,
+            json.dumps(pillar_states),
+            now,
+            audit_id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+    return get_audit_detail(audit_id)
+
+
+@app.post("/api/audits/{audit_id}/workflow")
+def transition_audit_workflow(audit_id: str, req: WorkflowStateRequest):
+    allowed_states = {"Draft", "In Review", "Changes Requested", "Revised", "Approved"}
+    if req.new_state not in allowed_states:
+        raise HTTPException(status_code=400, detail=f"State must be one of {allowed_states}")
+
+    detail = get_audit_detail(audit_id)
+    unresolved_count = detail["open_findings_count"]
+
+    if req.new_state == "Approved":
+        if req.approver_role not in ("Reviewer", "Brand Administrator"):
+            raise HTTPException(
+                status_code=403,
+                detail="Only an authorised Reviewer or Brand Administrator can mark an audit as Approved.",
+            )
+        if unresolved_count > 0 and not (req.override_acknowledged and req.comment.strip()):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"This document still has {unresolved_count} unresolved finding(s). "
+                    "Resolve all findings first, or explicitly acknowledge an authorised override with a written justification."
+                ),
+            )
+
+    now = datetime.now(timezone.utc).isoformat()
+    content_hash = hashlib.sha256(detail["current_content"].encode("utf-8")).hexdigest()
+    latest_version = len(detail["revisions"])
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE audits SET overall_status = ?, updated_at = ? WHERE id = ?",
+        (req.new_state, now, audit_id),
+    )
+    cur.execute(
+        """
+        INSERT INTO approvals
+        (audit_id, previous_state, new_state, approver_role, version_reviewed,
+         unresolved_findings_count, override_acknowledged, comment, content_sha256, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            audit_id,
+            detail["overall_status"],
+            req.new_state,
+            req.approver_role,
+            latest_version,
+            unresolved_count,
+            1 if req.override_acknowledged else 0,
+            req.comment.strip() or f"State changed to {req.new_state}.",
+            content_hash,
+            now,
+        ),
+    )
+    event_type = "approved" if req.new_state == "Approved" else "status_changed"
+    event_summary = (
+        f"Approved for publication with {unresolved_count} unresolved finding(s)"
+        + (" (authorised override recorded)." if req.override_acknowledged else ".")
+        if req.new_state == "Approved"
+        else f"Status changed: {detail['overall_status']} → {req.new_state}."
+    )
+    if req.comment.strip():
+        event_summary += f' "{req.comment.strip()}"'
+    record_audit_event(
+        cur,
+        audit_id,
+        event_type,
+        configured_user_name(),
+        req.approver_role,
+        event_summary,
+        {
+            "from": detail["overall_status"],
+            "to": req.new_state,
+            "unresolved_findings": unresolved_count,
+            "override": bool(req.override_acknowledged),
+            "comment": req.comment.strip(),
+        },
+        latest_version,
+        now,
+    )
+    conn.commit()
+    conn.close()
+    return get_audit_detail(audit_id)
+
+
+@app.post("/api/audits/{audit_id}/rerun")
+def rerun_existing_audit(audit_id: str):
+    detail = get_audit_detail(audit_id)
+    vault = get_brand_vault_bundle(detail["brand_id"])
+    content = detail["current_content"]
+
+    structural_findings = []
+    if detail["input_format"] == "html" or re.search(r"<(?:h[1-6]|img|script)\b", content, re.IGNORECASE):
+        parsed_html = parse_uploaded_file("snippet.html", content.encode("utf-8"))
+        structural_findings = parsed_html.get("structural_findings", [])
+    elif detail["input_format"] in ("markdown", "md") or re.search(r"^\s*#{1,6}\s+", content, re.MULTILINE):
+        parsed_md = parse_uploaded_file("snippet.md", content.encode("utf-8"))
+        structural_findings = parsed_md.get("structural_findings", [])
+
+    audit_output = run_six_pillar_audit(
+        content=content,
+        brand=vault["brand"],
+        rules=vault["rules"],
+        terminology_rows=vault["terminology"],
+        facts=vault["verified_facts"],
+        brand_colors=vault["colors"],
+        fg_color=detail["fg_color"],
+        bg_color=detail["bg_color"],
+        image_alt_text=detail["image_alt_text"],
+        has_visual_asset=bool(detail["has_visual_asset"]),
+        structural_findings=structural_findings,
+    )
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM findings WHERE audit_id = ?", (audit_id,))
+    finding_rows = []
+    for idx, f in enumerate(audit_output["findings"], start=1):
+        finding_pk = f"{audit_id}-F{idx:02d}"
+        finding_rows.append(
+            (
+                finding_pk,
+                audit_id,
+                f["pillar"],
+                f["issue_type"],
+                f["severity"],
+                f["flagged_text"],
+                f["paragraph_ref"],
+                int(f["start_index"]),
+                int(f["end_index"]),
+                f["rule_or_fact_id"],
+                f["source_evidence"],
+                f["explanation"],
+                f.get("suggested_correction") or "",
+                f["detection_method"],
+                f["engine_source"],
+                f.get("similarity_score"),
+                f.get("review_state", "open"),
+                now,
+            )
+        )
+    if finding_rows:
+        cur.executemany(
+            """
+            INSERT INTO findings VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?
+            )
+            """,
+            finding_rows,
+        )
+
+    cur.execute(
+        """
+        UPDATE audits
+        SET brand_version = ?, pillar_states_json = ?, runtime_ms = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            int(vault["brand"].get("version", 1)),
+            json.dumps(audit_output["pillar_states"]),
+            float(audit_output.get("runtime_ms", 0.0)),
+            now,
+            audit_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return get_audit_detail(audit_id)
+
+
+# ============================================================================
+# GUIDELINE AMBIGUITY RADAR (BASELINE TELEMETRY & RECOMMENDATIONS)
+# ============================================================================
+
+@app.get("/api/ambiguity-radar/{brand_id}")
+def get_ambiguity_radar(brand_id: str):
+    vault = get_brand_vault_bundle(brand_id)
+    conn = get_connection()
+    cur = conn.cursor()
+
+    radar_rows = []
+    for r in vault["rules"]:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS cnt FROM findings f
+            JOIN audits a ON f.audit_id = a.id
+            WHERE a.brand_id = ? AND f.rule_or_fact_id LIKE ?
+            """,
+            (brand_id, f"%{r['id']}%"),
+        )
+        v_cnt = int(cur.fetchone()["cnt"] or 0)
+
+        cur.execute(
+            "SELECT * FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? ORDER BY id DESC",
+            (brand_id, r["id"]),
+        )
+        fb_rows = [dict(x) for x in cur.fetchall()]
+        o_cnt = len(fb_rows)
+
+        # Detect subjective qualifiers in rule text
+        vague_matches = re.findall(
+            r"\b(?:appropriate\s+amount|reasonably|when\s+appropriate|where\s+suitable|generally)\b",
+            f"{r['title']} {r['description']}",
+            re.IGNORECASE,
+        )
+        potential_causes = []
+        if vague_matches:
+            potential_causes.append(f"Subjective wording in guideline ({', '.join(set(vague_matches))})")
+        for fb in fb_rows[:3]:
+            if fb["suspected_cause"] not in potential_causes:
+                potential_causes.append(fb["suspected_cause"])
+
+        recommendation_status = (
+            "Recommended for Review"
+            if (o_cnt >= 2 or len(vague_matches) > 0)
+            else ("Monitor" if o_cnt == 1 else "No Action Needed")
+        )
+
+        likely_signal = (
+            "Subjective qualifier & recurring overrides"
+            if (o_cnt >= 2 and len(vague_matches) > 0)
+            else (
+                "Recurring reviewer overrides"
+                if o_cnt >= 2
+                else (
+                    "Channel-length exception logged"
+                    if o_cnt == 1
+                    else ("Subjective qualifier detected" if len(vague_matches) > 0 else "Consistent enforcement")
+                )
+            )
+        )
+        next_action = (
+            "Review wording in Brand Vault"
+            if recommendation_status == "Recommended for Review"
+            else ("Monitor channel exceptions" if recommendation_status == "Monitor" else "Keep current rule")
+        )
+
+        suggested_clarification = ""
+        if r["id"] == "RULE-TONE-02":
+            suggested_clarification = (
+                "Explain the primary business benefit in plain language before introducing specialist terminology. "
+                "Define protocol acronyms on first use."
+            )
+        elif r["id"] == "RULE-MSG-01":
+            suggested_clarification = (
+                "Require the human-approval guardrail clause in body copy exceeding 30 words; "
+                "exempt short display headlines (<15 words) provided they do not claim 'zero human oversight'."
+            )
+
+        radar_rows.append({
+            "rule_id": r["id"],
+            "pillar": r["pillar"],
+            "title": r["title"],
+            "description": r["description"],
+            "version": r["version"],
+            "violations_recorded": v_cnt,
+            "overrides_recorded": o_cnt,
+            "likely_signal": likely_signal,
+            "next_action": next_action,
+            "potential_causes": potential_causes or ["No recurring override pattern observed yet"],
+            "recorded_feedback": fb_rows,
+            "recommendation_status": recommendation_status,
+            "suggested_clarification": suggested_clarification,
+        })
+
+    conn.close()
+    return {
+        "brand_id": brand_id,
+        "concise_info_note": "Frequent overrides are a signal to review a rule, not proof it is incorrect.",
+        "honest_scope_note": (
+            "Frequent overrides do not automatically prove a rule is defective; potential causes include "
+            "missing channel context, legitimate exceptions, or overly broad detection patterns. "
+            "All rule revisions require explicit Brand Administrator inspection."
+        ),
+        "rules_analysis": radar_rows,
+    }
+
+
+# ============================================================================
+# STATIC FRONTEND MOUNT
+# ============================================================================
+
+FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+FONTS_DIR = os.path.join(FRONTEND_DIR, "fonts")
+if os.path.exists(FONTS_DIR):
+    app.mount("/fonts", StaticFiles(directory=FONTS_DIR), name="fonts")
+if os.path.exists(FRONTEND_DIR):
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+
+@app.get("/")
+def serve_workspace():
+    idx = os.path.join(FRONTEND_DIR, "index.html")
+    if os.path.exists(idx):
+        return FileResponse(idx)
+    return {"service": "LoomShield API", "docs": "/docs"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def get_favicon_ico():
+    fav = os.path.join(FRONTEND_DIR, "favicon.ico")
+    if os.path.exists(fav):
+        return FileResponse(fav, media_type="image/x-icon")
+    raise HTTPException(status_code=404, detail="favicon.ico not found")
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+def get_favicon_svg():
+    fav = os.path.join(FRONTEND_DIR, "favicon.svg")
+    if os.path.exists(fav):
+        return FileResponse(fav, media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="favicon.svg not found")
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+def get_apple_touch_icon():
+    fav = os.path.join(FRONTEND_DIR, "apple-touch-icon.png")
+    if os.path.exists(fav):
+        return FileResponse(fav, media_type="image/png")
+    raise HTTPException(status_code=404, detail="apple-touch-icon.png not found")

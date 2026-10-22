@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LoomShield — Brand Governance Workspace</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- ====================================================================
+         LEFT NAVIGATION SIDEBAR (240px Desktop / Collapsible Drawer)
+         ==================================================================== -->
+    <aside class="sidebar" id="appSidebar">
+      <div class="sidebar-top">
+        <div class="brand-logo-row">
+          <div class="logo-mark" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <path d="m9 12 2 2 4-4"/>
+            </svg>
+          </div>
+          <div class="logo-text-group">
+            <span class="logo-title">LoomShield</span>
+            <span class="logo-subtitle">Brand Governance</span>
+          </div>
+        </div>
+
+        <label class="sidebar-field-label" for="brandSelector">Brand Profile</label>
+        <select id="brandSelector" class="sidebar-select" aria-label="Select Active Brand Profile"></select>
+
+        <button type="button" class="btn-primary-cta" id="sidebarNewAuditBtn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          <span>New audit</span>
+        </button>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="Primary Workspace Navigation">
+        <div class="nav-section-heading">Workspace</div>
+
+        <button type="button" class="nav-item active" data-view="overview" aria-current="page">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+            <span>Overview</span>
+          </span>
+        </button>
+
+        <button type="button" class="nav-item" data-view="new-audit">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            <span>New audit</span>
+          </span>
+        </button>
+
+        <button type="button" class="nav-item" data-view="brand-vault">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            <span>Brand Vault</span>
+          </span>
+          <span class="nav-count-pill" id="navRulesCount">0</span>
+        </button>
+
+        <button type="button" class="nav-item" data-view="review-queue">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span>Review queue</span>
+          </span>
+          <span class="nav-count-pill" id="navQueueCount">0</span>
+        </button>
+
+        <button type="button" class="nav-item" data-view="ambiguity-radar">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span>Guideline insights</span>
+          </span>
+        </button>
+
+        <button type="button" class="nav-item" data-view="audit-history">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>Audit history</span>
+          </span>
+        </button>
+
+        <button type="button" class="nav-item" data-view="settings">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>Settings</span>
+          </span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button type="button" class="local-status-pill" id="sidebarSystemStatusBtn" title="View privacy and local processing status">
+          <span style="display: inline-flex; align-items: center; gap: 8px;">
+            <span class="status-dot-green" aria-hidden="true"></span>
+            <span>Local processing</span>
+          </span>
+          <span style="font-size: 11px; color: #98A2B3;">System status &rarr;</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ====================================================================
+         MAIN WORKSPACE WRAPPER
+         ==================================================================== -->
+    <div class="main-wrapper">
+      <!-- Demo Workspace Banner (Visible only when Demo Mode is active) -->
+      <div class="demo-workspace-banner" id="demoWorkspaceBanner" style="display: none;">
+        <div class="demo-banner-left">
+          <span class="status-badge badge-warning">Demo workspace</span>
+          <span>Seeded profiles (NovaPay Enterprise, Verdant Clinical Systems) and sample records are for evaluation only.</span>
+        </div>
+        <div class="demo-banner-actions">
+          <label for="demoSampleSelector" style="font-size: 12px; font-weight: 600;">Try a demo:</label>
+          <select id="demoSampleSelector" class="form-control" style="padding: 4px 8px; font-size: 12px; width: auto;">
+            <option value="">Load example...</option>
+            <option value="1">Example 1: Unsupported 95% claim &amp; markup issues</option>
+            <option value="2">Example 2: Claim without Brand Vault evidence</option>
+            <option value="3">Example 3: Compliant enterprise release note</option>
+          </select>
+          <button type="button" class="btn btn-sm" id="resetDemoBtn">Reset demo data</button>
+        </div>
+      </div>
+
+      <header class="topbar">
+        <div class="topbar-left">
+          <button type="button" class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle Navigation Sidebar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <div class="breadcrumb-text">
+            <span>Workspace</span>
+            <span aria-hidden="true">/</span>
+            <strong id="topbarViewTitle">Overview</strong>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="brand-context-pill" id="topbarBrandContextPill">
+            Brand: <strong>NovaPay Enterprise · v2</strong>
+          </div>
+          <button type="button" class="account-menu-btn" id="accountRoleBtn" title="Signed-in team role and workspace settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span id="accountRoleLabel">Reviewer</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="page-container">
+        <!-- ================================================================
+             VIEW 1: OVERVIEW (SECTION 03)
+             ================================================================ -->
+        <section id="view-overview" class="workspace-view">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Overview</h1>
+              <p class="page-subtitle" id="overviewScopeSubtitle">Compliance summary and recent audits for the selected brand profile.</p>
+            </div>
+            <div class="page-actions">
+              <button type="button" class="btn" id="overviewTryDemoBtn">Try a demo</button>
+              <button type="button" class="btn btn-accent" id="overviewNewAuditBtn">New audit</button>
+            </div>
+          </div>
+
+          <!-- 4 Summary Cards Scoped to Active Brand & Version -->
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-label">
+                <span>Documents audited</span>
+              </div>
+              <div class="metric-value" id="metricDocsAudited">0</div>
+              <div class="metric-note" id="metricDocsScopeNote">Scoped to active brand</div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-label">
+                <span>Needs attention</span>
+              </div>
+              <div class="metric-value" id="metricOpenFindings">0</div>
+              <div class="metric-note">Unresolved findings requiring review</div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-label">
+                <span>Approved</span>
+              </div>
+              <div class="metric-value" id="metricApprovedContent">0</div>
+              <div class="metric-note">Documents cleared for publication</div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-label">
+                <span>Active rules</span>
+              </div>
+              <div class="metric-value" id="metricBrandRules">0</div>
+              <div class="metric-note">Enabled rules in Brand Vault</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">Recent audits</h2>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;" id="overviewLastUpdatedText">Last updated: just now</div>
+              </div>
+              <div class="filter-pills-row" id="overviewStatusFilters">
+                <button type="button" class="filter-pill active" data-ov-filter="ALL">All</button>
+                <button type="button" class="filter-pill" data-ov-filter="In Review">In review</button>
+                <button type="button" class="filter-pill" data-ov-filter="Draft">Draft</button>
+                <button type="button" class="filter-pill" data-ov-filter="Approved">Approved</button>
+              </div>
+            </div>
+            <div id="recentAuditsContainer"></div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             VIEW 2: NEW AUDIT (STEP 1 & 2 INPUT) vs AUDIT RESULTS (STEP 3)
+             ================================================================ -->
+        <section id="view-new-audit" class="workspace-view" style="display: none;">
+          <!-- STAGE A: NEW AUDIT SUBMISSION FORM -->
+          <div id="auditInputStage">
+            <div class="page-header">
+              <div>
+                <h1 class="page-title">New audit</h1>
+                <p class="page-subtitle">Submit draft marketing content for automated compliance verification against active Brand Vault guidelines.</p>
+              </div>
+              <div class="page-actions">
+                <button type="button" class="btn" id="returnToResultsBtn" style="display: none;">Back to current results</button>
+              </div>
+            </div>
+
+            <!-- Step 1: Add Content -->
+            <div class="audit-step-card">
+              <div class="audit-step-header">
+                <div class="audit-step-num">1</div>
+                <h2 class="audit-step-title">Add content</h2>
+              </div>
+
+              <div class="input-form-grid" style="margin-bottom: 16px;">
+                <div class="form-group" style="grid-column: span 2;">
+                  <label for="auditDocName">Document title</label>
+                  <input type="text" id="auditDocName" class="form-control" placeholder="e.g., Q4 Settlement Launch Brief" value="Q4 Settlement Launch Brief" />
+                </div>
+              </div>
+
+              <!-- Segmented Content Ingestion Selector: Paste Content vs Upload File -->
+              <div style="margin-bottom: 16px;">
+                <label style="font-size: 13px; font-weight: 600; color: var(--primary-ink); display: block; margin-bottom: 8px;">Content ingestion method</label>
+                <div class="segmented-toggle" role="tablist" aria-label="Ingestion Method">
+                  <button type="button" class="segmented-btn active" id="inputMethodPasteBtn" role="tab" aria-selected="true">Paste content</button>
+                  <button type="button" class="segmented-btn" id="inputMethodUploadBtn" role="tab" aria-selected="false">Upload file</button>
+                </div>
+              </div>
+
+              <!-- Ingestion Mode A: Paste Content -->
+              <div id="ingestionPasteSection">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                  <label for="auditContentText" style="font-size: 13px; font-weight: 600; color: var(--primary-ink);">Content to audit</label>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <label for="auditInputFormat" style="font-size: 12px; color: var(--text-secondary);">Format:</label>
+                    <select id="auditInputFormat" class="form-control" style="width: auto; padding: 4px 8px; font-size: 12px;">
+                      <option value="html">HTML (.html)</option>
+                      <option value="markdown">Markdown (.md)</option>
+                      <option value="plain_text">Plain text (.txt)</option>
+                    </select>
+                  </div>
+                </div>
+                <textarea id="auditContentText" class="form-control" rows="8" placeholder="Paste marketing copy, press release, HTML markup or Markdown text..."><h2>Launch Faster with Instant Payouts</h2>
+<h4>Key Settlement Highlights</h4>
+<p>Our platform guarantees 95% faster processing for cross-border treasury teams. Using our proprietary AI Engine, finance leaders can execute zero-touch autonomous settlement with guaranteed zero risk.</p>
+<p>Unlike legacy banking rails, our frictionless synergetic paradigm shift redefines global liquidity across 65 currencies.</p></textarea>
+              </div>
+
+              <!-- Ingestion Mode B: Upload File (Drag & Drop Zone + Auto Format Detection) -->
+              <div id="ingestionUploadSection" style="display: none;">
+                <div class="file-dropzone" id="fileDropzone" tabindex="0" role="button" aria-label="Click or drop a file to upload">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-secondary); margin-bottom: 8px;">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                  <div style="font-size: 14px; font-weight: 600; color: var(--primary-ink);">Click to select or drag and drop a document</div>
+                  <div class="form-helper" style="margin-top: 4px;" id="uploadFormatHelper">Supported formats: .txt, .md, .html, .docx, .pdf, .svg, .png, .jpg (Max 5 MB)</div>
+                  <input type="file" id="auditFileUpload" style="display: none;" accept=".txt,.md,.html,.htm,.docx,.pdf,.svg,.png,.jpg,.jpeg" aria-describedby="uploadFormatHelper" />
+                </div>
+                <div id="uploadFileCard" class="file-card" style="display: none;">
+                  <div class="file-card-info">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    <div>
+                      <div class="file-card-name" id="uploadCardFileName">document.docx</div>
+                      <div class="file-card-size" id="uploadCardFileSize">0 KB</div>
+                    </div>
+                    <span class="status-badge badge-neutral" id="uploadCardDetectedFormat">Detected format</span>
+                  </div>
+                  <button type="button" class="btn btn-sm btn-danger-outline" id="removeUploadedFileBtn">Remove file</button>
+                </div>
+                <div id="uploadFilePreviewBar" class="file-attachment-bar" style="display: none;"></div>
+              </div>
+            </div>
+
+            <!-- Step 2: Review Audit Options -->
+            <div class="audit-step-card">
+              <div class="audit-step-header">
+                <div class="audit-step-num">2</div>
+                <h2 class="audit-step-title">Review audit options</h2>
+              </div>
+
+              <fieldset style="border: none; padding: 0; margin: 0 0 16px 0;">
+                <div class="audit-options-grid">
+                  <div class="option-control-card">
+                    <div class="checkbox-row">
+                      <input type="checkbox" id="auditHasVisualAsset" aria-describedby="visualCheckHelper" />
+                      <div>
+                        <label for="auditHasVisualAsset" style="font-size: 13.5px; font-weight: 600; cursor: pointer;">Include visual asset checks</label>
+                        <div class="form-helper" id="visualCheckHelper">Check if an image, banner, or logo token is attached to this document.</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="option-control-card">
+                    <div class="switch-row">
+                      <div>
+                        <label for="auditConfidentialMode" style="font-size: 13.5px; font-weight: 600; cursor: pointer;">Local-only processing</label>
+                        <div class="form-helper" id="localModeHelper">Runs entirely on this device using local deterministic rules and embedded NLP.</div>
+                      </div>
+                      <label class="toggle-switch" aria-label="Local-only processing">
+                        <input type="checkbox" id="auditConfidentialMode" role="switch" checked aria-describedby="localModeHelper" />
+                        <span class="toggle-slider"></span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </fieldset>
+
+              <details class="collapsible-details" id="visualMetadataDetails">
+                <summary>Optional colour contrast &amp; image alt-text metadata</summary>
+                <div class="collapsible-details-body">
+                  <div class="input-form-grid" style="margin-bottom: 0;">
+                    <div class="form-group">
+                      <label for="auditFgColor">Foreground hex colour</label>
+                      <input type="text" id="auditFgColor" class="form-control" placeholder="#17191C" value="" />
+                    </div>
+                    <div class="form-group">
+                      <label for="auditBgColor">Background hex colour</label>
+                      <input type="text" id="auditBgColor" class="form-control" placeholder="#FFFFFF" value="" />
+                    </div>
+                    <div class="form-group">
+                      <label for="auditAltText">Image alternative text</label>
+                      <input type="text" id="auditAltText" class="form-control" placeholder="Descriptive summary when an image or banner is attached" value="" />
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            <!-- Step 3: Run Audit Execution Bar -->
+            <div class="audit-step-card" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink);">Ready to inspect document</div>
+                <div style="font-size: 12.5px; color: var(--text-secondary);">Audit verifies tone, prohibited terminology, promotional claim facts, and visual contrast.</div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <button type="button" class="btn" id="clearAuditFormBtn">Clear form</button>
+                <button type="button" class="btn btn-accent" id="runAuditBtn">
+                  <span>Run audit</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- STAGE B: AUDIT RESULTS THREE-PANEL WORKSPACE -->
+          <div id="auditResultsStage" style="display: none;">
+            <div class="page-header">
+              <div>
+                <div style="font-size: 12.5px; color: var(--text-secondary); margin-bottom: 2px;" id="resultsBreadcrumbDocName">New audit / Document</div>
+                <h1 class="page-title">Audit results</h1>
+                <p class="page-subtitle" id="resultsSummarySubtitle">Inspect findings, verify Brand Vault evidence, and apply human-reviewed corrections.</p>
+              </div>
+              <div class="page-actions">
+                <button type="button" class="btn" id="editContentBtn">Edit content</button>
+                <button type="button" class="btn" id="rerunAuditBtn">Rerun audit</button>
+                <button type="button" class="btn btn-accent" id="startAnotherAuditBtn">New audit</button>
+              </div>
+            </div>
+
+            <!-- Six Audit Pillars Status Bar -->
+            <div class="pillars-bar" id="sixPillarsBar"></div>
+
+            <!-- Mobile/Tablet Panel Switcher -->
+            <div class="mobile-panel-tabs" id="mobilePanelTabs">
+              <button type="button" class="btn btn-sm active" data-mob-panel="source">Source content</button>
+              <button type="button" class="btn btn-sm" data-mob-panel="findings">Findings &amp; evidence</button>
+              <button type="button" class="btn btn-sm" data-mob-panel="correction">Correction</button>
+            </div>
+
+            <!-- Three-Panel Workspace (32% / 38% / 30%) -->
+            <div class="three-panel-workspace">
+              <!-- PANEL 1: SOURCE CONTENT -->
+              <div class="workspace-panel" id="panelSource">
+                <div class="panel-header">
+                  <div class="panel-title">
+                    <span>SOURCE CONTENT</span>
+                    <span class="mono-id" id="activeAuditIdBadge">—</span>
+                  </div>
+                  <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                    <div class="segmented-toggle" role="group" aria-label="Content format view">
+                      <button type="button" class="segmented-btn active" id="viewRenderedBtn">Rendered</button>
+                      <button type="button" class="segmented-btn" id="viewRawSourceBtn">Source</button>
+                    </div>
+                    <div class="segmented-toggle" role="group" aria-label="Content version view">
+                      <button type="button" class="segmented-btn active" id="showWorkingContentBtn">Working</button>
+                      <button type="button" class="segmented-btn" id="showOriginalContentBtn">Original</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <div id="sourcePanelMetadata" style="margin-bottom: 10px; font-size: 12px; color: var(--text-secondary);"></div>
+                  <div id="sourceContentViewer" class="source-content-viewer"></div>
+                </div>
+              </div>
+
+              <!-- PANEL 2: FINDINGS & EVIDENCE -->
+              <div class="workspace-panel" id="panelFindings">
+                <div class="panel-header">
+                  <div class="panel-title">
+                    <span>FINDINGS &amp; EVIDENCE</span>
+                    <span class="status-badge badge-neutral" id="findingsCountBadge">0 findings</span>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <!-- Filters close to the findings header -->
+                  <div class="findings-filter-bar">
+                    <select id="pillarFilterSelect" class="form-control" style="padding: 5px 8px; font-size: 12.5px;" aria-label="Filter by pillar">
+                      <option value="ALL">All pillars</option>
+                      <option value="Tone and Voice">Tone and Voice</option>
+                      <option value="Terminology">Terminology</option>
+                      <option value="Messaging">Messaging</option>
+                      <option value="Promotional Claims">Promotional Claims</option>
+                      <option value="Visual and Logo Consistency">Visual and Logo Consistency</option>
+                      <option value="Accessibility">Accessibility</option>
+                    </select>
+                    <select id="severityFilterSelect" class="form-control" style="padding: 5px 8px; font-size: 12.5px;" aria-label="Filter by severity">
+                      <option value="ALL">All severities</option>
+                      <option value="critical">Critical</option>
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                    <select id="statusFilterSelect" class="form-control" style="padding: 5px 8px; font-size: 12.5px;" aria-label="Filter by status">
+                      <option value="ALL">All statuses</option>
+                      <option value="open">Open</option>
+                      <option value="needs_review">Needs review</option>
+                      <option value="accepted">Accepted</option>
+                      <option value="modified">Modified</option>
+                      <option value="dismissed">Dismissed</option>
+                    </select>
+                    <input type="search" id="findingSearchInput" class="form-control" style="padding: 5px 8px; font-size: 12.5px;" placeholder="Search findings..." aria-label="Search findings" />
+                  </div>
+                  <div id="findingsListContainer"></div>
+                </div>
+              </div>
+
+              <!-- PANEL 3: CORRECTION -->
+              <div class="workspace-panel" id="panelCorrection">
+                <div class="panel-header">
+                  <div class="panel-title">
+                    <span>CORRECTION</span>
+                  </div>
+                  <span id="activeWorkflowStateBadge"></span>
+                </div>
+                <div class="panel-body">
+                  <div id="correctionPanelBody"></div>
+
+                  <!-- Document-Level Review & Approval Controls -->
+                  <div id="workflowTransitionBox" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color); display: none;">
+                    <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">Document review &amp; approval</h3>
+                    <div id="workflowUnresolvedNotice" style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;"></div>
+                    <div class="form-group" style="margin-bottom: 10px;">
+                      <label for="workflowCommentInput">Review note or override justification</label>
+                      <input type="text" id="workflowCommentInput" class="form-control" placeholder="Add review comment..." />
+                    </div>
+                    <div class="checkbox-row" style="margin-bottom: 12px;" id="workflowOverrideRow">
+                      <input type="checkbox" id="workflowOverrideCheckbox" />
+                      <label for="workflowOverrideCheckbox" style="font-size: 12px; color: var(--text-secondary); cursor: pointer;">
+                        Authorised override: allow approval with unresolved findings (requires Reviewer/Admin role and written justification)
+                      </label>
+                    </div>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                      <button type="button" class="btn btn-sm" data-wf="In Review">Submit for review</button>
+                      <button type="button" class="btn btn-sm btn-danger-outline" data-wf="Changes Requested">Request changes</button>
+                      <button type="button" class="btn btn-sm btn-success" id="workspaceApproveBtn" data-wf="Approved">Approve</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             VIEW 3: BRAND VAULT (SECTION 06 — 5 SHORT TABS)
+             ================================================================ -->
+        <section id="view-brand-vault" class="workspace-view" style="display: none;">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Brand Vault</h1>
+              <p class="page-subtitle">Manage voice principles, terminology rules, verified fact sheets, visual tokens, and accessibility thresholds.</p>
+            </div>
+            <div class="page-actions">
+              <span id="vaultUnsavedBadge" class="unsaved-indicator" style="display: none;">Unsaved changes</span>
+              <input type="search" id="vaultSearchInput" class="form-control" placeholder="Search rules, terms, facts..." style="width: 260px;" aria-label="Search Brand Vault" />
+            </div>
+          </div>
+
+          <div class="tabs-bar" role="tablist">
+            <button type="button" class="tab-btn active" data-vault-tab="voice" role="tab">Voice &amp; rules</button>
+            <button type="button" class="tab-btn" data-vault-tab="terminology" role="tab">Terminology</button>
+            <button type="button" class="tab-btn" data-vault-tab="facts" role="tab">Verified facts</button>
+            <button type="button" class="tab-btn" data-vault-tab="visual" role="tab">Visual identity</button>
+            <button type="button" class="tab-btn" data-vault-tab="accessibility" role="tab">Accessibility</button>
+          </div>
+
+          <div id="vaultTabContent"></div>
+        </section>
+
+        <!-- ================================================================
+             VIEW 4: REVIEW QUEUE (SECTION 07)
+             ================================================================ -->
+        <section id="view-review-queue" class="workspace-view" style="display: none;">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Review queue</h1>
+              <p class="page-subtitle">Track audited documents across Draft, In review, Changes requested, Revised, and Approved states.</p>
+            </div>
+          </div>
+          <div class="card" id="reviewQueueContainer"></div>
+        </section>
+
+        <!-- ================================================================
+             VIEW 5: GUIDELINE INSIGHTS / AMBIGUITY (SECTION 07)
+             ================================================================ -->
+        <section id="view-ambiguity-radar" class="workspace-view" style="display: none;">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Guideline ambiguity</h1>
+              <p class="page-subtitle">Review rules with recurring overrides or subjective phrasing that may benefit from administrator clarification.</p>
+            </div>
+          </div>
+          <div id="ambiguityRadarContainer"></div>
+        </section>
+
+        <!-- ================================================================
+             VIEW 6: AUDIT HISTORY (SECTION 07)
+             ================================================================ -->
+        <section id="view-audit-history" class="workspace-view" style="display: none;">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Audit history</h1>
+              <p class="page-subtitle">Compare original submissions against revised snapshots, inspect inline word diffs, and review approval logs.</p>
+            </div>
+          </div>
+          <div id="auditHistoryContainer"></div>
+        </section>
+
+        <!-- ================================================================
+             VIEW 7: SETTINGS (SECTION 08)
+             ================================================================ -->
+        <section id="view-settings" class="workspace-view" style="display: none;">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Settings</h1>
+              <p class="page-subtitle">Manage workspace preferences, privacy and processing configuration, and team access permissions.</p>
+            </div>
+          </div>
+          <div id="settingsContainer"></div>
+        </section>
+
+        <!-- ================================================================
+             VIEW 8: PRIVACY AND PROCESSING / SYSTEM STATUS (SECTION 08)
+             ================================================================ -->
+        <section id="view-engine-status" class="workspace-view" style="display: none;">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Privacy and processing</h1>
+              <p class="page-subtitle">Verify local-only operating mode, run on-device engine self-tests, and inspect supported file formats.</p>
+            </div>
+            <div class="page-actions">
+              <button type="button" class="btn btn-accent" id="runEngineSelftestHeaderBtn">Run local self-test</button>
+            </div>
+          </div>
+          <div id="engineStatusContainer"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Accessible Modal Dialog Container -->
+  <div id="modalRoot" style="display: none;"></div>
+
+  <!-- Compact Top-Right Toast Container -->
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
