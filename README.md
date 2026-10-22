@@ -1,3 +1,4 @@
+ HEAD
 # LoomShield — Local-First Brand Governance Workspace
 
 **Team Name:** `isaac.incognito007`  
@@ -83,3 +84,7 @@ In accordance with competition rules, the central workflow runs end-to-end in th
 1. **Improvement 1:** Automated Guideline Clarity Rewriter (synthesizing candidate rule rewrites from Ambiguity Radar override clusters).
 2. **Improvement 2:** Interactive $4\times 4$ Visual Clear-Space & Accessibility Heatmap.
 3. **Improvement 3:** Cryptographically Signed Compliance Certificate (asymmetric Ed25519/RSA signing, distinct from the baseline SHA-256 content integrity hash).
+
+# Inkloom-artLoomShield
+LoomShield is a local-first brand governance platform that audits marketing content against brand guidelines, verified facts, terminology, visual identity, and accessibility rules. It provides explainable findings, focused corrections, and human-controlled review with zero mandatory external AI API keys for core checks.
+ 1fa509f994b0dde8aef42c955cf88c063ac1d1f0
