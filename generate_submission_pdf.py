@@ -12,6 +12,7 @@ from reportlab.platypus import (
     PageBreak,
     KeepTogether,
     HRFlowable,
+    Image as RLImage,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfgen import canvas
@@ -36,23 +37,22 @@ class NumberedCanvas(canvas.Canvas):
 
     def draw_page_decorations(self, page_count):
         self.saveState()
-        # Running Header
+        # Running Header (cleaned as requested: no 'ROUND 2 BUILD DELIVERY' or 'TWO LOCAL ENGINES | ZERO MANDATORY API KEYS')
         self.setFont("Helvetica-Bold", 7.5)
         self.setFillColor(colors.HexColor("#EA633F"))
         self.drawString(36, 756, "LOOMSHIELD")
         self.setFont("Helvetica", 7.5)
         self.setFillColor(colors.HexColor("#5F6368"))
-        self.drawString(96, 756, " |   PROJECT SUBMISSION SPECIFICATION   |   ROUND 2 BUILD DELIVERY")
-        self.drawRightString(576, 756, "TWO LOCAL ENGINES  |  ZERO MANDATORY API KEYS")
+        self.drawString(96, 756, " |   PROJECT SUBMISSION SPECIFICATION")
         self.setStrokeColor(colors.HexColor("#E2E4E8"))
         self.setLineWidth(0.6)
         self.line(36, 750, 576, 750)
 
         # Running Footer
-        self.line(36, 38, 576, 38)
-        self.setFont("Helvetica", 7)
-        self.drawString(36, 26, "Team: isaac.incognito007   |   Isaac Shiloah Herbert V (isaac.incognito007@gmail.com)   |   Repository: https://github.com/Inkloom-art/LoomShield")
-        self.drawRightString(576, 26, f"Page {self._pageNumber} of {page_count}")
+        self.line(36, 36, 576, 36)
+        self.setFont("Helvetica", 6.8)
+        self.drawString(36, 25, "Team: isaac.incognito007   |   Isaac Shiloah Herbert V (isaac.incognito007@gmail.com)   |   Repository: https://github.com/isaacincognito007-cloud/Inkloom-artLoomShield")
+        self.drawRightString(576, 25, f"Page {self._pageNumber} of {page_count}")
         self.restoreState()
 
 
@@ -63,7 +63,7 @@ def build_pdf(output_path: str):
         leftMargin=36,
         rightMargin=36,
         topMargin=46,
-        bottomMargin=46,
+        bottomMargin=44,
     )
 
     styles = getSampleStyleSheet()
@@ -92,47 +92,47 @@ def build_pdf(output_path: str):
         fontSize=9.5,
         leading=13,
         textColor=c_accent,
-        spaceAfter=8,
+        spaceAfter=7,
     )
 
     h1_style = ParagraphStyle(
         "SectionH1",
         parent=styles["Normal"],
         fontName="Helvetica-Bold",
-        fontSize=11,
-        leading=15,
+        fontSize=10.5,
+        leading=14,
         textColor=c_primary,
-        spaceBefore=10,
-        spaceAfter=5,
+        spaceBefore=8,
+        spaceAfter=4,
     )
 
     h2_style = ParagraphStyle(
         "SectionH2",
         parent=styles["Normal"],
         fontName="Helvetica-Bold",
-        fontSize=8.5,
-        leading=12,
+        fontSize=8,
+        leading=11,
         textColor=c_primary,
-        spaceBefore=6,
-        spaceAfter=3,
+        spaceBefore=5,
+        spaceAfter=2,
     )
 
     body_style = ParagraphStyle(
         "DocBody",
         parent=styles["Normal"],
         fontName="Helvetica",
-        fontSize=7.5,
-        leading=10.5,
+        fontSize=7.2,
+        leading=10,
         textColor=c_primary,
-        spaceAfter=4,
+        spaceAfter=3.5,
     )
 
     table_header = ParagraphStyle(
         "TableHeader",
         parent=styles["Normal"],
         fontName="Helvetica-Bold",
-        fontSize=7,
-        leading=9.5,
+        fontSize=6.8,
+        leading=9,
         textColor=colors.white,
     )
 
@@ -140,8 +140,8 @@ def build_pdf(output_path: str):
         "TableCell",
         parent=styles["Normal"],
         fontName="Helvetica",
-        fontSize=6.8,
-        leading=9,
+        fontSize=6.6,
+        leading=8.6,
         textColor=c_primary,
     )
 
@@ -155,8 +155,8 @@ def build_pdf(output_path: str):
         "CalloutText",
         parent=styles["Normal"],
         fontName="Helvetica",
-        fontSize=7.2,
-        leading=10,
+        fontSize=6.8,
+        leading=9.2,
         textColor=colors.HexColor("#1F2937"),
     )
 
@@ -166,7 +166,7 @@ def build_pdf(output_path: str):
     # PAGE 1: TITLE, METADATA, & SECTION 1: LIST OF COMPLETED FEATURES
     # =========================================================================
     story.append(Paragraph("LOOMSHIELD -- Brand Governance Platform", title_style))
-    story.append(Paragraph("Round 2 Build Delivery Specification &amp; Project Verification Report", subtitle_style))
+    story.append(Paragraph("Project Submission Specification &amp; Verification Report", subtitle_style))
 
     # Metadata Table
     meta_data = [
@@ -176,14 +176,14 @@ def build_pdf(output_path: str):
             Paragraph("<b>Participant:</b> Isaac Shiloah Herbert V", table_cell),
         ],
         [
-            Paragraph("<b>Source-Code Repo:</b> <font color='#EA633F'><u>https://github.com/Inkloom-art/LoomShield</u></font>", table_cell),
+            Paragraph("<b>Source-Code Repo:</b> <font color='#EA633F'><u>https://github.com/isaacincognito007-cloud/Inkloom-artLoomShield</u></font>", table_cell),
             Paragraph("<b>Email:</b> isaac.incognito007@gmail.com", table_cell),
-            Paragraph("<b>Original App:</b> <font color='#EA633F'><u>https://inkloom.art</u></font>", table_cell),
+            Paragraph("<b>Working project link:</b> <font color='#EA633F'><u>https://inkloom.art</u></font>", table_cell),
         ],
         [
             Paragraph("<b>Operating Mode:</b> Two Local On-Device Engines (Deterministic + NLP)", table_cell),
             Paragraph("<b>API Key Policy:</b> Zero Mandatory External API Keys (100% On-Device)", table_cell),
-            Paragraph("<b>Automated Tests:</b> 68 / 68 Passed (100% Coverage & Privacy)", table_cell),
+            Paragraph("<b>Automated Tests:</b> 68/68 automated tests passed (100% pass rate); code coverage measured separately.", table_cell),
         ]
     ]
     meta_table = Table(meta_data, colWidths=[185, 185, 170])
@@ -191,20 +191,20 @@ def build_pdf(output_path: str):
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8F9FA")),
         ("BOX", (0, 0), (-1, -1), 0.8, c_border),
         ("INNERGRID", (0, 0), (-1, -1), 0.5, c_border),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(meta_table)
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 5))
 
     story.append(Paragraph("<b>Executive Summary:</b> LoomShield is an enterprise-grade, local-first brand governance workspace that inspects multi-format marketing content against approved brand guidelines before publication. Built with two on-device engines (Tier 1 Deterministic + Tier 2 Embedded Scikit-Learn TF-IDF NLP), LoomShield checks tone, terminology, messaging, promotional claims, visual brand assets, and accessibility. Every issue is cited with exact brand rules and verified fact sheets, surgical corrections are generated without overwriting the creator's voice, and approval events are logged in an immutable SHA-256 ledger--operating entirely on-device with zero mandatory external AI API keys.", body_style))
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
 
     # SECTION 1
     story.append(Paragraph("1. List of Completed Features (Round 2 Build)", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=c_accent, spaceBefore=1, spaceAfter=5))
+    story.append(HRFlowable(width="100%", thickness=1, color=c_accent, spaceBefore=1, spaceAfter=4))
 
     features_data = [
         [
@@ -280,8 +280,8 @@ def build_pdf(output_path: str):
         ("BACKGROUND", (0, 0), (-1, 0), c_primary),
         ("GRID", (0, 0), (-1, -1), 0.5, c_border),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, c_bg_alt]),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -289,11 +289,11 @@ def build_pdf(output_path: str):
     story.append(features_table)
 
     # =========================================================================
-    # PAGE 2: TECHNOLOGY AND IMPLEMENTATION DETAILS
+    # PAGE 2: TECHNOLOGY AND IMPLEMENTATION DETAILS + MACHINE REPRODUCIBILITY
     # =========================================================================
     story.append(PageBreak())
     story.append(Paragraph("2. Technology and Implementation Details", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=c_accent, spaceBefore=1, spaceAfter=6))
+    story.append(HRFlowable(width="100%", thickness=1, color=c_accent, spaceBefore=1, spaceAfter=5))
 
     story.append(Paragraph("<b>2.1 Core Architectural Layers & Component Breakdown</b>", h2_style))
     story.append(Paragraph("LoomShield enforces a strict local-first, two-tier architecture where content analysis, factual claim validation, and mathematical asset scoring occur entirely within the execution environment with zero cloud leakage:", body_style))
@@ -340,28 +340,74 @@ def build_pdf(output_path: str):
         ("BACKGROUND", (0, 0), (-1, 0), c_primary),
         ("GRID", (0, 0), (-1, -1), 0.5, c_border),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, c_bg_alt]),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     story.append(tech_table)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
     story.append(Paragraph("<b>2.2 Mathematical & Algorithmic Formulation</b>", h2_style))
     story.append(Paragraph("• <b>WCAG 2.1 AA Contrast Ratio:</b> Calculated from relative luminance <i>L = 0.2126&middot;R + 0.7152&middot;G + 0.0722&middot;B</i>, where channel values are sRGB linearized. The contrast ratio <i>(L1 + 0.05)/(L2 + 0.05)</i> strictly verifies body text achieves &ge; 4.5:1 and large text achieves &ge; 3.0:1.<br/>"
                            "• <b>CIE LAB &Delta;E Color Distance (CIE76):</b> Extracted hex codes and raster image swatch clusters are transformed from sRGB into standard D65 XYZ and then into the perceptually uniform CIE L*a*b* color space. Euclidean distance <i>&Delta;E = &radic;((&Delta;L*)&sup2; + (&Delta;a*)&sup2; + (&Delta;b*)&sup2;)</i> measures deviation against configured Brand Vault palette swatches (&Delta;E &le; 14.0 for NovaPay).<br/>"
                            "• <b>Flesch-Kincaid Reading Ease:</b> Evaluates reading complexity on extracted text as <i>206.835 &minus; 1.015&middot;(words/sentences) &minus; 84.6&middot;(syllables/words)</i> to flag overly dense corporate prose.<br/>"
                            "• <b>TF-IDF Vector Grounding & Cosine Similarity:</b> Active facts in the Brand Vault are transformed into a sparse term-frequency matrix using unigram and bigram tokenization with sublinear scaling. Extracted claim clauses are vector-projected into the same embedding space; cosine similarity <i>cos(&theta;) = (q &middot; d) / (||q|| ||d||)</i> identifies the top verified fact candidate without external network queries.", body_style))
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
-    story.append(Paragraph("<b>2.3 Empirical Performance & Resource Footprint</b>", h2_style))
-    story.append(Paragraph("Performance and memory consumption were empirically measured across standard text lengths via <font name='Courier'>tests/generate_test_cycles_report.py</font> on Windows AMD64:<br/>"
-                           "• <b>500 characters (Short social/ad copy):</b> Median total audit latency: <b>89.1 ms</b> (p95: 99.9 ms). Tier 1: 4.8 ms, Tier 2 NLP: 37.1 ms, SQLite DB: 45.5 ms.<br/>"
-                           "• <b>5,000 characters (Standard press release/article):</b> Median total latency: <b>186.2 ms</b> (p95: 229.3 ms). Tier 1: 23.8 ms, Tier 2 NLP: 81.5 ms, SQLite DB: 82.9 ms.<br/>"
-                           "• <b>25,000 characters (Long-form technical whitepaper):</b> Median total latency: <b>1,344.1 ms</b> (p95: 1,423.1 ms). Sub-second execution for standard documents.<br/>"
-                           "• <b>Memory & Reliability:</b> Peak memory footprint remains below <b>10.3 MB</b>, zero external HTTP dependencies, 0 process crashes, 100% reproducible across test runs.", body_style))
+    story.append(Paragraph("<b>2.3 Machine & Benchmark Reproducibility Details</b>", h2_style))
+    story.append(Paragraph("To ensure full scientific reproducibility, all performance, latency, and memory benchmarks were measured on a dedicated standard developer hardware environment using automated repeatable scripts:", body_style))
+
+    bench_env_data = [
+        [
+            Paragraph("Benchmark Parameter", table_header),
+            Paragraph("Exact Hardware & Software Specification", table_header),
+            Paragraph("Measurement Method & Verification Scope", table_header),
+        ],
+        [
+            Paragraph("<b>Host Machine & Processor</b>", table_cell_bold),
+            Paragraph("AMD Ryzen 3 7320U with Radeon Graphics<br/>4 Physical Cores, 8 Logical Threads (2.40 GHz base, up to 4.10 GHz boost)", table_cell),
+            Paragraph("Queried via Windows WMI (<font name='Courier'>Win32_Processor</font>). Standard commercially available client hardware.", table_cell),
+        ],
+        [
+            Paragraph("<b>Installed System Memory</b>", table_cell_bold),
+            Paragraph("8.0 GB LPDDR5 RAM (7.3 GB usable physical memory)", table_cell),
+            Paragraph("Hardware system memory reported by Windows OS (<font name='Courier'>GlobalMemoryStatusEx</font>).", table_cell),
+        ],
+        [
+            Paragraph("<b>Operating System & Runtime</b>", table_cell_bold),
+            Paragraph("Microsoft Windows 11 Home (64-bit)<br/>OS Version: 10.0.26200 (AMD64)<br/>Python 3.11.0 64-bit (MSC v.1933)", table_cell),
+            Paragraph("Execution environment runs natively under Windows PowerShell without virtualization or external container overhead.", table_cell),
+        ],
+        [
+            Paragraph("<b>Benchmark Command & Script</b>", table_cell_bold),
+            Paragraph("<font name='Courier'>python tests/generate_test_cycles_report.py</font>", table_cell),
+            Paragraph("Runs automated test cycles across 20 iterations per document tier; calculates median and 95th percentile metrics.", table_cell),
+        ],
+        [
+            Paragraph("<b>Latency Measurement Method</b>", table_cell_bold),
+            Paragraph("High-resolution monotonic timer: <font name='Courier'>time.perf_counter()</font>", table_cell),
+            Paragraph("Measures total execution time and isolates sub-timers: Tier 1 regex, Tier 2 TF-IDF retrieval, and SQLite write persistence.", table_cell),
+        ],
+        [
+            Paragraph("<b>Memory Accounting Scope</b>", table_cell_bold),
+            Paragraph("<b>Incremental Peak Heap: 10.25 MB</b> (<font name='Courier'>tracemalloc</font>)<br/>Process-Wide RSS Footprint: ~78.4 MB (<font name='Courier'>psutil</font>)", table_cell),
+            Paragraph("<b>Clarification:</b> The reported <b>10.25 MB</b> figure is strictly <b>incremental peak heap memory</b> allocated during audit execution. Total process RSS (~78.4 MB) includes the Python runtime, FastAPI ASGI server, Scikit-Learn libraries, and SQLite cache.", table_cell),
+        ],
+    ]
+    bench_table = Table(bench_env_data, colWidths=[120, 180, 240])
+    bench_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), c_primary),
+        ("GRID", (0, 0), (-1, -1), 0.5, c_border),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, c_bg_alt]),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.append(bench_table)
 
     # =========================================================================
     # PAGE 3: EXPLANATION OF CHANGES & THREE MAJOR IMPROVEMENTS FOR ROUND 3
@@ -414,14 +460,14 @@ def build_pdf(output_path: str):
         ("BACKGROUND", (0, 0), (-1, 0), c_primary),
         ("GRID", (0, 0), (-1, -1), 0.5, c_border),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, c_bg_alt]),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     story.append(changes_table)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
     # SECTION 4
     story.append(Paragraph("4. Three Major Improvements for Round 3 (The Finish)", h1_style))
@@ -452,7 +498,7 @@ def build_pdf(output_path: str):
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
     ]))
     story.append(t_imp1)
-    story.append(Spacer(1, 5))
+    story.append(Spacer(1, 4))
 
     # Improvement 2 Card
     imp2_data = [
@@ -478,7 +524,7 @@ def build_pdf(output_path: str):
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
     ]))
     story.append(t_imp2)
-    story.append(Spacer(1, 5))
+    story.append(Spacer(1, 4))
 
     # Improvement 3 Card
     imp3_data = [
@@ -506,85 +552,102 @@ def build_pdf(output_path: str):
     story.append(t_imp3)
 
     # =========================================================================
-    # PAGE 4: SUBMISSION LINKS, TEST TELEMETRY, & VERIFICATION CHECKLIST
+    # PAGE 4: DEMONSTRATION WALKTHROUGH, EVALUATION BREAKDOWN & EVIDENCE
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("5. Submission Links, Test Telemetry & Verification", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=c_accent, spaceBefore=1, spaceAfter=6))
+    story.append(Paragraph("5. Five-Step Judge's Demonstration Walkthrough & Verification", h1_style))
+    story.append(HRFlowable(width="100%", thickness=1, color=c_accent, spaceBefore=1, spaceAfter=5))
 
-    sub_data = [
+    # 5-Step Demo Card
+    demo_steps_data = [
         [
-            Paragraph("Submission Item", table_header),
-            Paragraph("Direct Location / Access Command", table_header),
-            Paragraph("Verification Status", table_header),
+            Paragraph("Step", table_header),
+            Paragraph("Interactive Demonstration Action", table_header),
+            Paragraph("Expected System Behaviour & Governance Output", table_header),
         ],
         [
-            Paragraph("<b>Source-Code Repository Link</b>", table_cell_bold),
-            Paragraph("<font color='#EA633F'><b>https://github.com/Inkloom-art/LoomShield</b></font><br/>Local workspace root: <font name='Courier'>D:\\LoomShield</font>", table_cell),
-            Paragraph("Complete codebase ready for Git review", table_cell),
+            Paragraph("<b>Step 1</b>", table_cell_bold),
+            Paragraph("<b>Launch LoomShield:</b> In terminal, execute:<br/><font name='Courier'>python run_loomshield.py --host 127.0.0.1 --port 8000</font><br/>Open <b>http://127.0.0.1:8000</b> in any browser.", table_cell),
+            Paragraph("Workspace UI loads immediately. Live self-test confirms both Tier 1 & Tier 2 engines are active with zero external cloud API keys.", table_cell),
         ],
         [
-            Paragraph("<b>Original Application Website</b>", table_cell_bold),
-            Paragraph("<font color='#EA633F'><b>https://inkloom.art</b></font>", table_cell),
-            Paragraph("Verified active product reference", table_cell),
+            Paragraph("<b>Step 2</b>", table_cell_bold),
+            Paragraph("<b>Select Configured Brand:</b> In top navigation brand selector, choose <b>NovaPay Enterprise</b> (fintech) or <b>Verdant Clinical Systems</b> (healthcare).", table_cell),
+            Paragraph("Active Brand Vault constraints, prohibited terminology lexicon, verified facts, approved hex palette, and WCAG thresholds dynamically load locally.", table_cell),
         ],
         [
-            Paragraph("<b>Local Server Execution</b>", table_cell_bold),
-            Paragraph("<font name='Courier'>python run_loomshield.py --host 127.0.0.1 --port 8000</font><br/>URL: <b>http://127.0.0.1:8000</b> | Docs: <b>/docs</b>", table_cell),
-            Paragraph("Running live with 0 external API keys", table_cell),
+            Paragraph("<b>Step 3</b>", table_cell_bold),
+            Paragraph("<b>Ingest Content or Upload Document:</b> Navigate to <i>'New Audit'</i>. Paste copy or click <i>'Upload File'</i> to submit a <b>.pdf, .docx, .html, .md</b> document or <b>.svg, .png</b> image.", table_cell),
+            Paragraph("Document parser validates magic bytes (<font name='Courier'>%PDF-</font>), tracks page boundary spans, and extracts text locally in-memory without cloud transmission.", table_cell),
         ],
         [
-            Paragraph("<b>Automated Test Suite (Full)</b>", table_cell_bold),
-            Paragraph("<font name='Courier'>pytest D:\\LoomShield\\tests\\ -v</font>", table_cell),
-            Paragraph("<b>68 / 68 Passed (100% Pass Rate)</b>", table_cell),
+            Paragraph("<b>Step 4</b>", table_cell_bold),
+            Paragraph("<b>Execute Audit & Inspect Citations:</b> Click <i>'Run Audit'</i>. Inspect findings in the 3-panel Review Studio across the 6 governance pillars.", table_cell),
+            Paragraph("Findings display exact Brand Rule IDs, paragraph references (<font name='Courier'>Page 1, P2</font>), numerical claim comparisons against Verified Facts, and surgical suggestions.", table_cell),
         ],
         [
-            Paragraph("<b>Dedicated PDF Test Suite</b>", table_cell_bold),
-            Paragraph("<font name='Courier'>pytest D:\\LoomShield\\tests\\test_loomshield_pdf.py -v</font>", table_cell),
-            Paragraph("<b>15 / 15 Passed (100% Pass Rate)</b>", table_cell),
-        ],
-        [
-            Paragraph("<b>Cycle 0-9 Spec Test Suite</b>", table_cell_bold),
-            Paragraph("<font name='Courier'>pytest D:\\LoomShield\\tests\\test_loomshield_cycles_0_to_9.py -v</font>", table_cell),
-            Paragraph("<b>43 / 43 Passed (100% Pass Rate)</b>", table_cell),
-        ],
-        [
-            Paragraph("<b>Responsible AI & Privacy Disclosure</b>", table_cell_bold),
-            Paragraph("100% On-Device Processing; Zero Cloud Token Dependencies; Human-in-the-Loop Override Accountability.", table_cell),
-            Paragraph("Full privacy and transparency compliance", table_cell),
+            Paragraph("<b>Step 5</b>", table_cell_bold),
+            Paragraph("<b>Review, Correct & Approve:</b> Preview surgical fix. Click <b>Accept</b> to apply replacement, <b>Modify</b> to tailor phrasing, or <b>Dismiss</b> with documented rationale.", table_cell),
+            Paragraph("Transition workflow to <i>'Approved'</i>. Content SHA-256 hash, version snapshot, and reviewer audit events are immutably logged in <i>'Audit History'</i>.", table_cell),
         ],
     ]
-    sub_table = Table(sub_data, colWidths=[140, 260, 140])
-    sub_table.setStyle(TableStyle([
+    demo_table = Table(demo_steps_data, colWidths=[40, 240, 260])
+    demo_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), c_primary),
         ("GRID", (0, 0), (-1, -1), 0.5, c_border),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, c_bg_alt]),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
-    story.append(sub_table)
-    story.append(Spacer(1, 10))
+    story.append(demo_table)
+    story.append(Spacer(1, 5))
 
-    # Empirical Precision/Recall/F1 Box
-    story.append(Paragraph("<b>5.1 Cycle 4 Empirical Evaluation (Held-Out Labelled Dataset)</b>", h2_style))
-    story.append(Paragraph("The two-tier engine was validated on a held-out dataset of 25 realistic corporate test sentences across three governance domains (measured via <font name='Courier'>tests/generate_test_cycles_report.py</font>):", body_style))
+    # Screenshots Visual Evidence
+    story.append(Paragraph("<b>5.1 Visual Application Evidence (Live Review Studio & Brand Vault)</b>", h2_style))
+    screenshot_path1 = r"D:\LoomShield\docs\live_studio_screenshot.png"
+    screenshot_path2 = r"D:\LoomShield\docs\inkloom_art_site.png"
+
+    img_elements = []
+    if os.path.exists(screenshot_path1) and os.path.exists(screenshot_path2):
+        im1 = RLImage(screenshot_path1, width=265, height=92)
+        im2 = RLImage(screenshot_path2, width=265, height=92)
+        img_table = Table([[im1, im2]], colWidths=[270, 270])
+        img_table.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(img_table)
+        story.append(Paragraph("<font color='#5F6368'><b>Left:</b> LoomShield 3-Panel Review Studio with explainable finding cards & exact rule citations. <b>Right:</b> Working project interface & Brand Vault governance.</font>", callout_text))
+        story.append(Spacer(1, 4))
+
+    # Complete Evaluation Breakdown (All 25 Cases Clarified)
+    story.append(Paragraph("<b>5.2 Complete Cycle 4 Empirical Evaluation Breakdown (All 25 Test Scenarios)</b>", h2_style))
+    story.append(Paragraph("The evaluation suite in <font name='Courier'>tests/generate_test_cycles_report.py</font> validates <b>25 total test cases</b>: 16 positive test cases (known violations) and 9 negative test cases (compliant enterprise copy and on-palette assets). Metrics are computed strictly as: <b>Precision = TP / (TP + FP)</b>; <b>Recall = TP / (TP + FN)</b>; <b>F1 = 2 &times; (Precision &times; Recall) / (Precision + Recall)</b>; <b>Specificity = TN / (TN + FP)</b>:", body_style))
 
     eval_data = [
         [
             Paragraph("Governance Pillar Category", table_header),
-            Paragraph("True Positives", table_header),
-            Paragraph("False Positives", table_header),
-            Paragraph("False Negatives", table_header),
+            Paragraph("Total Cases", table_header),
+            Paragraph("True Pos (TP)", table_header),
+            Paragraph("True Neg (TN)", table_header),
+            Paragraph("False Pos (FP)", table_header),
+            Paragraph("False Neg (FN)", table_header),
             Paragraph("Precision", table_header),
             Paragraph("Recall", table_header),
             Paragraph("F1-Score", table_header),
         ],
         [
-            Paragraph("<b>Terminology & Brand Naming</b>", table_cell_bold),
+            Paragraph("<b>Terminology & Product Naming</b>", table_cell_bold),
+            Paragraph("9 cases", table_cell),
             Paragraph("6", table_cell),
+            Paragraph("3", table_cell),
             Paragraph("0", table_cell),
             Paragraph("0", table_cell),
             Paragraph("100.0%", table_cell),
@@ -593,7 +656,9 @@ def build_pdf(output_path: str):
         ],
         [
             Paragraph("<b>Promotional Claims & Fact Retrieval</b>", table_cell_bold),
+            Paragraph("9 cases", table_cell),
             Paragraph("6", table_cell),
+            Paragraph("3", table_cell),
             Paragraph("0", table_cell),
             Paragraph("0", table_cell),
             Paragraph("100.0%", table_cell),
@@ -601,7 +666,9 @@ def build_pdf(output_path: str):
             Paragraph("<b>1.000</b>", table_cell_bold),
         ],
         [
-            Paragraph("<b>Tone, Voice & Human Guardrails</b>", table_cell_bold),
+            Paragraph("<b>Tone, Voice & Guardrail Framing</b>", table_cell_bold),
+            Paragraph("4 cases", table_cell),
+            Paragraph("2", table_cell),
             Paragraph("2", table_cell),
             Paragraph("0", table_cell),
             Paragraph("0", table_cell),
@@ -609,43 +676,82 @@ def build_pdf(output_path: str):
             Paragraph("100.0%", table_cell),
             Paragraph("<b>1.000</b>", table_cell_bold),
         ],
+        [
+            Paragraph("<b>Visual & Accessibility Controls</b>", table_cell_bold),
+            Paragraph("3 cases", table_cell),
+            Paragraph("2", table_cell),
+            Paragraph("1", table_cell),
+            Paragraph("0", table_cell),
+            Paragraph("0", table_cell),
+            Paragraph("100.0%", table_cell),
+            Paragraph("100.0%", table_cell),
+            Paragraph("<b>1.000</b>", table_cell_bold),
+        ],
+        [
+            Paragraph("<b>COMPLETE EVALUATION TOTAL</b>", table_cell_bold),
+            Paragraph("<b>25 cases</b>", table_cell_bold),
+            Paragraph("<b>16</b>", table_cell_bold),
+            Paragraph("<b>9</b>", table_cell_bold),
+            Paragraph("<b>0</b>", table_cell_bold),
+            Paragraph("<b>0</b>", table_cell_bold),
+            Paragraph("<b>100.0%</b>", table_cell_bold),
+            Paragraph("<b>100.0%</b>", table_cell_bold),
+            Paragraph("<b>1.000</b>", table_cell_bold),
+        ],
     ]
-    eval_table = Table(eval_data, colWidths=[180, 60, 60, 60, 60, 60, 60])
+    eval_table = Table(eval_data, colWidths=[140, 50, 50, 50, 50, 50, 50, 50, 50])
     eval_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
         ("GRID", (0, 0), (-1, -1), 0.5, c_border),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, c_bg_alt]),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, c_bg_alt]),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EAECEE")),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ("ALIGN", (1, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
     story.append(eval_table)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 4))
 
-    # Declaration & Sign-off Box
-    decl_data = [
+    # Submission Links & Verification Table (without redundant 'Direct Location' column)
+    story.append(Paragraph("<b>5.3 Submission Links & Verification</b>", h2_style))
+    sub_data = [
         [
-            Paragraph("<b>PARTICIPANT DECLARATION & INTEGRITY STATEMENT</b>", table_header)
+            Paragraph("Submission Item", table_header),
+            Paragraph("Details, Working URLs & Verification Commands", table_header),
         ],
         [
-            Paragraph("I, <b>Isaac Shiloah Herbert V</b>, competing as a solo participant (Team <b>isaac.incognito007</b>), declare that the LoomShield codebase, architecture, documentation, and evaluation test suite were developed and verified in accordance with Round 2 requirements. The software operates 100% locally on-device with zero mandatory cloud AI keys, preserves user data privacy, honestly discloses technical limitations, and is fully prepared for Round 3 finish delivery.<br/><br/>"
-                      "<b>Participant Signature:</b> Isaac Shiloah Herbert V &nbsp;&nbsp;&bull;&nbsp;&nbsp; <b>Date:</b> October 22, 2026 &nbsp;&nbsp;&bull;&nbsp;&nbsp; <b>Email:</b> isaac.incognito007@gmail.com", callout_text)
-        ]
+            Paragraph("<b>Source-Code Repository Link</b>", table_cell_bold),
+            Paragraph("<font color='#EA633F'><b>https://github.com/isaacincognito007-cloud/Inkloom-artLoomShield</b></font><br/>Full codebase cleanly committed on <font name='Courier'>main</font> branch with zero external cloud dependencies.", table_cell),
+        ],
+        [
+            Paragraph("<b>Working Project Link</b>", table_cell_bold),
+            Paragraph("<font color='#EA633F'><b>https://inkloom.art</b></font> &nbsp;(Local workspace: <b>http://127.0.0.1:8000</b> &nbsp;|&nbsp; OpenAPI: <b>http://127.0.0.1:8000/docs</b>)", table_cell),
+        ],
+        [
+            Paragraph("<b>Automated Test Suite (Full)</b>", table_cell_bold),
+            Paragraph("<b>68/68 automated tests passed (100% pass rate); code coverage measured separately.</b><br/>Execute in terminal: <font name='Courier'>pytest D:\\LoomShield\\tests\\ -v</font> (Includes 15 dedicated PDF tests in <font name='Courier'>test_loomshield_pdf.py</font>)", table_cell),
+        ],
+        [
+            Paragraph("<b>Participant Declaration</b>", table_cell_bold),
+            Paragraph("I, <b>Isaac Shiloah Herbert V</b> (Team <b>isaac.incognito007</b>), declare that the LoomShield codebase, architecture, documentation, and evaluation test suite were developed and verified for Round 2 delivery. The software operates 100% locally on-device with zero mandatory cloud AI keys.<br/>"
+                      "<b>Signature:</b> Isaac Shiloah Herbert V &nbsp;&bull;&nbsp; <b>Date:</b> October 22, 2026 &nbsp;&bull;&nbsp; <b>Email:</b> isaac.incognito007@gmail.com", table_cell),
+        ],
     ]
-    t_decl = Table(decl_data, colWidths=[540])
-    t_decl.setStyle(TableStyle([
+    sub_table = Table(sub_data, colWidths=[150, 390])
+    sub_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), c_primary),
-        ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#F8F9FA")),
-        ("BOX", (0, 0), (-1, -1), 0.8, c_border),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("GRID", (0, 0), (-1, -1), 0.5, c_border),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, c_bg_alt]),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
-    story.append(t_decl)
+    story.append(sub_table)
 
     # Build document using NumberedCanvas
     doc.build(story, canvasmaker=NumberedCanvas)
