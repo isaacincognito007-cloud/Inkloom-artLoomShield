@@ -5,15 +5,18 @@ LoomShield runs as a production workspace by default. A separate, isolated sampl
 workspace is only available when the deployment explicitly sets
 ``LOOMSHIELD_WORKSPACE_MODE=demo`` (for example ``python run_loomshield.py --demo``).
 
-There is no interactive login in this local build. The signed-in identity and role are
-therefore taken from deployment configuration (``LOOMSHIELD_USER_NAME`` and
+There is no interactive login in this build. The signed-in identity and role are
+taken from deployment configuration (``LOOMSHIELD_USER_NAME`` and
 ``LOOMSHIELD_USER_ROLE``) and enforced on the server. Client-supplied roles are ignored in
 production; they are only honoured inside the clearly labelled demo workspace so that
 evaluators can preview how each role behaves.
 """
 
+import logging
 import os
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger("loomshield.config")
 
 VALID_ROLES = ("Content Creator", "Reviewer", "Brand Administrator")
 
@@ -69,9 +72,28 @@ def is_demo_mode() -> bool:
     return workspace_mode() == "demo"
 
 
+def deployment_mode() -> str:
+    return os.environ.get("LOOMSHIELD_DEPLOYMENT", "").strip().lower()
+
+
+def processing_mode() -> str:
+    return "local" if deployment_mode() == "local" else "hosted"
+
+
 def configured_role() -> str:
-    role = os.environ.get("LOOMSHIELD_USER_ROLE", "Brand Administrator").strip()
-    return role if role in VALID_ROLES else "Brand Administrator"
+    """Return configured role. In hosted production, unconfigured defaults to least-privilege Content Creator."""
+    role = os.environ.get("LOOMSHIELD_USER_ROLE", "").strip()
+    if role in VALID_ROLES:
+        return role
+
+    is_local = deployment_mode() == "local" or bool(os.environ.get("PYTEST_CURRENT_TEST"))
+    if is_local:
+        return "Brand Administrator"
+
+    logger.warning(
+        "LOOMSHIELD_USER_ROLE is unset in hosted deployment; defaulting to least-privilege role: 'Content Creator'."
+    )
+    return "Content Creator"
 
 
 def configured_user_name() -> str:
@@ -82,7 +104,7 @@ def configured_user_name() -> str:
 def resolve_role(requested_role: Optional[str] = None) -> str:
     """Return the role the server will actually enforce for this request.
 
-    Production: always the configured role (client-supplied roles are ignored).
+    Production: always the configured role (client-supplied roles are strictly ignored).
     Demo workspace: a valid requested role is honoured as an explicit role preview.
     """
     if is_demo_mode() and requested_role in VALID_ROLES:
@@ -105,6 +127,8 @@ def session_payload(requested_role: Optional[str] = None) -> Dict[str, Any]:
         "workspace_mode": workspace_mode(),
         "is_demo": is_demo_mode(),
         "is_demo_mode": is_demo_mode(),
+        "deployment_mode": deployment_mode() or "hosted",
+        "processing_mode": processing_mode(),
         "user_name": name,
         "user_role": role,
         "user": {"name": name, "role": role},

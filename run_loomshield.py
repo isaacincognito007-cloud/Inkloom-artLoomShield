@@ -9,6 +9,8 @@ if __name__ == "__main__":
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Server host (default: 127.0.0.1)")
     args = parser.parse_args()
 
+    os.environ.setdefault("LOOMSHIELD_DEPLOYMENT", "local")
+
     if args.demo:
         os.environ["LOOMSHIELD_WORKSPACE_MODE"] = "demo"
 
