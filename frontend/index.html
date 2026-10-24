@@ -342,8 +342,8 @@
                       </div>
                       <span class="status-badge badge-neutral" id="processingModeBadge">Detecting</span>
                     </div>
-                    <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary);">
-                      <strong>Cloud processing:</strong> Not available in this build. Audits execute via on-device deterministic checks and local NLP.
+                    <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary);" id="cloudProcessingNote">
+                      <strong>Verification engines:</strong> Audits execute via deterministic rules and embedded NLP on the LoomShield backend. No third-party AI APIs are used.
                     </div>
                   </div>
                 </div>
@@ -606,10 +606,10 @@
           <div class="page-header">
             <div>
               <h1 class="page-title">Privacy and processing</h1>
-              <p class="page-subtitle">Verify local-only operating mode, run on-device engine self-tests, and inspect supported file formats.</p>
+              <p class="page-subtitle">Verify operating mode, run engine self-tests, and inspect supported file formats.</p>
             </div>
             <div class="page-actions">
-              <button type="button" class="btn btn-accent" id="runEngineSelftestHeaderBtn">Run local self-test</button>
+              <button type="button" class="btn btn-accent" id="runEngineSelftestHeaderBtn">Run engine self-test</button>
             </div>
           </div>
           <div id="engineStatusContainer"></div>

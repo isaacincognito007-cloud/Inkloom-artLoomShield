@@ -179,7 +179,7 @@ def test_check_failed_pillar_blocks_approval():
             original_content, current_content, overall_status, pillar_states_json, created_at, updated_at
         ) VALUES (
             'AUD-TEST-FAILED', 'novapay', 1, 'Failed Pillar Doc', 'plain_text',
-            'Content text', 'Content text', 'Draft',
+            'Content text', 'Content text', 'In Review',
             '{"Tone and Voice": "Check Failed", "Terminology": "Passed"}',
             '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z'
         )
@@ -293,3 +293,312 @@ def test_audit_requires_brand_id_no_default():
         data={"document_name": "Test Missing Brand"},
     )
     assert res_upload.status_code == 422
+
+
+# ============================================================================
+# PHASE 1b TEST SUITE: RBAC, ERROR SHAPES, IMMUTABILITY, CONCURRENCY & LIMITS
+# ============================================================================
+
+VAULT_WRITE_ENDPOINTS = [
+    ("POST", "/api/brands", {"id": "testbrand_cc", "name": "Test Brand"}),
+    ("PUT", "/api/vault/novapay/voice", {
+        "description": "Enterprise voice description",
+        "tone_principles": "Calm, accurate, evidence-backed",
+        "writing_style": "Clear active prose with definitions",
+        "messaging_principles": "Highlight verified capabilities",
+        "do_examples": [],
+        "dont_examples": [],
+    }),
+    ("PUT", "/api/vault/novapay/visual-specs", {
+        "typography_specs": "Inter headings",
+        "spacing_rules": "8px base grid",
+        "logo_placement_constraints": "High contrast",
+    }),
+    ("PUT", "/api/vault/novapay/accessibility-rules", {
+        "min_contrast_normal": 4.5,
+        "min_contrast_large": 3.0,
+        "require_alt_text": True,
+        "enforce_heading_order": True,
+        "target_reading_ease": 50.0,
+    }),
+    ("POST", "/api/vault/novapay/terminology", {
+        "preferred_term": "NovaPay Core",
+        "prohibited_term": "NovaWallet",
+        "replacement_term": "NovaPay Core",
+        "case_sensitive": False,
+        "notes": "Valid terminology note",
+        "rule_id": "RULE-TERM-01",
+    }),
+    ("PUT", "/api/vault/novapay/terminology/TERM-NOVAPAY-01", {
+        "preferred_term": "NovaPay Core",
+        "prohibited_term": "NovaWallet",
+        "replacement_term": "NovaPay Core",
+        "case_sensitive": False,
+        "notes": "Valid terminology note",
+        "rule_id": "RULE-TERM-01",
+    }),
+    ("DELETE", "/api/vault/novapay/terminology/TERM-NOVAPAY-01", None),
+    ("PUT", "/api/vault/novapay/facts/FACT-NOVAPAY-01", {
+        "statement": "64% faster processing benchmark across currencies",
+        "numeric_value": "64",
+        "numeric_units": "%",
+        "product_context": "NovaPay Core",
+        "source_reference": "Benchmark Report Q3",
+        "applicable_conditions": "Under verified network tests",
+        "date_version": "2026-10 (v1.0)",
+        "verification_status": "Verified",
+    }),
+    ("PUT", "/api/vault/novapay/facts/FACT-NOVAPAY-01/status", {
+        "status": "Verified",
+        "reviewer_notes": "Verified by admin",
+    }),
+    ("DELETE", "/api/vault/novapay/facts/FACT-NOVAPAY-01", None),
+    ("POST", "/api/vault/novapay/colors", {
+        "name": "Test Blue",
+        "hex_code": "#0055ff",
+        "usage_role": "Primary Accent",
+        "max_delta_e": 14.0,
+    }),
+    ("PUT", "/api/vault/novapay/colors/COL-NOVAPAY-01", {
+        "name": "Test Blue 2",
+        "hex_code": "#0055fe",
+        "usage_role": "Primary Accent",
+        "max_delta_e": 14.0,
+    }),
+    ("DELETE", "/api/vault/novapay/colors/COL-NOVAPAY-01", None),
+    ("POST", "/api/vault/novapay/rules", {
+        "pillar": "Tone and Voice",
+        "title": "Rule Title Test",
+        "description": "Rule Description Test",
+        "severity": "medium",
+    }),
+    ("PUT", "/api/vault/novapay/rules/RULE-NOVAPAY-01", {
+        "pillar": "Tone and Voice",
+        "title": "Rule Title Test 2",
+        "description": "Rule Description Test 2",
+        "severity": "medium",
+    }),
+    ("DELETE", "/api/vault/novapay/rules/RULE-NOVAPAY-01", None),
+]
+
+
+@pytest.mark.parametrize("method,path,payload", VAULT_WRITE_ENDPOINTS)
+def test_content_creator_blocked_from_all_16_vault_writes(monkeypatch, method, path, payload):
+    """Content Creator role receives 403 Forbidden across all 16 Brand Vault write endpoints."""
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "production")
+    monkeypatch.setenv("LOOMSHIELD_USER_ROLE", "Content Creator")
+    if method == "POST":
+        res = client.post(path, json=payload)
+    elif method == "PUT":
+        res = client.put(path, json=payload)
+    elif method == "DELETE":
+        res = client.delete(path)
+    assert res.status_code == 403, f"Expected 403 on {method} {path}, got {res.status_code}"
+
+
+def test_brand_administrator_allowed_vault_write(monkeypatch):
+    """Brand Administrator successfully writes to Brand Vault (200/201)."""
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "production")
+    monkeypatch.setenv("LOOMSHIELD_USER_ROLE", "Brand Administrator")
+    res = client.post(
+        "/api/vault/novapay/rules",
+        json={"pillar": "Tone and Voice", "title": "Admin Allowed Rule", "description": "Admin description", "severity": "low"}
+    )
+    assert res.status_code == 200
+    assert "rule_id" in res.json()
+
+
+def test_error_shape_and_request_id_for_all_error_types():
+    """All HTTP error responses (404, 405, 422) return structured error shape with request_id."""
+    # 404 Not Found
+    r404 = client.get("/api/nonexistent-route-xyz")
+    assert r404.status_code == 404
+    assert "x-request-id" in r404.headers
+    data404 = r404.json()
+    assert "error" in data404
+    assert "request_id" in data404["error"]
+
+    # 405 Method Not Allowed
+    r405 = client.delete("/api/brands")
+    assert r405.status_code == 405
+    assert "x-request-id" in r405.headers
+    data405 = r405.json()
+    assert "error" in data405
+    assert "request_id" in data405["error"]
+
+    # 422 Unprocessable Entity
+    r422 = client.post("/api/audits", json={"invalid": "payload"})
+    assert r422.status_code == 422
+    assert "x-request-id" in r422.headers
+    data422 = r422.json()
+    assert "error" in data422
+    assert "request_id" in data422["error"]
+
+
+def test_rate_limiting_429_on_audit_upload_and_reset():
+    """Rate limiter enforces per-IP limits and returns 429 Too Many Requests."""
+    from backend.main import audit_rate_limiter
+    audit_rate_limiter.reset()
+
+    # Verify limiter unit isolation
+    for _ in range(30):
+        assert audit_rate_limiter.is_allowed("198.51.100.1") is True
+    assert audit_rate_limiter.is_allowed("198.51.100.1") is False
+
+    # Live endpoint rate limit returns 429
+    headers = {"x-forwarded-for": "203.0.113.99"}
+    payload = {"brand_id": "novapay", "document_name": "RL Test", "content": "Simple text"}
+    for _ in range(30):
+        res = client.post("/api/audits", json=payload, headers=headers)
+        assert res.status_code == 200
+    res_limited = client.post("/api/audits", json=payload, headers=headers)
+    assert res_limited.status_code == 429
+    assert "rate limit exceeded" in res_limited.json()["detail"].lower()
+
+
+def test_workflow_transitions_and_cas_concurrency():
+    """Workflow enforces valid state transitions: Draft -> In Review -> Approved."""
+    aud = client.post(
+        "/api/audits",
+        json={"brand_id": "novapay", "document_name": "CAS Test", "content": "NovaPay Core compliant content."}
+    ).json()
+    aid = aud["id"]
+
+    # Direct Draft -> Approved is rejected (409)
+    res_direct = client.post(f"/api/audits/{aid}/workflow", json={"new_state": "Approved"})
+    assert res_direct.status_code == 409
+    assert "Invalid workflow transition" in res_direct.json()["detail"]
+
+    # Draft -> In Review is accepted (200)
+    res_in_review = client.post(f"/api/audits/{aid}/workflow", json={"new_state": "In Review"})
+    assert res_in_review.status_code == 200
+    assert res_in_review.json()["overall_status"] == "In Review"
+
+    # In Review -> Approved is accepted (200)
+    res_app = client.post(f"/api/audits/{aid}/workflow", json={"new_state": "Approved", "comment": "Approved"})
+    assert res_app.status_code == 200
+    assert res_app.json()["overall_status"] == "Approved"
+
+    # Approved -> anything is rejected (409)
+    res_reopen = client.post(f"/api/audits/{aid}/workflow", json={"new_state": "In Review"})
+    assert res_reopen.status_code == 409
+
+
+def test_approved_audit_immutable_to_decisions_and_rerun():
+    """Approved audits reject decisions and reruns with 409 Conflict."""
+    aud = client.post(
+        "/api/audits",
+        json={"brand_id": "novapay", "document_name": "Immutable Test", "content": "NovaPay Core compliant content."}
+    ).json()
+    aid = aud["id"]
+    client.post(f"/api/audits/{aid}/workflow", json={"new_state": "In Review"})
+    client.post(f"/api/audits/{aid}/workflow", json={"new_state": "Approved", "comment": "Approved"})
+
+    # Finding decision on approved audit returns 409
+    res_dec = client.post(f"/api/audits/{aid}/findings/FIND-FAKE/decision", json={"decision": "dismiss", "reason": "reason"})
+    assert res_dec.status_code == 409
+    assert "approved" in res_dec.json()["detail"].lower()
+
+    # Rerun on approved audit returns 409
+    res_rerun = client.post(f"/api/audits/{aid}/rerun")
+    assert res_rerun.status_code == 409
+    assert "approved" in res_rerun.json()["detail"].lower()
+
+
+def test_audits_pagination():
+    """GET /api/audits supports total, limit, and offset query parameters."""
+    res = client.get("/api/audits?limit=2&offset=0")
+    assert res.status_code == 200
+    data = res.json()
+    assert "total" in data
+    assert "limit" in data
+    assert "offset" in data
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+    assert isinstance(data["audits"], list)
+    assert len(data["audits"]) <= 2
+
+
+def test_cors_origins_env_parsing(monkeypatch):
+    """CORS origins parse comma-separated lists and exclude obsolete domains."""
+    from backend.main import parse_cors_origins
+    origins = parse_cors_origins("https://app1.example.com, https://app2.example.com")
+    assert "https://app1.example.com" in origins
+    assert "https://app2.example.com" in origins
+    assert "https://inkloom-art-loom-shield.vercel.app" not in origins
+
+
+def test_rerun_parser_failed_audit_stays_check_failed():
+    """Rerun on a parser-failed audit preserves Check Failed state and does not pass clean."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO audits (
+            id, brand_id, brand_version, document_name, input_format,
+            original_content, current_content, overall_status, pillar_states_json, created_at, updated_at
+        ) VALUES (
+            'AUD-TEST-RERUN-FAIL', 'novapay', 1, 'Scanned Doc', 'pdf',
+            '[Unparseable file: Corrupted PDF]', '[Unparseable file: Corrupted PDF]', 'Draft',
+            '{"Tone and Voice": "Check Failed", "Visual and Logo Consistency": "Check Failed"}',
+            '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z'
+        )
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO findings (
+            id, audit_id, pillar, issue_type, severity, flagged_text,
+            paragraph_ref, start_index, end_index, rule_or_fact_id,
+            source_evidence, explanation, suggested_correction, detection_method,
+            engine_source, review_state, decision_note, updated_at
+        ) VALUES (
+            'FIND-FAIL-01', 'AUD-TEST-RERUN-FAIL', 'Visual and Logo Consistency', 'Parser Failure', 'critical',
+            'Corrupted PDF', 'DOC', -1, -1, 'RULE-FAIL',
+            'pypdf', 'Scanned or unreadable document', 'OCR required', 'error',
+            'pypdf', 'open', '', '2026-10-24T00:00:00Z'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    res = client.post("/api/audits/AUD-TEST-RERUN-FAIL/rerun")
+    assert res.status_code == 200
+    rerun_data = res.json()
+    assert rerun_data["pillar_states"]["Visual and Logo Consistency"] == "Check Failed"
+    assert rerun_data["open_findings_count"] >= 1
+
+
+def test_audit_survives_database_restart():
+    """Audit records persist across database connection closures and restarts."""
+    aud = client.post(
+        "/api/audits",
+        json={"brand_id": "novapay", "document_name": "Persistence Restart Test", "content": "NovaPay Core compliant content."}
+    ).json()
+    audit_id = aud["id"]
+
+    # Direct SQLite query to simulate cold restart
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, document_name, overall_status FROM audits WHERE id = ?", (audit_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    assert row is not None
+    assert row["id"] == audit_id
+    assert row["document_name"] == "Persistence Restart Test"
+
+    # API read-back
+    api_res = client.get(f"/api/audits/{audit_id}")
+    assert api_res.status_code == 200
+    assert api_res.json()["id"] == audit_id
+
+
+def test_demo_reset_forbidden_in_production(monkeypatch):
+    """POST /api/demo/reset returns 403 Forbidden when workspace mode is production."""
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "production")
+    res = client.post("/api/demo/reset")
+    assert res.status_code == 403
+    assert "demo workspace mode" in res.json()["detail"].lower()
+

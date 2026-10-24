@@ -51,6 +51,18 @@ const AppState = {
   overviewData: null,
   overviewStatusFilter: 'ALL',
 
+  // View refresh tracking & errors
+  lastRefreshed: {
+    overview: null,
+    vault: null,
+    reviewQueue: null,
+    radar: null,
+    history: null,
+    engineStatus: null,
+  },
+  vaultError: null,
+  reviewQueueOffset: 0,
+
   // Audit Results state
   currentAudit: null,
   selectedFindingId: null,
@@ -420,7 +432,7 @@ async function apiFetch(url, options = {}, timeoutMs = 45000) {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
-      throw new ApiError(0, 'TIMEOUT', 'Request timed out after 45 seconds. Please try again.');
+      throw new ApiError(0, 'TIMEOUT', `Request timed out after ${Math.round(timeoutMs / 1000)} seconds. Please try again.`);
     }
     throw new ApiError(0, 'NETWORK_ERROR', 'Network connection error. Please verify the LoomShield server is running.');
   } finally {
@@ -452,6 +464,72 @@ async function apiFetch(url, options = {}, timeoutMs = 45000) {
     throw new ApiError(res.status, code, message, field, reqId);
   }
   return data;
+}
+
+function getApiErrorAction(err) {
+  if (!err) {
+    return { action: 'none', label: 'Action failed', canRetry: false, helperText: '', requestId: null };
+  }
+  const status = typeof err === 'object' ? (err.status || 0) : 0;
+  const code = typeof err === 'object' ? (err.code || '') : '';
+  const field = typeof err === 'object' ? (err.field || null) : null;
+  const reqId = typeof err === 'object' ? (err.requestId || null) : null;
+
+  if (status === 422 || code === 'VALIDATION_ERROR') {
+    return {
+      action: 'fix_field',
+      label: 'Check input format',
+      canRetry: false,
+      helperText: field ? `Please correct field "${field}".` : 'Please check required fields and data format.',
+      requestId: reqId,
+    };
+  }
+  if (status === 403 || code === 'PERMISSION_DENIED') {
+    return {
+      action: 'ask_admin',
+      label: 'Permission required',
+      canRetry: false,
+      helperText: 'Your current role is not authorized for this action. Contact a Brand Administrator.',
+      requestId: reqId,
+    };
+  }
+  if (status === 409 || code === 'CONFLICT') {
+    return {
+      action: 'refresh',
+      label: 'Conflict / State changed',
+      canRetry: true,
+      retryLabel: 'Refresh',
+      helperText: 'Document or rule state changed concurrently. Refresh to view latest status.',
+      requestId: reqId,
+    };
+  }
+  if (status === 429 || code === 'RATE_LIMITED') {
+    return {
+      action: 'retry',
+      label: 'Rate limited',
+      canRetry: true,
+      retryLabel: 'Retry',
+      helperText: 'Too many requests. Please wait a moment before trying again.',
+      requestId: reqId,
+    };
+  }
+  if (status === 0 || status >= 500 || code === 'TIMEOUT' || code === 'NETWORK_ERROR') {
+    return {
+      action: 'retry',
+      label: 'Connection / Server issue',
+      canRetry: true,
+      retryLabel: 'Retry',
+      helperText: 'Network connection or server problem. Retrying may succeed.',
+      requestId: reqId,
+    };
+  }
+  return {
+    action: 'none',
+    label: 'Action failed',
+    canRetry: false,
+    helperText: '',
+    requestId: reqId,
+  };
 }
 
 function openModalDialog({ title, bodyHtml, confirmLabel = 'Confirm', cancelLabel = 'Cancel', onConfirm, onCancel }) {
@@ -492,20 +570,29 @@ function openModalDialog({ title, bodyHtml, confirmLabel = 'Confirm', cancelLabe
   });
 }
 
-function showInlineError(containerEl, message, onRetry = null) {
+function showInlineError(containerEl, errOrMessage, onRetry = null) {
   if (!containerEl) return;
+  const isErr = errOrMessage instanceof Error || (typeof errOrMessage === 'object' && errOrMessage !== null && errOrMessage.message);
+  const message = isErr ? errOrMessage.message : String(errOrMessage);
+  const actionInfo = isErr ? getApiErrorAction(errOrMessage) : { canRetry: Boolean(onRetry), retryLabel: 'Retry', helperText: '', requestId: null };
+  const showRetry = Boolean(onRetry && actionInfo.canRetry);
+  const retryBtnLabel = actionInfo.retryLabel || 'Retry';
+  const reqId = actionInfo.requestId || (errOrMessage && errOrMessage.requestId) || null;
+
   containerEl.style.display = 'block';
   containerEl.innerHTML = `
     <div class="inline-error-banner" style="background: #FEF3F2; border: 1px solid #FECDCA; border-radius: 6px; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; font-size: 13px; color: #B42318;">
       <div style="display: flex; gap: 8px; align-items: flex-start;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         <div>
-          <div style="font-weight: 600;">Action failed</div>
+          <div style="font-weight: 600;">${escapeHtml(actionInfo.label || 'Action failed')}</div>
           <div style="color: #475467; margin-top: 2px;">${escapeHtml(message)}</div>
+          ${actionInfo.helperText ? `<div style="font-size: 12px; color: #B42318; margin-top: 3px;">${escapeHtml(actionInfo.helperText)}</div>` : ''}
+          ${reqId ? `<div style="font-size: 11px; color: #98A2B3; margin-top: 4px; font-family: var(--font-mono);">Request ID: ${escapeHtml(reqId)}</div>` : ''}
         </div>
       </div>
       <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-        ${onRetry ? `<button type="button" class="btn btn-sm inline-retry-btn" style="background: #fff; border-color: #FDA29B; color: #B42318; font-size: 12px; padding: 3px 8px;">Retry</button>` : ''}
+        ${showRetry ? `<button type="button" class="btn btn-sm inline-retry-btn" style="background: #fff; border-color: #FDA29B; color: #B42318; font-size: 12px; padding: 3px 8px;">${escapeHtml(retryBtnLabel)}</button>` : ''}
         <button type="button" class="inline-dismiss-btn" aria-label="Dismiss error" style="background: transparent; border: none; color: #98A2B3; font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;">&times;</button>
       </div>
     </div>
@@ -664,10 +751,17 @@ function bindNavigationEvents() {
     AppState.activeBrandId = e.target.value;
     AppState.currentAudit = null;
     AppState.selectedFindingId = null;
-    await refreshAllBrandData();
-    updateTopbarContext();
-    const displayBrand = getActiveBrandDisplayName();
-    showToast(`${displayBrand} selected`);
+    AppState.vaultData = null;
+    AppState.overviewData = null;
+    AppState.reviewQueueOffset = 0;
+    try {
+      await refreshAllBrandData();
+      updateTopbarContext();
+      const displayBrand = getActiveBrandDisplayName();
+      showToast(`${displayBrand} selected`);
+    } catch (err) {
+      showToast(`Failed to switch brand: ${err.message}`);
+    }
   });
 
   const runSelfTestBtn = document.getElementById('runEngineSelftestHeaderBtn');
@@ -707,8 +801,11 @@ async function switchView(viewName) {
   if (viewName === 'engine-status') await renderEngineStatusView();
 }
 
+let isInitialStartup = true;
+
 async function loadBrandsAndInit() {
   const sessionBanner = document.getElementById('sessionUnavailableBanner');
+  const sessionText = document.getElementById('sessionUnavailableText');
   const sessionRetryBtn = document.getElementById('sessionRetryBtn');
   if (sessionRetryBtn && !sessionRetryBtn._bound) {
     sessionRetryBtn._bound = true;
@@ -717,9 +814,18 @@ async function loadBrandsAndInit() {
     });
   }
 
+  const timeoutMs = isInitialStartup ? 90000 : 45000;
+  if (isInitialStartup && sessionBanner && sessionText) {
+    sessionText.textContent = 'Waking the server (may take up to 90 seconds on free cloud instances)...';
+    sessionBanner.style.display = 'flex';
+    sessionBanner.style.background = '#EFF8FF';
+    sessionBanner.style.color = '#175CD3';
+    sessionBanner.style.borderColor = '#B2DDFF';
+  }
+
   try {
     try {
-      const sessionData = await apiFetch('/api/session');
+      const sessionData = await apiFetch('/api/session', {}, timeoutMs);
       if (sessionData) {
         AppState.session = sessionData;
         AppState.demoMode = Boolean(sessionData.is_demo_mode);
@@ -732,12 +838,19 @@ async function loadBrandsAndInit() {
       }
     } catch (_e) {
       AppState.sessionAvailable = false;
-      if (sessionBanner) sessionBanner.style.display = 'flex';
+      if (sessionBanner && sessionText) {
+        sessionBanner.style.background = '#FEF3F2';
+        sessionBanner.style.color = '#B42318';
+        sessionBanner.style.borderColor = '#FECDCA';
+        sessionText.textContent = 'Cannot connect to LoomShield server. Audits and write actions are temporarily disabled.';
+        sessionBanner.style.display = 'flex';
+      }
       showToast('Session unavailable: operating in offline/degraded mode with write actions restricted.');
     }
     updateProcessingModeUI();
 
-    const res = await apiFetch('/api/brands');
+    const res = await apiFetch('/api/brands', {}, timeoutMs);
+    isInitialStartup = false;
     AppState.brands = res.brands || [];
     const sel = document.getElementById('brandSelector');
     sel.innerHTML = AppState.brands
@@ -752,12 +865,13 @@ async function loadBrandsAndInit() {
     await refreshAllBrandData();
     updateTopbarContext();
   } catch (err) {
+    isInitialStartup = false;
     showToast(`Failed to initialize workspace: ${err.message}`);
   }
 }
 
 async function refreshAllBrandData() {
-  await Promise.all([
+  await Promise.allSettled([
     refreshOverview(),
     refreshBrandVaultDataOnly(),
   ]);
@@ -774,9 +888,17 @@ async function refreshAllBrandData() {
 
 async function refreshOverview() {
   const container = document.getElementById('recentAuditsContainer');
+  if (container && !AppState.overviewData) {
+    container.innerHTML = `
+      <div style="padding: 32px; text-align: center; color: var(--text-secondary); font-size: 13px;">
+        Loading overview metrics...
+      </div>
+    `;
+  }
   try {
     const data = await apiFetch(`/api/overview/${encodeURIComponent(AppState.activeBrandId)}`);
     AppState.overviewData = data;
+    AppState.lastRefreshed.overview = new Date().toISOString();
 
     document.getElementById('metricDocsAudited').textContent = data.metrics.documents_audited;
     document.getElementById('metricOpenFindings').textContent = data.metrics.findings_requiring_attention;
@@ -788,7 +910,7 @@ async function refreshOverview() {
       `Compliance metrics and audit records scoped to ${brandScopeText}.`;
     document.getElementById('metricDocsScopeNote').textContent = `Scoped to ${data.brand_name}`;
     document.getElementById('overviewLastUpdatedText').textContent =
-      `Last updated: ${formatTimestamp(data.last_updated)}`;
+      `Last updated: ${formatTimestamp(AppState.lastRefreshed.overview)}`;
 
     document.getElementById('navRulesCount').textContent = data.metrics.brand_rules;
     const queueCount = (data.recent_audits || []).filter((a) => a.overall_status !== 'Approved').length;
@@ -801,11 +923,16 @@ async function refreshOverview() {
     document.getElementById('metricOpenFindings').textContent = '—';
     document.getElementById('metricApprovedContent').textContent = '—';
     document.getElementById('metricBrandRules').textContent = '—';
+    const action = getApiErrorAction(err);
+    const lastTime = AppState.lastRefreshed.overview ? formatTimestamp(AppState.lastRefreshed.overview) : 'Never';
     if (container) {
       container.innerHTML = `
-        <div class="empty-state-box">
-          <h3>Could not retrieve dashboard metrics</h3>
-          <p>${escapeHtml(err.message)}</p>
+        <div class="empty-state-box" style="border: 1px solid #FECDCA; background: #FEF3F2;">
+          <h3 style="color: #B42318;">Could not retrieve dashboard metrics</h3>
+          <p style="color: #475467;">${escapeHtml(err.message)}</p>
+          ${action.helperText ? `<div style="font-size: 12.5px; color: #B42318; margin-top: 4px;">${escapeHtml(action.helperText)}</div>` : ''}
+          ${err.requestId ? `<div style="font-size: 11px; color: #98A2B3; margin-top: 4px; font-family: var(--font-mono);">Request ID: ${escapeHtml(err.requestId)}</div>` : ''}
+          <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last successful update: ${escapeHtml(lastTime)}</div>
           <button type="button" class="btn btn-sm btn-accent" id="retryOverviewBtn" style="margin-top: 12px;">Retry</button>
         </div>
       `;
@@ -1882,18 +2009,52 @@ function bindBrandVaultEvents() {
 }
 
 async function refreshBrandVaultDataOnly() {
-  AppState.vaultData = await apiFetch(`/api/vault/${encodeURIComponent(AppState.activeBrandId)}`);
+  try {
+    AppState.vaultData = await apiFetch(`/api/vault/${encodeURIComponent(AppState.activeBrandId)}`);
+    AppState.lastRefreshed.vault = new Date().toISOString();
+    AppState.vaultError = null;
+  } catch (err) {
+    AppState.vaultData = null;
+    AppState.vaultError = err;
+    throw err;
+  }
 }
 
 async function refreshBrandVault() {
-  await refreshBrandVaultDataOnly();
-  renderBrandVaultTab();
+  const container = document.getElementById('vaultTabContent');
+  if (container && !AppState.vaultData) {
+    container.innerHTML = '<div class="card" style="padding: 32px; text-align: center; color: var(--text-secondary);">Loading Brand Vault guidelines...</div>';
+  }
+  try {
+    await refreshBrandVaultDataOnly();
+    renderBrandVaultTab();
+  } catch (err) {
+    renderBrandVaultTab();
+  }
 }
 
 function renderBrandVaultTab() {
   const container = document.getElementById('vaultTabContent');
+  if (AppState.vaultError && !AppState.vaultData) {
+    const action = getApiErrorAction(AppState.vaultError);
+    const lastTime = AppState.lastRefreshed.vault ? formatTimestamp(AppState.lastRefreshed.vault) : 'Never';
+    container.innerHTML = `
+      <div class="empty-state-box" style="border: 1px solid #FECDCA; background: #FEF3F2;">
+        <h3 style="color: #B42318;">Could not retrieve Brand Vault guidelines</h3>
+        <p style="color: #475467;">${escapeHtml(AppState.vaultError.message)}</p>
+        ${action.helperText ? `<div style="font-size: 12.5px; color: #B42318; margin-top: 4px;">${escapeHtml(action.helperText)}</div>` : ''}
+        ${AppState.vaultError.requestId ? `<div style="font-size: 11px; color: #98A2B3; margin-top: 4px; font-family: var(--font-mono);">Request ID: ${escapeHtml(AppState.vaultError.requestId)}</div>` : ''}
+        <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last successful update: ${escapeHtml(lastTime)}</div>
+        <button type="button" class="btn btn-sm btn-accent" id="retryVaultBtn" style="margin-top: 12px;">Retry</button>
+      </div>
+    `;
+    const retryBtn = document.getElementById('retryVaultBtn');
+    if (retryBtn) retryBtn.addEventListener('click', () => refreshBrandVault());
+    return;
+  }
+
   if (!AppState.vaultData) {
-    container.innerHTML = '<div class="card">Loading Brand Vault...</div>';
+    container.innerHTML = '<div class="card" style="padding: 32px; text-align: center; color: var(--text-secondary);">Loading Brand Vault...</div>';
     return;
   }
 
@@ -2884,9 +3045,15 @@ function renderVaultAccessibilityTab(container) {
 
 async function renderReviewQueueView() {
   const container = document.getElementById('reviewQueueContainer');
+  if (container && !AppState.lastRefreshed.reviewQueue) {
+    container.innerHTML = '<div style="padding: 32px; text-align: center; color: var(--text-secondary); font-size: 13px;">Loading review queue...</div>';
+  }
   try {
-    const res = await apiFetch(`/api/audits?brand_id=${encodeURIComponent(AppState.activeBrandId)}`);
+    const offset = AppState.reviewQueueOffset || 0;
+    const res = await apiFetch(`/api/audits?brand_id=${encodeURIComponent(AppState.activeBrandId)}&limit=50&offset=${offset}`);
+    AppState.lastRefreshed.reviewQueue = new Date().toISOString();
     const allAudits = res.audits || [];
+    const totalCount = res.total ?? allAudits.length;
     const statuses = ['ALL', 'Draft', 'In Review', 'Changes Requested', 'Revised', 'Approved'];
 
     const q = AppState.reviewQueueSearch.toLowerCase();
@@ -2958,6 +3125,16 @@ async function renderReviewQueueView() {
           </table>
         </div>
 
+        ${totalCount > 50 ? `
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border-color); font-size: 13px; color: var(--text-secondary);">
+            <div>Showing ${offset + 1}–${Math.min(offset + allAudits.length, totalCount)} of ${totalCount} documents</div>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="btn btn-sm" id="rqPrevPageBtn" ${offset <= 0 ? 'disabled' : ''}>&larr; Previous</button>
+              <button type="button" class="btn btn-sm" id="rqNextPageBtn" ${offset + 50 >= totalCount ? 'disabled' : ''}>Next &rarr;</button>
+            </div>
+          </div>
+        ` : ''}
+
         <div class="rq-cards-view">
           ${filtered.map((a) => {
             const hasUnresolved = a.open_findings > 0;
@@ -2992,6 +3169,21 @@ async function renderReviewQueueView() {
       `}
     `;
 
+    const prevBtn = document.getElementById('rqPrevPageBtn');
+    if (prevBtn) {
+      prevBtn.addEventListener('click', async () => {
+        AppState.reviewQueueOffset = Math.max(0, offset - 50);
+        await renderReviewQueueView();
+      });
+    }
+    const nextBtn = document.getElementById('rqNextPageBtn');
+    if (nextBtn) {
+      nextBtn.addEventListener('click', async () => {
+        AppState.reviewQueueOffset = offset + 50;
+        await renderReviewQueueView();
+      });
+    }
+
     container.querySelectorAll('.filter-pill[data-rq-filter]').forEach((btn) => {
       btn.addEventListener('click', () => {
         AppState.reviewQueueFilter = btn.getAttribute('data-rq-filter');
@@ -3021,7 +3213,6 @@ async function renderReviewQueueView() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               new_state: state,
-              approver_role: AppState.activeRole,
               comment: `Status updated to ${state} by ${AppState.activeRole}.`,
               override_acknowledged: false,
             }),
@@ -3044,7 +3235,6 @@ async function renderReviewQueueView() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               new_state: 'Approved',
-              approver_role: AppState.activeRole,
               comment: `Approved for publication by ${AppState.activeRole}.`,
               override_acknowledged: false,
             }),
@@ -3058,7 +3248,20 @@ async function renderReviewQueueView() {
       });
     });
   } catch (err) {
-    showToast(`Failed to load Review queue: ${err.message}`);
+    const action = getApiErrorAction(err);
+    const lastTime = AppState.lastRefreshed.reviewQueue ? formatTimestamp(AppState.lastRefreshed.reviewQueue) : 'Never';
+    container.innerHTML = `
+      <div class="empty-state-box" style="border: 1px solid #FECDCA; background: #FEF3F2;">
+        <h3 style="color: #B42318;">Could not retrieve review queue</h3>
+        <p style="color: #475467;">${escapeHtml(err.message)}</p>
+        ${action.helperText ? `<div style="font-size: 12.5px; color: #B42318; margin-top: 4px;">${escapeHtml(action.helperText)}</div>` : ''}
+        ${err.requestId ? `<div style="font-size: 11px; color: #98A2B3; margin-top: 4px; font-family: var(--font-mono);">Request ID: ${escapeHtml(err.requestId)}</div>` : ''}
+        <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last successful update: ${escapeHtml(lastTime)}</div>
+        <button type="button" class="btn btn-sm btn-accent" id="retryReviewQueueBtn" style="margin-top: 12px;">Retry</button>
+      </div>
+    `;
+    const retryBtn = document.getElementById('retryReviewQueueBtn');
+    if (retryBtn) retryBtn.addEventListener('click', () => renderReviewQueueView());
   }
 }
 
@@ -3068,15 +3271,39 @@ async function renderReviewQueueView() {
 
 async function renderAmbiguityRadarView() {
   const container = document.getElementById('ambiguityRadarContainer');
+  if (container && !AppState.lastRefreshed.radar) {
+    container.innerHTML = `
+      <div style="padding: 32px; text-align: center; color: var(--text-secondary); font-size: 13px;">
+        Loading guideline insights...
+      </div>
+    `;
+  }
   try {
     const data = await apiFetch(`/api/ambiguity-radar/${encodeURIComponent(AppState.activeBrandId)}`);
+    AppState.lastRefreshed.radar = new Date().toISOString();
     const rows = data.rules_analysis || [];
     const conciseNote = data.concise_info_note || 'Frequent overrides are a signal to review a rule, not proof it is incorrect.';
 
+    if (rows.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state-box">
+          <h3>No rule ambiguities or frequent overrides detected</h3>
+          <p>As reviewers evaluate audits and record finding dismissals or override justifications, patterns and wording recommendations will appear here.</p>
+          <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last checked: ${escapeHtml(formatTimestamp(AppState.lastRefreshed.radar))}</div>
+        </div>
+      `;
+      return;
+    }
+
     container.innerHTML = `
       <div class="card" style="margin-bottom: 16px; padding: 14px 18px; background-color: var(--bg-main);">
-        <div style="font-size: 13.5px; color: var(--text-primary); font-weight: 500;">
-          ${escapeHtml(conciseNote)}
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div style="font-size: 13.5px; color: var(--text-primary); font-weight: 500;">
+            ${escapeHtml(conciseNote)}
+          </div>
+          <div style="font-size: 11px; color: var(--text-secondary);">
+            Last updated: ${escapeHtml(formatTimestamp(AppState.lastRefreshed.radar))}
+          </div>
         </div>
       </div>
 
@@ -3156,7 +3383,22 @@ async function renderAmbiguityRadarView() {
       });
     });
   } catch (err) {
-    showToast(`Failed to load Guideline insights: ${err.message}`);
+    const action = getApiErrorAction(err);
+    const lastTime = AppState.lastRefreshed.radar ? formatTimestamp(AppState.lastRefreshed.radar) : 'Never';
+    if (container) {
+      container.innerHTML = `
+        <div class="empty-state-box" style="border: 1px solid #FECDCA; background: #FEF3F2;">
+          <h3 style="color: #B42318;">Could not retrieve guideline insights</h3>
+          <p style="color: #475467;">${escapeHtml(err.message)}</p>
+          ${action.helperText ? `<div style="font-size: 12.5px; color: #B42318; margin-top: 4px;">${escapeHtml(action.helperText)}</div>` : ''}
+          ${err.requestId ? `<div style="font-size: 11px; color: #98A2B3; margin-top: 4px; font-family: var(--font-mono);">Request ID: ${escapeHtml(err.requestId)}</div>` : ''}
+          <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last successful update: ${escapeHtml(lastTime)}</div>
+          ${action.canRetry ? `<button type="button" class="btn btn-sm btn-accent" id="retryRadarBtn" style="margin-top: 12px;">${escapeHtml(action.retryLabel || 'Retry')}</button>` : ''}
+        </div>
+      `;
+      const retryBtn = document.getElementById('retryRadarBtn');
+      if (retryBtn) retryBtn.addEventListener('click', () => renderAmbiguityRadarView());
+    }
   }
 }
 
@@ -3166,8 +3408,16 @@ async function renderAmbiguityRadarView() {
 
 async function renderAuditHistoryView() {
   const container = document.getElementById('auditHistoryContainer');
+  if (container && !AppState.lastRefreshed.history) {
+    container.innerHTML = `
+      <div style="padding: 32px; text-align: center; color: var(--text-secondary); font-size: 13px;">
+        Loading audit history...
+      </div>
+    `;
+  }
   try {
-    const res = await apiFetch(`/api/audits?brand_id=${encodeURIComponent(AppState.activeBrandId)}`);
+    const res = await apiFetch(`/api/audits?brand_id=${encodeURIComponent(AppState.activeBrandId)}&limit=100`);
+    AppState.lastRefreshed.history = new Date().toISOString();
     const audits = res.audits || [];
 
     if (audits.length === 0) {
@@ -3175,6 +3425,7 @@ async function renderAuditHistoryView() {
         <div class="empty-state-box">
           <h3>No audit history for this brand yet</h3>
           <p>Completed audits, content revisions, and approval events will appear here.</p>
+          <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last checked: ${escapeHtml(formatTimestamp(AppState.lastRefreshed.history))}</div>
         </div>
       `;
       return;
@@ -3216,6 +3467,7 @@ async function renderAuditHistoryView() {
               `).join('')}
             </select>
             ${renderStateBadge(detail.overall_status)}
+            <span style="font-size: 11.5px; color: var(--text-secondary); margin-left: 4px;">(${audits.length} record${audits.length === 1 ? '' : 's'})</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
             <div class="segmented-toggle" role="group" aria-label="History content format">
@@ -3297,7 +3549,22 @@ async function renderAuditHistoryView() {
       openAuditById(detail.id);
     });
   } catch (err) {
-    showToast(`Failed to load Audit history: ${err.message}`);
+    const action = getApiErrorAction(err);
+    const lastTime = AppState.lastRefreshed.history ? formatTimestamp(AppState.lastRefreshed.history) : 'Never';
+    if (container) {
+      container.innerHTML = `
+        <div class="empty-state-box" style="border: 1px solid #FECDCA; background: #FEF3F2;">
+          <h3 style="color: #B42318;">Could not retrieve audit history</h3>
+          <p style="color: #475467;">${escapeHtml(err.message)}</p>
+          ${action.helperText ? `<div style="font-size: 12.5px; color: #B42318; margin-top: 4px;">${escapeHtml(action.helperText)}</div>` : ''}
+          ${err.requestId ? `<div style="font-size: 11px; color: #98A2B3; margin-top: 4px; font-family: var(--font-mono);">Request ID: ${escapeHtml(err.requestId)}</div>` : ''}
+          <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last successful update: ${escapeHtml(lastTime)}</div>
+          ${action.canRetry ? `<button type="button" class="btn btn-sm btn-accent" id="retryHistoryBtn" style="margin-top: 12px;">${escapeHtml(action.retryLabel || 'Retry')}</button>` : ''}
+        </div>
+      `;
+      const retryBtn = document.getElementById('retryHistoryBtn');
+      if (retryBtn) retryBtn.addEventListener('click', () => renderAuditHistoryView());
+    }
   }
 }
 
@@ -3428,35 +3695,49 @@ async function triggerEngineSelftest() {
     const res = await apiFetch('/api/engine-selftest', { method: 'POST' });
     AppState.engineStatus = res.engine_status;
     await renderEngineStatusView();
-    showToast(`Local self-test completed (${res.selftest.status} in ${res.selftest.duration_ms} ms).`);
+    showToast(`Engine self-test completed (${res.selftest.status} in ${res.selftest.duration_ms} ms).`);
   } catch (err) {
     showToast(`Self-test failed: ${err.message}`);
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = 'Run local self-test';
+      btn.textContent = 'Run engine self-test';
     }
   }
 }
 
 async function renderEngineStatusView() {
   const container = document.getElementById('engineStatusContainer');
+  if (container && !AppState.lastRefreshed.engineStatus) {
+    container.innerHTML = `
+      <div style="padding: 32px; text-align: center; color: var(--text-secondary); font-size: 13px;">
+        Loading engine status and verification telemetry...
+      </div>
+    `;
+  }
   try {
     const status = await apiFetch('/api/engine-status');
     AppState.engineStatus = status;
+    AppState.lastRefreshed.engineStatus = new Date().toISOString();
 
-    const selftest = status.selftest;
-    const lastCheckedHtml = selftest && selftest.last_checked_at
-      ? `Last checked: <strong>${escapeHtml(formatTimestamp(selftest.last_checked_at))}</strong> (${selftest.duration_ms} ms)`
-      : 'Self-test has not been run in this session yet. Click "Run local self-test" above to verify.';
+    const selftest = status.last_selftest || status.selftest;
+    const lastCheckedHtml = selftest && (selftest.last_checked_at || status.last_selftest_time)
+      ? `Last checked: <strong>${escapeHtml(formatTimestamp(selftest.last_checked_at || status.last_selftest_time))}</strong> (${selftest.duration_ms} ms)`
+      : 'Self-test has not been run in this session yet. Click "Run engine self-test" above to verify.';
+
+    const isLocal = status.processing_mode === 'local';
+    const localOnlyBadge = status.local_only_mode || (isLocal ? 'On' : 'Off');
+    const localOnlyNote = isLocal
+      ? 'Audits and persistence run on this device'
+      : `Audits execute on LoomShield backend (${escapeHtml(status.storage_type || 'ephemeral')} storage)`;
 
     container.innerHTML = `
       <!-- Concise Factual Summary Cards (Section 08) -->
       <div class="metrics-grid">
         <div class="metric-card">
-          <div class="metric-label"><span>Local-only mode</span></div>
-          <div style="margin: 10px 0 6px;">${renderStateBadge(status.local_only_mode || 'On')}</div>
-          <div class="metric-note">Audits and persistence run on this device</div>
+          <div class="metric-label"><span>Operating mode</span></div>
+          <div style="margin: 10px 0 6px;">${renderStateBadge(localOnlyBadge)}</div>
+          <div class="metric-note">${escapeHtml(localOnlyNote)}</div>
         </div>
 
         <div class="metric-card">
@@ -3466,22 +3747,26 @@ async function renderEngineStatusView() {
         </div>
 
         <div class="metric-card">
-          <div class="metric-label"><span>Local NLP</span></div>
+          <div class="metric-label"><span>Embedded NLP</span></div>
           <div style="margin: 10px 0 6px;">${renderStateBadge(selftest ? selftest.status : (status.local_nlp_status || 'Available'))}</div>
-          <div class="metric-note">On-device fact retrieval &amp; claim comparison</div>
+          <div class="metric-note">Fact retrieval &amp; claim comparison</div>
         </div>
 
         <div class="metric-card">
-          <div class="metric-label"><span>Cloud fallback</span></div>
-          <div style="margin: 10px 0 6px;">${renderStateBadge(status.cloud_fallback_status || 'Disabled / Not configured')}</div>
-          <div class="metric-note">No external API key required or configured</div>
+          <div class="metric-label"><span>Storage &amp; records</span></div>
+          <div style="margin: 10px 0 6px;">
+            <span class="status-badge ${status.storage_type === 'persistent' ? 'badge-passed' : 'badge-neutral'}">
+              ${escapeHtml(status.storage_type === 'persistent' ? 'Persistent disk' : 'Ephemeral instance')}
+            </span>
+          </div>
+          <div class="metric-note">${status.record_counts && status.record_counts.audits !== undefined ? `${status.record_counts.audits} audits · ${status.record_counts.rules || 0} rules · ${status.record_counts.findings || 0} findings` : 'Zero external API keys'}</div>
         </div>
       </div>
 
       <div class="card" style="margin-bottom: 16px;">
         <div class="card-header">
           <div>
-            <h2 class="card-title">Live local engine verification</h2>
+            <h2 class="card-title">Live engine verification</h2>
             <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;">${lastCheckedHtml}</div>
           </div>
           ${selftest ? renderStateBadge(selftest.status) : renderStateBadge('Not Checked')}
@@ -3512,7 +3797,7 @@ async function renderEngineStatusView() {
           </div>
         ` : `
           <p style="font-size: 13.5px; color: var(--text-secondary);">
-            Run the local self-test to execute live validation of the contrast calculator, colour distance engine, embedded fact retrieval model, and HTML/SVG markup sanitiser.
+            Run the engine self-test to execute live validation of the contrast calculator, colour distance engine, embedded fact retrieval model, and HTML/SVG markup sanitiser.
           </p>
         `}
       </div>
@@ -3524,8 +3809,8 @@ async function renderEngineStatusView() {
           ${(status.supported_formats || []).map((f) => `<span class="mono-id" style="margin-right: 4px;">.${escapeHtml(f)}</span>`).join('')}
         </p>
         <ul style="padding-left: 18px; font-size: 13.5px; line-height: 1.65; color: var(--text-primary);">
-          <li><strong>What runs locally:</strong> All six audit pillars, rule matching, fact retrieval, file parsing, and SQLite storage execute locally on the host running the LoomShield backend.</li>
-          <li><strong>What is persisted:</strong> Brand Vault rules, submitted content snapshots, revision history, and approval logs are stored in the local SQLite database.</li>
+          <li><strong>Processing location:</strong> All six audit pillars, rule matching, fact retrieval, file parsing, and SQLite storage execute on the host running the LoomShield backend.</li>
+          <li><strong>Persistence:</strong> Brand Vault rules, submitted content snapshots, revision history, and approval logs are stored in the SQLite database (${escapeHtml(status.storage_type || 'ephemeral')} storage).</li>
           <li><strong>External network policy:</strong> No external AI API key is required or configured. Fonts and styles are served locally from the application bundle.</li>
           ${(status.honest_limitations || []).map((lim) => `<li>${escapeHtml(lim)}</li>`).join('')}
         </ul>
@@ -3574,6 +3859,21 @@ async function renderEngineStatusView() {
       </div>
     `;
   } catch (err) {
-    showToast(`Failed to load privacy and processing status: ${err.message}`);
+    const action = getApiErrorAction(err);
+    const lastTime = AppState.lastRefreshed.engineStatus ? formatTimestamp(AppState.lastRefreshed.engineStatus) : 'Never';
+    if (container) {
+      container.innerHTML = `
+        <div class="empty-state-box" style="border: 1px solid #FECDCA; background: #FEF3F2;">
+          <h3 style="color: #B42318;">Could not retrieve engine status</h3>
+          <p style="color: #475467;">${escapeHtml(err.message)}</p>
+          ${action.helperText ? `<div style="font-size: 12.5px; color: #B42318; margin-top: 4px;">${escapeHtml(action.helperText)}</div>` : ''}
+          ${err.requestId ? `<div style="font-size: 11px; color: #98A2B3; margin-top: 4px; font-family: var(--font-mono);">Request ID: ${escapeHtml(err.requestId)}</div>` : ''}
+          <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last successful update: ${escapeHtml(lastTime)}</div>
+          ${action.canRetry ? `<button type="button" class="btn btn-sm btn-accent" id="retryEngineStatusBtn" style="margin-top: 12px;">${escapeHtml(action.retryLabel || 'Retry')}</button>` : ''}
+        </div>
+      `;
+      const retryBtn = document.getElementById('retryEngineStatusBtn');
+      if (retryBtn) retryBtn.addEventListener('click', () => renderEngineStatusView());
+    }
   }
 }

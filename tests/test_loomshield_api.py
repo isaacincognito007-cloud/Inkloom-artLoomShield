@@ -253,12 +253,17 @@ def test_correction_accept_modify_dismiss_and_workflow_approval():
             )
             assert good_dis.status_code == 200
 
-    # E2: Now that all findings are resolved, Reviewer approval succeeds and records approval trail
+    # E2: Submit for review first, then approval succeeds and records approval trail
+    sub_res = client.post(
+        f"/api/audits/{audit_id}/workflow",
+        json={"new_state": "In Review", "comment": "Submitting for editorial review."},
+    )
+    assert sub_res.status_code == 200
+
     app_res = client.post(
         f"/api/audits/{audit_id}/workflow",
         json={
             "new_state": "Approved",
-            "approver_role": "Reviewer",
             "comment": "All findings resolved and verified against NovaPay Brand Vault.",
             "override_acknowledged": False,
         },

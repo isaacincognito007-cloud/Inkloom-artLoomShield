@@ -951,11 +951,19 @@ def test_cycle6_privacy_and_security_tests_1_to_7():
             "content": "NovaPay Core is compliant.",
         },
     ).json()
-    creator_approve = client.post(
-        f"/api/audits/{aud['id']}/workflow",
-        json={"new_state": "Approved", "approver_role": "Content Creator", "comment": "Self-approving"},
-    )
-    assert creator_approve.status_code == 403
+    old_role = os.environ.get("LOOMSHIELD_USER_ROLE")
+    os.environ["LOOMSHIELD_USER_ROLE"] = "Content Creator"
+    try:
+        creator_approve = client.post(
+            f"/api/audits/{aud['id']}/workflow",
+            json={"new_state": "Approved", "comment": "Self-approving"},
+        )
+        assert creator_approve.status_code == 403
+    finally:
+        if old_role is None:
+            os.environ.pop("LOOMSHIELD_USER_ROLE", None)
+        else:
+            os.environ["LOOMSHIELD_USER_ROLE"] = old_role
 
 
 # ============================================================================
@@ -1128,8 +1136,16 @@ def test_saas_ui_remediation_checklist_p0_p1_p2():
     assert len(rerun_audit["revisions"]) >= 2
 
     # 5. Verify Demo Workspace Reset endpoint (POST /api/demo/reset) and Overview consistency
-    reset_res = client.post("/api/demo/reset")
-    assert reset_res.status_code == 200
+    old_mode = os.environ.get("LOOMSHIELD_WORKSPACE_MODE")
+    os.environ["LOOMSHIELD_WORKSPACE_MODE"] = "demo"
+    try:
+        reset_res = client.post("/api/demo/reset")
+        assert reset_res.status_code == 200
+    finally:
+        if old_mode is None:
+            os.environ.pop("LOOMSHIELD_WORKSPACE_MODE", None)
+        else:
+            os.environ["LOOMSHIELD_WORKSPACE_MODE"] = old_mode
     ov_res = client.get("/api/overview/novapay")
     assert ov_res.status_code == 200
     ov_data = ov_res.json()

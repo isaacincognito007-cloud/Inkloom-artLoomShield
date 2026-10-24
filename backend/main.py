@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import (
     actor_label,
@@ -47,7 +48,7 @@ from .engine import (
     run_engine_selftest,
     run_six_pillar_audit,
 )
-from .rate_limiter import SimpleIpRateLimiter
+from .rate_limiter import SimpleIpRateLimiter, get_client_ip
 
 logger = logging.getLogger("loomshield.api")
 audit_rate_limiter = SimpleIpRateLimiter(max_requests=30, window_seconds=60)
@@ -66,13 +67,6 @@ def require_permission(role: str, permission: str, message: str) -> None:
         raise HTTPException(status_code=403, detail=f"{message} (signed-in role: {role}).")
 
 
-def check_brand_access(cur, brand_id: str, role: str) -> None:
-    """Brand access check structured for multi-tenant scoping."""
-    cur.execute("SELECT id FROM brands WHERE id = ?", (brand_id,))
-    if not cur.fetchone():
-        raise HTTPException(status_code=404, detail=f"Brand '{brand_id}' not found.")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _LAST_SELFTEST_RESULT, _LAST_SELFTEST_TIME
@@ -85,28 +79,39 @@ async def lifespan(app: FastAPI):
     yield
 
 
+def get_app_description() -> str:
+    mode = processing_mode()
+    if mode == "local":
+        return "Brand Governance Platform with Two Local Verification Engines (Deterministic Rules & Local NLP on-device)"
+    return "Brand Governance Platform with Two Hosted Verification Engines (Deterministic Rules & Embedded NLP, Zero 3rd-Party AI APIs)"
+
+
 app = FastAPI(
     title="LoomShield Brand Governance Workspace API",
-    description="Local-First Brand Auditing Platform with Two On-Device Engines (Tier 1 Deterministic + Tier 2 Embedded NLP)",
+    description=get_app_description(),
     version="2.1.0",
     lifespan=lifespan,
 )
 
 DEFAULT_CORS_ORIGINS = (
     "https://inkloom-artloomshield-frontend.vercel.app,"
-    "https://inkloom-art-loom-shield.vercel.app,"
     "http://localhost:3000,"
     "http://127.0.0.1:3000,"
     "http://localhost:8000,"
     "http://127.0.0.1:8000"
 )
-cors_origins_env = os.environ.get("LOOMSHIELD_CORS_ORIGINS", DEFAULT_CORS_ORIGINS).strip()
-if cors_origins_env == "*":
-    allow_origins = ["*"]
-    allow_credentials = False
-else:
-    allow_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
-    allow_credentials = True
+
+
+def parse_cors_origins(env_val: Optional[str] = None) -> list[str]:
+    raw = env_val if env_val is not None else os.environ.get("LOOMSHIELD_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
+    raw = raw.strip()
+    if raw == "*":
+        return ["*"]
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+allow_origins = parse_cors_origins()
+allow_credentials = allow_origins != ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -134,21 +139,55 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         401: "UNAUTHORIZED",
         403: "PERMISSION_DENIED",
         404: "NOT_FOUND",
+        405: "METHOD_NOT_ALLOWED",
         409: "CONFLICT",
         413: "REQUEST_ENTITY_TOO_LARGE",
         422: "VALIDATION_ERROR",
         429: "RATE_LIMITED",
+        500: "INTERNAL_SERVER_ERROR",
     }
     err_code = code_map.get(exc.status_code, "HTTP_ERROR")
+    msg = exc.detail if isinstance(exc.detail, str) else "Request failed"
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": {
                 "code": err_code,
-                "message": exc.detail if isinstance(exc.detail, str) else "Request failed",
+                "message": msg,
                 "request_id": req_id,
             },
             "detail": exc.detail,
+        },
+        headers={"x-request-id": req_id},
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    req_id = getattr(request.state, "request_id", "req-unknown")
+    code_map = {
+        400: "BAD_REQUEST",
+        401: "UNAUTHORIZED",
+        403: "PERMISSION_DENIED",
+        404: "NOT_FOUND",
+        405: "METHOD_NOT_ALLOWED",
+        409: "CONFLICT",
+        413: "REQUEST_ENTITY_TOO_LARGE",
+        422: "VALIDATION_ERROR",
+        429: "RATE_LIMITED",
+        500: "INTERNAL_SERVER_ERROR",
+    }
+    err_code = code_map.get(exc.status_code, "HTTP_ERROR")
+    msg = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": err_code,
+                "message": msg,
+                "request_id": req_id,
+            },
+            "detail": msg,
         },
         headers={"x-request-id": req_id},
     )
@@ -171,6 +210,25 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 "request_id": req_id,
             },
             "detail": errors,
+        },
+        headers={"x-request-id": req_id},
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(request.state, "request_id", "req-unknown")
+    # Log request_id and exception class/message; never log document content
+    logger.error("Internal server error [req_id=%s]: %s: %s", req_id, exc.__class__.__name__, exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An internal server error occurred.",
+                "request_id": req_id,
+            },
+            "detail": "An internal server error occurred.",
         },
         headers={"x-request-id": req_id},
     )
@@ -256,12 +314,10 @@ class FindingDecisionRequest(BaseModel):
     decision: str  # "accept", "modify", "dismiss"
     modified_replacement: Optional[str] = None
     reason: Optional[str] = None
-    reviewer_role: str = "Content Creator"
 
 
 class WorkflowStateRequest(BaseModel):
     new_state: str  # "Draft", "In Review", "Changes Requested", "Revised", "Approved"
-    approver_role: str = "Reviewer"
     comment: str = ""
     override_acknowledged: bool = False
 
@@ -462,9 +518,13 @@ def engine_status_endpoint():
         status["operating_mode"] = "Hosted processing on the LoomShield server. Submitted audits are saved to workspace history."
         status["local_only_mode"] = "Off (Hosted Server Deployment)"
     status["cloud_fallback_status"] = "not implemented"
+    storage_type = os.environ.get("LOOMSHIELD_STORAGE", "").strip().lower()
+    if not storage_type:
+        storage_type = "persistent" if (os.environ.get("LOOMSHIELD_DEPLOYMENT") == "local" or os.environ.get("LOOMSHIELD_DB_PATH")) else "ephemeral"
+    status["storage_type"] = storage_type
     status["db_type"] = "SQLite"
-    status["db_path"] = get_db_path()
     status["last_selftest"] = _LAST_SELFTEST_RESULT
+    status["selftest"] = _LAST_SELFTEST_RESULT
     status["last_selftest_time"] = _LAST_SELFTEST_TIME
     try:
         with db_session() as conn:
@@ -509,9 +569,18 @@ def get_session(x_loomshield_role: Optional[str] = Header(None)):
 
 
 @app.post("/api/demo/reset")
-def reset_demo_workspace_endpoint():
-    if not is_demo_mode() and "test" not in os.path.basename(get_db_path()).lower() and not os.environ.get("PYTEST_CURRENT_TEST"):
-        raise HTTPException(status_code=404, detail="Not found.")
+def reset_demo_workspace_endpoint(request: Request):
+    if not is_demo_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Demo reset is only available in demo workspace mode.",
+        )
+    client_ip = get_client_ip(request)
+    if not audit_rate_limiter.is_allowed(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please wait a moment before resetting demo data.",
+        )
     reset_demo_workspace()
     return {
         "status": "reset",
@@ -544,35 +613,38 @@ def list_brands():
 def create_brand_profile(req: BrandCreateRequest, role: str = Depends(current_role)):
     require_permission(role, "manage_brands", "Only a Brand Administrator can create brand profiles")
     now = datetime.now(timezone.utc).isoformat()
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM brands WHERE id = ?", (req.id,))
-    if cur.fetchone():
-        conn.close()
-        raise HTTPException(status_code=400, detail=f"Brand '{req.id}' already exists.")
-    cur.execute(
-        """
-        INSERT INTO brands VALUES (
-            ?, ?, ?, ?, ?, ?, ?, '[]', '[]',
-            'Inter / Geist headings and body',
-            '8px base spacing grid and 16px clear space',
-            'Maintain aspect ratio and high-contrast placement',
-            4.5, 3.0, 1, 1, 50.0, 1, ?
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM brands WHERE id = ?", (req.id,))
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail=f"Brand '{req.id}' already exists.")
+        cur.execute(
+            """
+            INSERT INTO brands (
+                id, name, industry, description, tone_principles, writing_style,
+                messaging_principles, do_examples, dont_examples, typography_specs,
+                spacing_rules, logo_placement_constraints, min_contrast_normal,
+                min_contrast_large, require_alt_text, enforce_heading_order,
+                target_reading_ease, version, updated_at
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, '[]', '[]',
+                'Inter / Geist headings and body',
+                '8px base spacing grid and 16px clear space',
+                'Maintain aspect ratio and high-contrast placement',
+                4.5, 3.0, 1, 1, 50.0, 1, ?
+            )
+            """,
+            (
+                req.id,
+                req.name.strip(),
+                req.industry.strip(),
+                req.description.strip(),
+                req.tone_principles.strip(),
+                req.writing_style.strip(),
+                req.messaging_principles.strip(),
+                now,
+            ),
         )
-        """,
-        (
-            req.id,
-            req.name.strip(),
-            req.industry.strip(),
-            req.description.strip(),
-            req.tone_principles.strip(),
-            req.writing_style.strip(),
-            req.messaging_principles.strip(),
-            now,
-        ),
-    )
-    conn.commit()
-    conn.close()
     return get_brand_vault_bundle(req.id)
 
 
@@ -1089,7 +1161,7 @@ def create_and_run_audit(
     role: str = Depends(current_role),
 ):
     require_permission(role, "run_audits", "Your role is not authorized to create and run audits")
-    client_ip = request.client.host if request.client else "127.0.0.1"
+    client_ip = get_client_ip(request)
     if not audit_rate_limiter.is_allowed(client_ip):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a moment before running another audit.")
     vault = get_brand_vault_bundle(req.brand_id)
@@ -1137,6 +1209,7 @@ def create_and_run_audit(
 
 @app.post("/api/audits/upload")
 async def create_audit_from_upload(
+    request: Request,
     brand_id: str = Form(..., min_length=1, description="Brand profile identifier"),
     document_name: str = Form(""),
     fg_color: str = Form(""),
@@ -1147,7 +1220,7 @@ async def create_audit_from_upload(
     role: str = Depends(current_role),
 ):
     require_permission(role, "run_audits", "Your role is not authorized to upload documents for auditing")
-    client_ip = getattr(file, "client_ip", "127.0.0.1")
+    client_ip = get_client_ip(request)
     if not audit_rate_limiter.is_allowed(client_ip):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a moment before uploading another file.")
     raw_bytes = await file.read()
@@ -1243,6 +1316,8 @@ def list_audits(
     conn = get_connection()
     cur = conn.cursor()
     if brand_id:
+        cur.execute("SELECT COUNT(*) AS total FROM audits WHERE brand_id = ?", (brand_id,))
+        total = int(cur.fetchone()["total"] or 0)
         cur.execute(
             """
             SELECT
@@ -1261,6 +1336,8 @@ def list_audits(
             (brand_id, safe_limit, safe_offset),
         )
     else:
+        cur.execute("SELECT COUNT(*) AS total FROM audits")
+        total = int(cur.fetchone()["total"] or 0)
         cur.execute(
             """
             SELECT
@@ -1289,7 +1366,12 @@ def list_audits(
         row_dict["open_findings"] = int(row_dict.get("open_findings") or 0)
         result.append(row_dict)
     conn.close()
-    return {"audits": result}
+    return {
+        "audits": result,
+        "total": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+    }
 
 
 @app.get("/api/audits/{audit_id}")
@@ -1357,68 +1439,90 @@ def apply_finding_decision(
     if req.decision not in ("accept", "modify", "dismiss"):
         raise HTTPException(status_code=400, detail="Decision must be 'accept', 'modify', or 'dismiss'.")
 
-    detail = get_audit_detail(audit_id)
-    target = next((f for f in detail["findings"] if f["id"] == finding_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail=f"Finding '{finding_id}' not found.")
-
     now = datetime.now(timezone.utc).isoformat()
 
-    if req.decision in ("accept", "modify"):
-        require_permission(role, "apply_corrections", "Your role is not authorized to apply corrections")
-
-        s_idx = int(target["start_index"])
-        e_idx = int(target["end_index"])
-
-        if s_idx < 0:
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT current_content, overall_status, brand_id FROM audits WHERE id = ?", (audit_id,))
+        a_row = cur.fetchone()
+        if not a_row:
+            raise HTTPException(status_code=404, detail=f"Audit '{audit_id}' not found.")
+        if a_row["overall_status"] == "Approved":
             raise HTTPException(
                 status_code=409,
-                detail="This finding represents a document-level check or parser notice and has no inline text span. It can only be dismissed with an explanatory reason.",
+                detail="Cannot modify findings on an approved audit. Approved documents are locked for compliance integrity.",
             )
+        current_text = a_row["current_content"]
+        brand_id = a_row["brand_id"]
 
-        replacement_used = (
-            req.modified_replacement.strip()
-            if (req.decision == "modify" and req.modified_replacement is not None)
-            else (target["suggested_correction"] or "")
-        )
-        if not replacement_used:
+        cur.execute("SELECT * FROM findings WHERE id = ? AND audit_id = ?", (finding_id, audit_id))
+        f_row = cur.fetchone()
+        if not f_row:
+            raise HTTPException(status_code=404, detail=f"Finding '{finding_id}' not found.")
+        target = dict(f_row)
+
+        if target["review_state"] not in ("open", "needs_review"):
             raise HTTPException(
-                status_code=400,
-                detail="No suggested replacement is available; provide a manual replacement via 'modify'.",
+                status_code=409,
+                detail=f"Finding '{finding_id}' is already in '{target['review_state']}' state and cannot be decided again.",
             )
 
-        current_text = detail["current_content"]
-        flagged_text = target["flagged_text"]
+        if req.decision in ("accept", "modify"):
+            require_permission(role, "apply_corrections", "Your role is not authorized to apply corrections")
 
-        if s_idx >= 0 and e_idx > s_idx and e_idx <= len(current_text) and current_text[s_idx:e_idx] == flagged_text:
-            actual_start = s_idx
-            actual_end = e_idx
-        else:
-            pos = current_text.find(flagged_text)
-            if pos >= 0:
-                actual_start = pos
-                actual_end = pos + len(flagged_text)
-            else:
+            s_idx = int(target["start_index"])
+            e_idx = int(target["end_index"])
+
+            if s_idx < 0:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Cannot apply correction: flagged text '{flagged_text}' could not be located in current document content. Please rerun the audit or dismiss the finding.",
+                    detail="This finding represents a document-level check or parser notice and has no inline text span. It can only be dismissed with an explanatory reason.",
                 )
 
-        new_text = current_text[:actual_start] + replacement_used + current_text[actual_end:]
-
-        if new_text == current_text:
-            raise HTTPException(
-                status_code=409,
-                detail="Correction produced identical content; no revision was applied.",
+            replacement_used = (
+                req.modified_replacement.strip()
+                if (req.decision == "modify" and req.modified_replacement is not None)
+                else (target["suggested_correction"] or "")
             )
+            if not replacement_used:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No suggested replacement is available; provide a manual replacement via 'modify'.",
+                )
 
-        with db_session() as conn:
-            cur = conn.cursor()
+            flagged_text = target["flagged_text"]
+
+            if s_idx >= 0 and e_idx > s_idx and e_idx <= len(current_text) and current_text[s_idx:e_idx] == flagged_text:
+                actual_start = s_idx
+                actual_end = e_idx
+            else:
+                occ = current_text.count(flagged_text)
+                if occ == 1:
+                    actual_start = current_text.find(flagged_text)
+                    actual_end = actual_start + len(flagged_text)
+                elif occ > 1:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Cannot relocate finding: flagged text '{flagged_text}' occurs {occ} times in the document. Relocation is ambiguous; please rerun the audit.",
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Cannot apply correction: flagged text '{flagged_text}' could not be located in current document content. Please rerun the audit or dismiss the finding.",
+                    )
+
+            new_text = current_text[:actual_start] + replacement_used + current_text[actual_end:]
+
+            if new_text == current_text:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Correction produced identical content; no revision was applied.",
+                )
+
             delta_len = len(replacement_used) - (actual_end - actual_start)
 
-            for other in detail["findings"]:
-                if other["id"] == finding_id:
-                    continue
+            cur.execute("SELECT id, start_index, end_index FROM findings WHERE audit_id = ? AND id != ?", (audit_id, finding_id))
+            for other in cur.fetchall():
                 o_s = int(other["start_index"])
                 o_e = int(other["end_index"])
                 if o_s >= actual_end:
@@ -1432,7 +1536,9 @@ def apply_finding_decision(
                 f"{req.decision.capitalize()}ed correction for {finding_id} ({target['rule_or_fact_id']}): "
                 f"replaced '{flagged_text}' with '{replacement_used}'."
             )
-            next_ver = len(detail["revisions"]) + 1
+
+            cur.execute("SELECT COUNT(*) AS rev_cnt FROM revisions WHERE audit_id = ?", (audit_id,))
+            next_ver = cur.fetchone()["rev_cnt"] + 1
 
             cur.execute(
                 """
@@ -1476,14 +1582,12 @@ def apply_finding_decision(
                 (audit_id, finding_id, req.decision, replacement_used, req.reason or "", role, now),
             )
 
-    else:
-        require_permission(role, "dismiss_findings", "Your role is not authorized to dismiss findings")
-        reason_str = (req.reason or "").strip()
-        if not reason_str:
-            raise HTTPException(status_code=400, detail="A dismissal reason is required when dismissing a finding.")
+        else:
+            require_permission(role, "dismiss_findings", "Your role is not authorized to dismiss findings")
+            reason_str = (req.reason or "").strip()
+            if not reason_str:
+                raise HTTPException(status_code=400, detail="A dismissal reason is required when dismissing a finding.")
 
-        with db_session() as conn:
-            cur = conn.cursor()
             new_finding_state = "dismissed"
             primary_rule_id = target["rule_or_fact_id"].split("/")[0].strip()
             cur.execute(
@@ -1492,7 +1596,7 @@ def apply_finding_decision(
                 (brand_id, rule_id, audit_id, finding_id, override_reason, suspected_cause, admin_review_state, created_at)
                 VALUES (?, ?, ?, ?, ?, 'Logged via creator/reviewer dismissal', 'Open', ?)
                 """,
-                (detail["brand_id"], primary_rule_id, audit_id, finding_id, reason_str, now),
+                (brand_id, primary_rule_id, audit_id, finding_id, reason_str, now),
             )
             record_audit_event(
                 cur,
@@ -1542,11 +1646,6 @@ def transition_audit_workflow(
                 status_code=403,
                 detail=f"Signed-in role '{role}' is not authorized to approve audits.",
             )
-        if req.approver_role and req.approver_role == "Content Creator":
-            raise HTTPException(
-                status_code=403,
-                detail="Only an authorised Reviewer or Brand Administrator can mark an audit as Approved.",
-            )
     elif target_state == "In Review":
         require_permission(role, "submit_for_review", "Your role is not authorized to submit for review")
     elif target_state == "Changes Requested":
@@ -1572,9 +1671,9 @@ def transition_audit_workflow(
                     detail=f"Role '{role}' is not authorized to approve with override.",
                 )
 
-    # 3. State transition graph validation
+    # 3. State transition graph validation (Draft must pass through In Review before Approved)
     allowed = {
-        "Draft": ["In Review", "Approved"],
+        "Draft": ["In Review"],
         "In Review": ["Approved", "Changes Requested"],
         "Changes Requested": ["In Review", "Revised"],
         "Revised": ["In Review", "Approved"],
@@ -1608,9 +1707,18 @@ def transition_audit_workflow(
     with db_session() as conn:
         cur = conn.cursor()
         cur.execute(
-            "UPDATE audits SET overall_status = ?, updated_at = ? WHERE id = ?",
-            (target_state, now, audit_id),
+            """
+            UPDATE audits
+            SET overall_status = ?, updated_at = ?
+            WHERE id = ? AND overall_status = ?
+            """,
+            (target_state, now, audit_id, current_state),
         )
+        if cur.rowcount == 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Conflict: audit status changed concurrently from '{current_state}'.",
+            )
         cur.execute(
             """
             INSERT INTO approvals
@@ -1660,18 +1768,46 @@ def transition_audit_workflow(
 
 
 @app.post("/api/audits/{audit_id}/rerun")
-def rerun_existing_audit(audit_id: str):
+def rerun_existing_audit(
+    audit_id: str,
+    request: Request,
+    role: str = Depends(current_role),
+):
+    require_permission(role, "run_audits", "Your role is not authorized to rerun audits")
+    client_ip = get_client_ip(request)
+    if not audit_rate_limiter.is_allowed(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please wait a moment before rerunning the audit.",
+        )
+
     detail = get_audit_detail(audit_id)
+    if detail["overall_status"] == "Approved":
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot rerun an approved audit. Approved documents are locked for compliance integrity.",
+        )
+
     vault = get_brand_vault_bundle(detail["brand_id"])
     content = detail["current_content"]
 
+    existing_findings = detail.get("findings", [])
+    err_finding = next((f for f in existing_findings if f.get("detection_method") == "error"), None)
+    is_parser_failed = bool(
+        err_finding
+        or content.startswith("[Unparseable file:")
+        or any(v == "Check Failed" for v in detail.get("pillar_states", {}).values())
+    )
+    err_msg = err_finding.get("explanation") if err_finding else "Document parser failure; text could not be extracted."
+
     structural_findings = []
-    if detail["input_format"] == "html" or re.search(r"<(?:h[1-6]|img|script)\b", content, re.IGNORECASE):
-        parsed_html = parse_uploaded_file("snippet.html", content.encode("utf-8"))
-        structural_findings = parsed_html.get("structural_findings", [])
-    elif detail["input_format"] in ("markdown", "md") or re.search(r"^\s*#{1,6}\s+", content, re.MULTILINE):
-        parsed_md = parse_uploaded_file("snippet.md", content.encode("utf-8"))
-        structural_findings = parsed_md.get("structural_findings", [])
+    if not is_parser_failed:
+        if detail["input_format"] == "html" or re.search(r"<(?:h[1-6]|img|script)\b", content, re.IGNORECASE):
+            parsed_html = parse_uploaded_file("snippet.html", content.encode("utf-8"))
+            structural_findings = parsed_html.get("structural_findings", [])
+        elif detail["input_format"] in ("markdown", "md") or re.search(r"^\s*#{1,6}\s+", content, re.MULTILINE):
+            parsed_md = parse_uploaded_file("snippet.md", content.encode("utf-8"))
+            structural_findings = parsed_md.get("structural_findings", [])
 
     audit_output = run_six_pillar_audit(
         content=content,
@@ -1685,64 +1821,108 @@ def rerun_existing_audit(audit_id: str):
         image_alt_text=detail["image_alt_text"],
         has_visual_asset=bool(detail["has_visual_asset"]),
         structural_findings=structural_findings,
+        parser_failed=is_parser_failed,
+        parser_error_msg=err_msg if is_parser_failed else "",
     )
 
     now = datetime.now(timezone.utc).isoformat()
-    conn = get_connection()
-    cur = conn.cursor()
 
-    cur.execute("DELETE FROM findings WHERE audit_id = ?", (audit_id,))
-    finding_rows = []
-    for idx, f in enumerate(audit_output["findings"], start=1):
-        finding_pk = f"{audit_id}-F{idx:02d}"
-        finding_rows.append(
-            (
-                finding_pk,
-                audit_id,
-                f["pillar"],
-                f["issue_type"],
-                f["severity"],
-                f["flagged_text"],
-                f["paragraph_ref"],
-                int(f["start_index"]),
-                int(f["end_index"]),
-                f["rule_or_fact_id"],
-                f["source_evidence"],
-                f["explanation"],
-                f.get("suggested_correction") or "",
-                f["detection_method"],
-                f["engine_source"],
-                f.get("similarity_score"),
-                f.get("review_state", "open"),
-                now,
+    resolved_decisions = {}
+    for ef in existing_findings:
+        if ef.get("review_state") in ("accepted", "modified", "dismissed"):
+            key = (ef.get("pillar"), ef.get("rule_or_fact_id"), ef.get("flagged_text"))
+            resolved_decisions[key] = {
+                "id": ef["id"],
+                "review_state": ef["review_state"],
+                "decision_note": ef.get("decision_note") or "",
+            }
+
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM findings WHERE audit_id = ?", (audit_id,))
+        finding_rows = []
+        for idx, f in enumerate(audit_output["findings"], start=1):
+            key = (f["pillar"], f["rule_or_fact_id"], f["flagged_text"])
+            if key in resolved_decisions:
+                prev = resolved_decisions[key]
+                finding_pk = prev["id"]
+                r_state = prev["review_state"]
+                d_note = prev["decision_note"]
+            else:
+                finding_pk = f"{audit_id}-F{idx:02d}"
+                r_state = f.get("review_state", "open")
+                d_note = ""
+
+            finding_rows.append(
+                (
+                    finding_pk,
+                    audit_id,
+                    f["pillar"],
+                    f["issue_type"],
+                    f["severity"],
+                    f["flagged_text"],
+                    f["paragraph_ref"],
+                    int(f["start_index"]),
+                    int(f["end_index"]),
+                    f["rule_or_fact_id"],
+                    f["source_evidence"],
+                    f["explanation"],
+                    f.get("suggested_correction") or "",
+                    f["detection_method"],
+                    f["engine_source"],
+                    f.get("similarity_score"),
+                    r_state,
+                    d_note,
+                    now,
+                )
             )
-        )
-    if finding_rows:
-        cur.executemany(
+        if finding_rows:
+            cur.executemany(
+                """
+                INSERT INTO findings (
+                    id, audit_id, pillar, issue_type, severity, flagged_text,
+                    paragraph_ref, start_index, end_index, rule_or_fact_id,
+                    source_evidence, explanation, suggested_correction,
+                    detection_method, engine_source, similarity_score,
+                    review_state, decision_note, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                finding_rows,
+            )
+
+        cur.execute(
             """
-            INSERT INTO findings VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?
-            )
+            UPDATE audits
+            SET brand_version = ?, pillar_states_json = ?, runtime_ms = ?, updated_at = ?
+            WHERE id = ?
             """,
-            finding_rows,
+            (
+                int(vault["brand"].get("version", 1)),
+                json.dumps(audit_output["pillar_states"]),
+                float(audit_output.get("runtime_ms", 0.0)),
+                now,
+                audit_id,
+            ),
         )
 
-    cur.execute(
-        """
-        UPDATE audits
-        SET brand_version = ?, pillar_states_json = ?, runtime_ms = ?, updated_at = ?
-        WHERE id = ?
-        """,
-        (
-            int(vault["brand"].get("version", 1)),
-            json.dumps(audit_output["pillar_states"]),
-            float(audit_output.get("runtime_ms", 0.0)),
-            now,
+        record_audit_event(
+            cur,
             audit_id,
-        ),
-    )
-    conn.commit()
-    conn.close()
+            "audit_rerun",
+            configured_user_name(),
+            role,
+            f"Audit rerun completed with {len(audit_output['findings'])} finding(s).",
+            {
+                "findings_count": len(audit_output["findings"]),
+                "brand_version": vault["brand"].get("version", 1),
+                "pillar_states": audit_output["pillar_states"],
+            },
+            None,
+            now,
+        )
+
     return get_audit_detail(audit_id)
 
 

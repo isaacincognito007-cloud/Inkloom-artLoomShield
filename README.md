@@ -66,7 +66,7 @@ python run_loomshield.py
 - **Workspace UI:** `http://127.0.0.1:8000`
 - **Interactive OpenAPI Docs:** `http://127.0.0.1:8000/docs`
 
-### Run the Automated Test Suite (68/68 Tests Passing)
+### Run the Automated Test Suite (103/103 Automated Tests Passing)
 ```powershell
 # Run all unit, cycle, API, and PDF tests
 pytest D:\LoomShield\tests\ -v
@@ -84,20 +84,23 @@ In accordance with competition rules, the central workflow runs end-to-end in th
 2. **Improvement 2:** Interactive $4\times 4$ Visual Clear-Space & Accessibility Heatmap.
 3. **Improvement 3:** Cryptographically Signed Compliance Certificate (asymmetric Ed25519/RSA signing, distinct from the baseline SHA-256 content integrity hash).
 
-# Inkloom-artLoomShield
-LoomShield is a local-first brand governance platform that audits marketing content against brand guidelines, verified facts, terminology, visual identity, and accessibility rules. It provides explainable findings, focused corrections, and human-controlled review with zero mandatory external AI API keys for core checks.
- 1fa509f994b0dde8aef42c955cf88c063ac1d1f0
+### Deployment & Operating Modes (Local vs. Hosted)
 
+LoomShield supports two deployment models:
+- **Local On-Device Mode (LOOMSHIELD_DEPLOYMENT=local):** When launched via python run_loomshield.py, backend execution and SQLite persistence run entirely on the local device (localhost). No data leaves your machine.
+- **Hosted Server Deployment (LOOMSHIELD_DEPLOYMENT=hosted):** When deployed to cloud infrastructure (such as Render), audits execute on the private LoomShield backend container with zero third-party AI API keys. In demo mode (LOOMSHIELD_WORKSPACE_MODE=demo), sample data is isolated from production.
 
 ### Deployment & Environment Configuration Reference
 
 | Environment Variable | Allowed Values | Default | Purpose & Safety Guarantee |
 | :--- | :--- | :--- | :--- |
-| `LOOMSHIELD_DEPLOYMENT` | `local`, `hosted` | `hosted` (local in `run_loomshield.py`) | Controls privacy disclosure and least-privilege role defaulting. |
-| `LOOMSHIELD_WORKSPACE_MODE` | `production`, `demo` | `production` | Isolates sample data (`loomshield_demo.db`) from production (`loomshield.db`). Role preview only enabled in `demo`. |
-| `LOOMSHIELD_USER_ROLE` | `Brand Administrator`, `Reviewer`, `Content Creator` | Least-privilege (`Content Creator` on hosted; `Brand Administrator` on local) | Server-enforced role. Client headers/payloads cannot escalate role in production. |
-| `LOOMSHIELD_USER_NAME` | String | `Workspace owner` | Display name stored in audit history and event log. |
-| `LOOMSHIELD_DB_PATH` | File Path | `loomshield.db` | Explicit path to SQLite file (set to persistent disk mount on Render). |
-| `LOOMSHIELD_MAX_UPLOAD_MB` | Integer (1–100) | `100` | Ingestion streaming safety limit. |
-| `LOOMSHIELD_MAX_PDF_PAGES` | Integer (1–500) | `100` | PDF page processing quota. |
-| `LOOMSHIELD_CORS_ORIGINS` | Comma-separated URLs | `*` | Inbound CORS origin allowlist (disables credentials when wildcard). |
+| LOOMSHIELD_DEPLOYMENT | local, hosted | hosted (local in 
+un_loomshield.py) | Controls privacy disclosure and operating mode notices. |
+| LOOMSHIELD_WORKSPACE_MODE | production, demo | production | Isolates sample data (loomshield_demo.db) from production (loomshield.db). Role preview only enabled in demo. |
+| LOOMSHIELD_STORAGE | persistent, ephemeral | ephemeral (or persistent when custom DB path mounted) | Declares storage tier to clients and system telemetry. |
+| LOOMSHIELD_USER_ROLE | Brand Administrator, Reviewer, Content Creator | Brand Administrator (local) / Content Creator (hosted) | Server-enforced role. Client headers/payloads cannot escalate role in production. |
+| LOOMSHIELD_USER_NAME | String | Workspace owner | Display name stored in audit history and event log. |
+| LOOMSHIELD_DB_PATH | File Path | loomshield.db | Explicit path to SQLite file (mount to persistent disk on Render). |
+| LOOMSHIELD_MAX_UPLOAD_MB | Integer (1-10) | 5 | File upload safety limit (5 MB in Phase 1). |
+| LOOMSHIELD_MAX_PDF_PAGES | Integer (1-500) | 100 | PDF page processing quota. |
+| LOOMSHIELD_CORS_ORIGINS | Comma-separated URLs | Configured list | Inbound CORS origin allowlist. Configured for production frontend domain (https://inkloom-artloomshield-frontend.vercel.app). |
