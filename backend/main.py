@@ -92,7 +92,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-cors_origins_env = os.environ.get("LOOMSHIELD_CORS_ORIGINS", "*").strip()
+DEFAULT_CORS_ORIGINS = (
+    "https://inkloom-artloomshield-frontend.vercel.app,"
+    "https://inkloom-art-loom-shield.vercel.app,"
+    "http://localhost:3000,"
+    "http://127.0.0.1:3000,"
+    "http://localhost:8000,"
+    "http://127.0.0.1:8000"
+)
+cors_origins_env = os.environ.get("LOOMSHIELD_CORS_ORIGINS", DEFAULT_CORS_ORIGINS).strip()
 if cors_origins_env == "*":
     allow_origins = ["*"]
     allow_credentials = False
@@ -233,7 +241,7 @@ class RuleCreate(BaseModel):
 
 
 class NewAuditRequest(BaseModel):
-    brand_id: str = "novapay"
+    brand_id: str = Field(..., min_length=1, description="Brand profile identifier")
     document_name: str = Field(..., min_length=1)
     input_format: str = "markdown"
     content: str = Field(..., min_length=1)
@@ -1129,7 +1137,7 @@ def create_and_run_audit(
 
 @app.post("/api/audits/upload")
 async def create_audit_from_upload(
-    brand_id: str = Form("novapay"),
+    brand_id: str = Form(..., min_length=1, description="Brand profile identifier"),
     document_name: str = Form(""),
     fg_color: str = Form(""),
     bg_color: str = Form(""),

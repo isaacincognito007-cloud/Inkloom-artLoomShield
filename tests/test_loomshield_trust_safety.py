@@ -272,3 +272,24 @@ def test_identical_correction_content_returns_409():
     )
     assert res.status_code == 409
     assert "identical content" in res.json()["detail"].lower()
+
+
+def test_audit_requires_brand_id_no_default():
+    """Brand ID must be explicitly provided in audit requests (no hidden 'novapay' default)."""
+    # 1. Text audit without brand_id fails validation
+    res_text = client.post(
+        "/api/audits",
+        json={
+            "document_name": "Test Missing Brand",
+            "content": "Some test content without brand id.",
+        },
+    )
+    assert res_text.status_code == 422
+
+    # 2. Upload audit without brand_id fails validation
+    res_upload = client.post(
+        "/api/audits/upload",
+        files={"file": ("memo.txt", b"Some test content", "text/plain")},
+        data={"document_name": "Test Missing Brand"},
+    )
+    assert res_upload.status_code == 422

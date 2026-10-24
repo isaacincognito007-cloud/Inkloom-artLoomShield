@@ -17,6 +17,8 @@ htmlcov/
 # Temporary isolated bench test databases
 test_bench_*.db
 bench_*.db
+backend/loomshield_demo.db
+scratch/
 
 # OS / Editor
 .DS_Store

@@ -492,6 +492,45 @@ function openModalDialog({ title, bodyHtml, confirmLabel = 'Confirm', cancelLabe
   });
 }
 
+function showInlineError(containerEl, message, onRetry = null) {
+  if (!containerEl) return;
+  containerEl.style.display = 'block';
+  containerEl.innerHTML = `
+    <div class="inline-error-banner" style="background: #FEF3F2; border: 1px solid #FECDCA; border-radius: 6px; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; font-size: 13px; color: #B42318;">
+      <div style="display: flex; gap: 8px; align-items: flex-start;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div>
+          <div style="font-weight: 600;">Action failed</div>
+          <div style="color: #475467; margin-top: 2px;">${escapeHtml(message)}</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+        ${onRetry ? `<button type="button" class="btn btn-sm inline-retry-btn" style="background: #fff; border-color: #FDA29B; color: #B42318; font-size: 12px; padding: 3px 8px;">Retry</button>` : ''}
+        <button type="button" class="inline-dismiss-btn" aria-label="Dismiss error" style="background: transparent; border: none; color: #98A2B3; font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;">&times;</button>
+      </div>
+    </div>
+  `;
+  const dismissBtn = containerEl.querySelector('.inline-dismiss-btn');
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', () => {
+      clearInlineError(containerEl);
+    });
+  }
+  const retryBtn = containerEl.querySelector('.inline-retry-btn');
+  if (retryBtn && onRetry) {
+    retryBtn.addEventListener('click', () => {
+      clearInlineError(containerEl);
+      onRetry();
+    });
+  }
+}
+
+function clearInlineError(containerEl) {
+  if (!containerEl) return;
+  containerEl.innerHTML = '';
+  containerEl.style.display = 'none';
+}
+
 // ============================================================================
 // INITIALIZATION & NAVIGATION
 // ============================================================================
@@ -514,7 +553,7 @@ function updateTopbarContext() {
   }
   const roleBtn = document.getElementById('accountRoleBtn');
   if (roleBtn) {
-    const initials = (AppState.userName || 'Isaac Herbert')
+    const initials = (AppState.userName || 'Workspace User')
       .split(' ')
       .filter(Boolean)
       .map((w) => w[0])
@@ -523,10 +562,10 @@ function updateTopbarContext() {
       .toUpperCase();
     roleBtn.innerHTML = `
       <span class="user-avatar-initials">${escapeHtml(initials)}</span>
-      <span style="font-weight: 600;">${escapeHtml(AppState.userName || 'Isaac Herbert')}</span>
+      <span style="font-weight: 600;">${escapeHtml(AppState.userName || 'Workspace User')}</span>
       <span class="role-pill-badge">${escapeHtml(AppState.activeRole)}</span>
     `;
-    roleBtn.setAttribute('title', `Signed in as ${AppState.userName} (${AppState.activeRole}) — Workspace settings`);
+    roleBtn.setAttribute('title', `Signed in as ${AppState.userName || 'Workspace User'} (${AppState.activeRole}) — Workspace settings`);
   }
   const demoBanner = document.getElementById('demoWorkspaceBanner');
   if (demoBanner) {
@@ -669,6 +708,15 @@ async function switchView(viewName) {
 }
 
 async function loadBrandsAndInit() {
+  const sessionBanner = document.getElementById('sessionUnavailableBanner');
+  const sessionRetryBtn = document.getElementById('sessionRetryBtn');
+  if (sessionRetryBtn && !sessionRetryBtn._bound) {
+    sessionRetryBtn._bound = true;
+    sessionRetryBtn.addEventListener('click', async () => {
+      await loadBrandsAndInit();
+    });
+  }
+
   try {
     try {
       const sessionData = await apiFetch('/api/session');
@@ -680,9 +728,11 @@ async function loadBrandsAndInit() {
         AppState.userName = sessionData.user_name || 'Workspace User';
         AppState.permissions = sessionData.permissions || {};
         AppState.sessionAvailable = true;
+        if (sessionBanner) sessionBanner.style.display = 'none';
       }
     } catch (_e) {
       AppState.sessionAvailable = false;
+      if (sessionBanner) sessionBanner.style.display = 'flex';
       showToast('Session unavailable: operating in offline/degraded mode with write actions restricted.');
     }
     updateProcessingModeUI();
@@ -746,6 +796,7 @@ async function refreshOverview() {
 
     renderRecentAuditsTable();
   } catch (err) {
+    AppState.overviewData = null;
     document.getElementById('metricDocsAudited').textContent = '—';
     document.getElementById('metricOpenFindings').textContent = '—';
     document.getElementById('metricApprovedContent').textContent = '—';
@@ -755,8 +806,11 @@ async function refreshOverview() {
         <div class="empty-state-box">
           <h3>Could not retrieve dashboard metrics</h3>
           <p>${escapeHtml(err.message)}</p>
+          <button type="button" class="btn btn-sm btn-accent" id="retryOverviewBtn" style="margin-top: 12px;">Retry</button>
         </div>
       `;
+      const retryBtn = document.getElementById('retryOverviewBtn');
+      if (retryBtn) retryBtn.addEventListener('click', () => refreshOverview());
     }
   }
 }
@@ -1295,6 +1349,14 @@ async function executeTextAudit() {
     return;
   }
 
+  const errBanner = document.getElementById('auditFormErrorBanner');
+  clearInlineError(errBanner);
+
+  if (!AppState.sessionAvailable) {
+    showInlineError(errBanner, 'Cannot submit audit: server connection is unavailable. Please click "Retry connection" in the top banner.');
+    return;
+  }
+
   const runBtn = document.getElementById('runAuditBtn');
   runBtn.disabled = true;
   runBtn.innerHTML = '<span>Auditing...</span>';
@@ -1309,7 +1371,7 @@ async function executeTextAudit() {
       bg_color: document.getElementById('auditBgColor').value.trim(),
       image_alt_text: document.getElementById('auditAltText').value.trim(),
       has_visual_asset: document.getElementById('auditHasVisualAsset').checked,
-      confidential_mode: document.getElementById('auditConfidentialMode').checked,
+      confidential_mode: true,
     };
     const audit = await apiFetch('/api/audits', {
       method: 'POST',
@@ -1329,6 +1391,7 @@ async function executeTextAudit() {
     await refreshOverview();
     showToast(`Audit ${audit.id} saved (${audit.findings.length} finding(s)).`);
   } catch (err) {
+    showInlineError(errBanner, `Audit failed: ${err.message}`, () => executeTextAudit());
     showToast(`Audit failed: ${err.message}`);
   } finally {
     runBtn.disabled = false;
@@ -1337,6 +1400,14 @@ async function executeTextAudit() {
 }
 
 async function executeFileUploadAudit(file) {
+  const errBanner = document.getElementById('auditFormErrorBanner');
+  clearInlineError(errBanner);
+
+  if (!AppState.sessionAvailable) {
+    showInlineError(errBanner, 'Cannot upload file: server connection is unavailable. Please click "Retry connection" in the top banner.');
+    return;
+  }
+
   const runBtn = document.getElementById('runAuditBtn');
   runBtn.disabled = true;
   runBtn.innerHTML = '<span>Auditing...</span>';
@@ -1348,7 +1419,7 @@ async function executeFileUploadAudit(file) {
     fd.append('fg_color', document.getElementById('auditFgColor').value.trim());
     fd.append('bg_color', document.getElementById('auditBgColor').value.trim());
     fd.append('image_alt_text', document.getElementById('auditAltText').value.trim());
-    fd.append('confidential_mode', document.getElementById('auditConfidentialMode').checked ? 'true' : 'false');
+    fd.append('confidential_mode', 'true');
     fd.append('file', file);
 
     const audit = await apiFetch('/api/audits/upload', {
@@ -1365,6 +1436,7 @@ async function executeFileUploadAudit(file) {
     await refreshOverview();
     showToast(`Uploaded "${file.name}" — Audit ${audit.id} saved.`);
   } catch (err) {
+    showInlineError(errBanner, `Upload audit failed: ${err.message}`, () => executeFileUploadAudit(file));
     showToast(`Upload audit failed: ${err.message}`);
   } finally {
     runBtn.disabled = false;
@@ -1610,6 +1682,9 @@ function renderCorrectionRightPanel() {
   const wfBox = document.getElementById('workflowTransitionBox');
   const wfBadge = document.getElementById('activeWorkflowStateBadge');
 
+  clearInlineError(document.getElementById('findingDecisionErrorBanner'));
+  clearInlineError(document.getElementById('workflowErrorBanner'));
+
   if (!AppState.currentAudit) {
     wfBox.style.display = 'none';
     return;
@@ -1712,6 +1787,12 @@ function renderCorrectionRightPanel() {
 
 async function submitFindingDecision(findingId, payload) {
   if (!AppState.currentAudit) return;
+  const errBanner = document.getElementById('findingDecisionErrorBanner');
+  clearInlineError(errBanner);
+  if (!AppState.sessionAvailable) {
+    showInlineError(errBanner, 'Cannot save decision: server session is unavailable.');
+    return;
+  }
   try {
     const updated = await apiFetch(
       `/api/audits/${encodeURIComponent(AppState.currentAudit.id)}/findings/${encodeURIComponent(findingId)}/decision`,
@@ -1730,12 +1811,19 @@ async function submitFindingDecision(findingId, payload) {
     await refreshOverview();
     showToast(`Saved ${payload.decision} decision for ${findingId}.`);
   } catch (err) {
+    showInlineError(errBanner, `Could not save decision: ${err.message}`, () => submitFindingDecision(findingId, payload));
     showToast(`Could not save decision: ${err.message}`);
   }
 }
 
 async function transitionCurrentAuditWorkflow(newState) {
   if (!AppState.currentAudit) return;
+  const errBanner = document.getElementById('workflowErrorBanner');
+  clearInlineError(errBanner);
+  if (!AppState.sessionAvailable) {
+    showInlineError(errBanner, 'Cannot update workflow state: server session is unavailable.');
+    return;
+  }
   const comment = document.getElementById('workflowCommentInput').value.trim();
   const overrideAck = document.getElementById('workflowOverrideCheckbox').checked;
 
@@ -1755,6 +1843,7 @@ async function transitionCurrentAuditWorkflow(newState) {
     await refreshOverview();
     showToast(`Audit ${updated.id} status saved as "${newState}".`);
   } catch (err) {
+    showInlineError(errBanner, `Approval safeguard: ${err.message}`, () => transitionCurrentAuditWorkflow(newState));
     showToast(`Approval safeguard: ${err.message}`);
   }
 }
