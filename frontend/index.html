@@ -116,7 +116,7 @@
       <div class="demo-workspace-banner" id="demoWorkspaceBanner" style="display: none;">
         <div class="demo-banner-left">
           <span class="status-badge badge-warning">Demo workspace</span>
-          <span>Seeded profiles (NovaPay Enterprise, Verdant Clinical Systems) and sample records are for evaluation only.</span>
+          <span>Demo workspace: sample data shared by everyone using this link; don't submit confidential material.</span>
         </div>
         <div class="demo-banner-actions">
           <label for="demoSampleSelector" style="font-size: 12px; font-weight: 600;">Try a demo:</label>
@@ -326,15 +326,15 @@
                   </div>
 
                   <div class="option-control-card">
-                    <div class="switch-row">
+                    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
                       <div>
-                        <label for="auditConfidentialMode" style="font-size: 13.5px; font-weight: 600; cursor: pointer;">Local-only processing</label>
-                        <div class="form-helper" id="localModeHelper">Runs entirely on this device using local deterministic rules and embedded NLP.</div>
+                        <div style="font-size: 13.5px; font-weight: 600;" id="processingModeTitle">Processing mode</div>
+                        <div class="form-helper" id="localModeHelper">Detecting server operating mode...</div>
                       </div>
-                      <label class="toggle-switch" aria-label="Local-only processing">
-                        <input type="checkbox" id="auditConfidentialMode" role="switch" checked aria-describedby="localModeHelper" />
-                        <span class="toggle-slider"></span>
-                      </label>
+                      <span class="status-badge badge-neutral" id="processingModeBadge">Detecting</span>
+                    </div>
+                    <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary);">
+                      <strong>Cloud processing:</strong> Not available in this build. Audits execute via on-device deterministic checks and local NLP.
                     </div>
                   </div>
                 </div>

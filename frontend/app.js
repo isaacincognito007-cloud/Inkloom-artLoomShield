@@ -1,3 +1,31 @@
+function updateProcessingModeUI() {
+  const title = document.getElementById('processingModeTitle');
+  const helper = document.getElementById('localModeHelper');
+  const badge = document.getElementById('processingModeBadge');
+  const isLocal = AppState.processingMode === 'local';
+
+  if (title && helper && badge) {
+    if (isLocal) {
+      title.textContent = 'Local on-device processing';
+      helper.textContent = 'Processed on this device; nothing leaves your machine.';
+      badge.textContent = 'On-device';
+      badge.className = 'status-badge badge-passed';
+    } else {
+      title.textContent = 'Hosted server processing';
+      helper.textContent = AppState.demoMode
+        ? 'Your content is sent to the LoomShield server for processing and the audit is saved to history. Demo workspace: do not submit confidential material.'
+        : 'Your content is sent to the LoomShield server for processing and the audit is saved to history. This workspace has no sign-in: submitted content is stored and visible to anyone using this deployment; do not submit confidential material.';
+      badge.textContent = 'Hosted server';
+      badge.className = 'status-badge badge-neutral';
+    }
+  }
+
+  const banner = document.getElementById('demoWorkspaceBanner');
+  if (banner) {
+    banner.style.display = AppState.demoMode ? 'flex' : 'none';
+  }
+}
+
 /**
  * LoomShield — Brand Governance Workspace
  * Production UI Controller
@@ -5,14 +33,17 @@
 
 const AppState = {
   brands: [],
-  activeBrandId: 'novapay',
+  activeBrandId: '',
   activeView: 'overview',
   auditStage: 'input', // 'input' | 'results'
   activeMobilePanel: 'source', // 'source' | 'findings' | 'correction'
   session: null,
-  userName: 'Isaac Herbert',
-  activeRole: 'Reviewer',
+  userName: '',
+  activeRole: 'Content Creator',
   demoMode: false,
+  processingMode: 'hosted',
+  sessionAvailable: true,
+  permissions: {},
   inputMethod: 'paste', // 'paste' | 'upload'
   hasUnsavedChanges: false,
 
@@ -358,22 +389,67 @@ function computeWordDiffHtml(oldStr, newStr, formatMode = 'rendered') {
   return out.join('');
 }
 
-async function apiFetch(url, options = {}) {
+class ApiError extends Error {
+  constructor(status, code, message, field = null, requestId = null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.field = field;
+    this.requestId = requestId;
+  }
+}
+
+async function apiFetch(url, options = {}, timeoutMs = 45000) {
   const headers = Object.assign({}, options.headers || {});
   if (AppState.activeRole && !headers['x-loomshield-role']) {
     headers['x-loomshield-role'] = AppState.activeRole;
   }
-  const opts = Object.assign({}, options, { headers });
-  const res = await fetch(url, opts);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const opts = Object.assign({}, options, {
+    headers,
+    signal: options.signal || controller.signal,
+  });
+
+  let res;
+  try {
+    res = await fetch(url, opts);
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new ApiError(0, 'TIMEOUT', 'Request timed out after 45 seconds. Please try again.');
+    }
+    throw new ApiError(0, 'NETWORK_ERROR', 'Network connection error. Please verify the LoomShield server is running.');
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   let data = null;
   try {
     data = await res.json();
   } catch (_e) {
     data = null;
   }
+
   if (!res.ok) {
-    const detail = data && data.detail ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : `Request failed (${res.status})`;
-    throw new Error(detail);
+    const errObj = data && data.error ? data.error : {};
+    const code = errObj.code || `HTTP_${res.status}`;
+    const field = errObj.field || null;
+    const reqId = errObj.request_id || res.headers.get('x-request-id') || null;
+    let message = errObj.message;
+    if (!message) {
+      if (typeof data?.detail === 'string') {
+        message = data.detail;
+      } else if (Array.isArray(data?.detail) && data.detail.length > 0) {
+        message = data.detail[0].msg || JSON.stringify(data.detail);
+      } else {
+        message = `Request failed (${res.status})`;
+      }
+    }
+    throw new ApiError(res.status, code, message, field, reqId);
   }
   return data;
 }
@@ -599,12 +675,17 @@ async function loadBrandsAndInit() {
       if (sessionData) {
         AppState.session = sessionData;
         AppState.demoMode = Boolean(sessionData.is_demo_mode);
-        AppState.activeRole = sessionData.user_role || 'Reviewer';
-        AppState.userName = sessionData.user_name || 'Isaac Herbert';
+        AppState.processingMode = sessionData.processing_mode || 'hosted';
+        AppState.activeRole = sessionData.user_role || 'Content Creator';
+        AppState.userName = sessionData.user_name || 'Workspace User';
+        AppState.permissions = sessionData.permissions || {};
+        AppState.sessionAvailable = true;
       }
     } catch (_e) {
-      // Session endpoint unavailable; preserve fallback defaults
+      AppState.sessionAvailable = false;
+      showToast('Session unavailable: operating in offline/degraded mode with write actions restricted.');
     }
+    updateProcessingModeUI();
 
     const res = await apiFetch('/api/brands');
     AppState.brands = res.brands || [];
@@ -974,31 +1055,7 @@ function bindAuditWorkspaceEvents() {
   document.getElementById('auditBgColor').addEventListener('input', syncVisualCheckControlState);
   document.getElementById('auditHasVisualAsset').addEventListener('change', syncVisualCheckControlState);
 
-  // Control 2: Local-only processing switch confirmation dialog when turning OFF
-  const localSwitch = document.getElementById('auditConfidentialMode');
-  localSwitch.addEventListener('change', (e) => {
-    if (!e.target.checked) {
-      // Keep ON until user explicitly confirms
-      e.target.checked = true;
-      openModalDialog({
-        title: 'Turn off local-only processing?',
-        bodyHtml: `
-          <p style="margin-bottom: 8px;">Turning off <strong>Local-only processing</strong> allows eligible multi-paragraph rewrites to be sent to an optional backend cloud language service when configured.</p>
-          <p><strong>Current server status:</strong> No external cloud API key is configured on this server, so all checks will continue running locally on this device.</p>
-        `,
-        confirmLabel: 'Allow optional cloud fallback',
-        cancelLabel: 'Keep local-only ON',
-        onConfirm: () => {
-          localSwitch.checked = false;
-          document.getElementById('localModeHelper').textContent =
-            'Optional cloud fallback permitted (no cloud API key configured; running locally).';
-        },
-      });
-    } else {
-      document.getElementById('localModeHelper').textContent =
-        'Core checks run on this device. Optional cloud processing is disabled.';
-    }
-  });
+  // Honest processing mode indicator is updated via updateProcessingModeUI()
 
   document.getElementById('clearAuditFormBtn').addEventListener('click', () => {
     const hasContent = Boolean(
@@ -1240,7 +1297,7 @@ async function executeTextAudit() {
 
   const runBtn = document.getElementById('runAuditBtn');
   runBtn.disabled = true;
-  runBtn.innerHTML = '<span>Auditing locally...</span>';
+  runBtn.innerHTML = '<span>Auditing...</span>';
 
   try {
     const payload = {
@@ -1282,7 +1339,7 @@ async function executeTextAudit() {
 async function executeFileUploadAudit(file) {
   const runBtn = document.getElementById('runAuditBtn');
   runBtn.disabled = true;
-  runBtn.innerHTML = '<span>Auditing locally...</span>';
+  runBtn.innerHTML = '<span>Auditing...</span>';
 
   try {
     const fd = new FormData();
@@ -3174,15 +3231,14 @@ function renderSettingsView() {
 
       <div class="audit-options-grid">
         <div class="option-control-card">
-          <div class="switch-row">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
             <div>
-              <label for="settingsDemoModeToggle" style="font-size: 13.5px; font-weight: 600; cursor: pointer;">Demo mode</label>
-              <div class="form-helper">Display the "Demo workspace" banner, "Try a demo" sample loader, and role preview selector. Turn off for clean production mode.</div>
+              <div style="font-size: 13.5px; font-weight: 600;">Workspace deployment mode</div>
+              <div class="form-helper">Server deployment environment configured via <code>LOOMSHIELD_WORKSPACE_MODE</code>.</div>
             </div>
-            <label class="toggle-switch" aria-label="Demo mode">
-              <input type="checkbox" id="settingsDemoModeToggle" role="switch" ${AppState.demoMode ? 'checked' : ''} />
-              <span class="toggle-slider"></span>
-            </label>
+            <span class="status-badge ${AppState.demoMode ? 'badge-warning' : 'badge-passed'}">
+              ${AppState.demoMode ? 'Demo Workspace' : 'Production Workspace'}
+            </span>
           </div>
         </div>
 
@@ -3257,12 +3313,7 @@ function renderSettingsView() {
     </div>
   `;
 
-  document.getElementById('settingsDemoModeToggle').addEventListener('change', (e) => {
-    AppState.demoMode = e.target.checked;
-    updateTopbarContext();
-    renderSettingsView();
-    showToast(AppState.demoMode ? 'Demo mode enabled.' : 'Production mode enabled (demo loaders hidden).');
-  });
+  // Demo mode is server-configured and read-only
 
   document.getElementById('openPrivacyStatusFromSettingsBtn').addEventListener('click', () => {
     switchView('engine-status');

@@ -1,7 +1,10 @@
+import hashlib
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from typing import Generator
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "loomshield.db")
 DEMO_DB_PATH = os.path.join(os.path.dirname(__file__), "loomshield_demo.db")
@@ -28,6 +31,73 @@ def get_connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
+
+
+@contextmanager
+def db_session() -> Generator[sqlite3.Connection, None, None]:
+    """Context manager for SQLite connections ensuring transactional integrity (commit/rollback/close)."""
+    conn = get_connection()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def bump_brand_version(cur: sqlite3.Cursor, brand_id: str) -> int:
+    """Increment brand version by 1 and update updated_at timestamp atomically."""
+    now = datetime.now(timezone.utc).isoformat()
+    cur.execute(
+        "UPDATE brands SET version = version + 1, updated_at = ? WHERE id = ?",
+        (now, brand_id),
+    )
+    cur.execute("SELECT version FROM brands WHERE id = ?", (brand_id,))
+    row = cur.fetchone()
+    return int(row["version"]) if row else 1
+
+
+def allocate_audit_id(cur: sqlite3.Cursor) -> str:
+    """Allocate next AUD-XXXX ID sequentially inside the transaction."""
+    cur.execute("SELECT MAX(CAST(SUBSTR(id, 5) AS INTEGER)) AS max_id FROM audits WHERE id LIKE 'AUD-%'")
+    row = cur.fetchone()
+    next_num = (row["max_id"] or 1000) + 1 if row else 1001
+    return f"AUD-{next_num}"
+
+
+def allocate_rule_id(cur: sqlite3.Cursor, brand_id: str = "") -> str:
+    """Allocate next monotonic RULE-CUSTOM-XXX ID."""
+    cur.execute("SELECT MAX(CAST(SUBSTR(id, 13) AS INTEGER)) AS max_id FROM rules WHERE id LIKE 'RULE-CUSTOM-%'")
+    row = cur.fetchone()
+    next_num = (row["max_id"] or 0) + 1 if row else 1
+    return f"RULE-CUSTOM-{next_num:03d}"
+
+
+def allocate_term_id(cur: sqlite3.Cursor, brand_id: str = "") -> str:
+    """Allocate next monotonic TERM-CUSTOM-XXX ID."""
+    cur.execute("SELECT MAX(CAST(SUBSTR(id, 13) AS INTEGER)) AS max_id FROM terminology WHERE id LIKE 'TERM-CUSTOM-%'")
+    row = cur.fetchone()
+    next_num = (row["max_id"] or 0) + 1 if row else 1
+    return f"TERM-CUSTOM-{next_num:03d}"
+
+
+def allocate_fact_id(cur: sqlite3.Cursor, brand_id: str = "") -> str:
+    """Allocate next monotonic FACT-CUSTOM-XXX ID."""
+    cur.execute("SELECT MAX(CAST(SUBSTR(id, 13) AS INTEGER)) AS max_id FROM verified_facts WHERE id LIKE 'FACT-CUSTOM-%'")
+    row = cur.fetchone()
+    next_num = (row["max_id"] or 0) + 1 if row else 1
+    return f"FACT-CUSTOM-{next_num:03d}"
+
+
+def allocate_color_id(cur: sqlite3.Cursor, brand_id: str = "") -> str:
+    """Allocate next monotonic CLR-CUSTOM-XXX ID."""
+    cur.execute("SELECT MAX(CAST(SUBSTR(id, 12) AS INTEGER)) AS max_id FROM brand_colors WHERE id LIKE 'CLR-CUSTOM-%'")
+    row = cur.fetchone()
+    next_num = (row["max_id"] or 0) + 1 if row else 1
+    return f"CLR-CUSTOM-{next_num:03d}"
+
 
 
 def init_db() -> None:
@@ -324,7 +394,13 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
     ]
     cur.executemany(
         """
-        INSERT INTO brands VALUES (
+        INSERT INTO brands (
+            id, name, industry, description, tone_principles, writing_style,
+            messaging_principles, do_examples, dont_examples, typography_specs,
+            spacing_rules, logo_placement_constraints, min_contrast_normal,
+            min_contrast_large, require_alt_text, enforce_heading_order,
+            target_reading_ease, version, updated_at
+        ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         """,
@@ -466,7 +542,12 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
         ),
     ]
     cur.executemany(
-        "INSERT INTO rules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO rules (
+            id, brand_id, pillar, title, description, rule_config_json,
+            severity, do_example, dont_example, active, version, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         rules,
     )
 
@@ -562,7 +643,12 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
         ),
     ]
     cur.executemany(
-        "INSERT INTO terminology VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO terminology (
+            id, brand_id, preferred_term, prohibited_term, replacement_term,
+            case_sensitive, notes, rule_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         terms,
     )
 
@@ -648,7 +734,13 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
         ),
     ]
     cur.executemany(
-        "INSERT INTO verified_facts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO verified_facts (
+            id, brand_id, statement, numeric_value, numeric_units, product_context,
+            source_reference, applicable_conditions, date_version, verification_status,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         facts,
     )
 
@@ -663,7 +755,11 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
         ("COL-07", "verdant", "Deep Charcoal", "#17191C", "Primary Text", 12.0),
     ]
     cur.executemany(
-        "INSERT INTO brand_colors VALUES (?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO brand_colors (
+            id, brand_id, name, hex_code, usage_role, max_delta_e
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
         colors,
     )
 
@@ -752,7 +848,13 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
     ]
     cur.executemany(
         """
-        INSERT INTO audits VALUES (
+        INSERT INTO audits (
+            id, brand_id, brand_version, document_name, input_format,
+            original_content, current_content, fg_color, bg_color,
+            image_alt_text, has_visual_asset, visual_metadata_json,
+            confidential_mode, overall_status, assigned_reviewer,
+            pillar_states_json, runtime_ms, created_at, updated_at
+        ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         """,
@@ -830,7 +932,12 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
     ]
     cur.executemany(
         """
-        INSERT INTO findings VALUES (
+        INSERT INTO findings (
+            id, audit_id, pillar, issue_type, severity, flagged_text,
+            paragraph_ref, start_index, end_index, rule_or_fact_id,
+            source_evidence, explanation, suggested_correction, detection_method,
+            engine_source, similarity_score, review_state, decision_note, updated_at
+        ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         """,

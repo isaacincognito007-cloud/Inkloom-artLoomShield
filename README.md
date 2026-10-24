@@ -1,4 +1,3 @@
- HEAD
 # LoomShield — Local-First Brand Governance Workspace
 
 **Team Name:** `isaac.incognito007`  
@@ -24,7 +23,7 @@ CREATE CONTENT -> CHECK AGAINST BRAND RULES -> IDENTIFY ISSUES -> RETRIEVE RELEV
 | :--- | :--- | :--- | :--- |
 | **Local deterministic engine only** | **No** | Basic, rule-based NLP | **Tier 1: Deterministic Engine** — Regex patterns, terminology & capitalization dictionaries, WCAG 2.1 contrast math, CIE LAB $\Delta E$ colour distance, HTML/SVG DOM structure checks. |
 | **Local engine + embedded NLP model** | **No** | Yes, including machine-learning NLP | **Tier 2: Embedded Scikit-Learn TF-IDF Engine** — On-device `TfidfVectorizer` (1–2 n-grams) + `cosine_similarity` fact retrieval, numerical/percentage claim comparison against `Verified` facts, and evidence-backed replacement templates. |
-| **Local engine + cloud AI fallback** | **Usually yes** | Yes, locally and potentially in the cloud | **Optional Tier 3: Cloud Escalation** — Disabled by default (`Confidential Mode: ON`). If no backend API key is configured, all 6 local audit pillars remain 100% operational. |
+| **Local engine + cloud AI fallback** | **No** | Planned / Not Implemented | **Tier 3: Cloud Escalation (Planned)** — Formally labeled as planned and not implemented in this build. All audits execute via on-device deterministic checks and local NLP. |
 | **Two local engines, both running on-device** | **No** | Yes, if the engines include NLP | **Primary Active Mode** — Tier 1 + Tier 2 execute together in-memory on-device with zero external network calls. |
 
 ---
@@ -88,3 +87,17 @@ In accordance with competition rules, the central workflow runs end-to-end in th
 # Inkloom-artLoomShield
 LoomShield is a local-first brand governance platform that audits marketing content against brand guidelines, verified facts, terminology, visual identity, and accessibility rules. It provides explainable findings, focused corrections, and human-controlled review with zero mandatory external AI API keys for core checks.
  1fa509f994b0dde8aef42c955cf88c063ac1d1f0
+
+
+### Deployment & Environment Configuration Reference
+
+| Environment Variable | Allowed Values | Default | Purpose & Safety Guarantee |
+| :--- | :--- | :--- | :--- |
+| `LOOMSHIELD_DEPLOYMENT` | `local`, `hosted` | `hosted` (local in `run_loomshield.py`) | Controls privacy disclosure and least-privilege role defaulting. |
+| `LOOMSHIELD_WORKSPACE_MODE` | `production`, `demo` | `production` | Isolates sample data (`loomshield_demo.db`) from production (`loomshield.db`). Role preview only enabled in `demo`. |
+| `LOOMSHIELD_USER_ROLE` | `Brand Administrator`, `Reviewer`, `Content Creator` | Least-privilege (`Content Creator` on hosted; `Brand Administrator` on local) | Server-enforced role. Client headers/payloads cannot escalate role in production. |
+| `LOOMSHIELD_USER_NAME` | String | `Workspace owner` | Display name stored in audit history and event log. |
+| `LOOMSHIELD_DB_PATH` | File Path | `loomshield.db` | Explicit path to SQLite file (set to persistent disk mount on Render). |
+| `LOOMSHIELD_MAX_UPLOAD_MB` | Integer (1–100) | `100` | Ingestion streaming safety limit. |
+| `LOOMSHIELD_MAX_PDF_PAGES` | Integer (1–500) | `100` | PDF page processing quota. |
+| `LOOMSHIELD_CORS_ORIGINS` | Comma-separated URLs | `*` | Inbound CORS origin allowlist (disables credentials when wildcard). |
