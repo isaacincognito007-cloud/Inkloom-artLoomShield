@@ -7,14 +7,52 @@ from simple user answers without altering existing workspace brand definitions.
 
 import glob
 import json
+import logging
 import os
 import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+try:
+    import re._parser as sre_parser
+except ImportError:
+    import sre_parse as sre_parser
+
+try:
+    from re._constants import (
+        MAX_REPEAT,
+        MIN_REPEAT,
+        SUBPATTERN,
+        BRANCH,
+        LITERAL,
+        NOT_LITERAL,
+        IN,
+        ANY,
+        AT,
+        CATEGORY,
+        RANGE,
+        MAXREPEAT,
+    )
+except ImportError:
+    from sre_constants import (
+        MAX_REPEAT,
+        MIN_REPEAT,
+        SUBPATTERN,
+        BRANCH,
+        LITERAL,
+        NOT_LITERAL,
+        IN,
+        ANY,
+        AT,
+        CATEGORY,
+        RANGE,
+        MAXREPEAT,
+    )
+
 from pydantic import BaseModel, Field, ValidationError
 
+logger = logging.getLogger("loomshield.wizard")
 RULESETS_DIR = os.path.join(os.path.dirname(__file__), "rulesets")
 
 # ---------------------------------------------------------------------------
@@ -86,39 +124,154 @@ LOADED_FRAGMENTS: Dict[str, Dict[str, RulesetFragment]] = {
 }
 
 
-def is_pattern_redos_safe(pattern: str, timeout_sec: float = 0.05) -> bool:
-    """Validate that pattern is ReDoS safe against adversarial 5,000-char inputs."""
-    compiled = re.compile(pattern, re.IGNORECASE)
-    adversarial_samples = [
-        "a" * 2500 + "!" + "a" * 2500,
-        " " * 2500 + "?" + " " * 2500,
-        "word " * 1000 + "!!!" + " other" * 1000,
-    ]
-    for sample in adversarial_samples:
-        t0 = time.perf_counter()
-        compiled.search(sample[:5000])
-        dur = time.perf_counter() - t0
-        if dur > timeout_sec:
+def is_ast_nullable(items: Any) -> bool:
+    """Check if an AST node sequence can match an empty string."""
+    items_list = list(items) if items is not None else []
+    if not items_list:
+        return True
+    for op, av in items_list:
+        if op in (MAX_REPEAT, MIN_REPEAT):
+            rmin, rmax, sub = av
+            if rmin > 0 and not is_ast_nullable(sub):
+                return False
+        elif op == SUBPATTERN:
+            if not is_ast_nullable(av[3]):
+                return False
+        elif op == BRANCH:
+            if not any(is_ast_nullable(b) for b in av[1]):
+                return False
+        elif op == AT:
+            continue
+        else:
             return False
     return True
 
 
+def _analyze_ast_safety(ast_nodes: Any, in_large_repeat: bool = False) -> Tuple[bool, str]:
+    """
+    Recursively inspect regular expression AST for ReDoS vulnerability characteristics.
+    Rejects:
+      - An unbounded or large (max >= 100) repeat whose body contains another such repeat.
+      - Alternations with overlapping/duplicate/nullable branches inside such a repeat.
+    """
+    for op, av in ast_nodes:
+        if op in (MAX_REPEAT, MIN_REPEAT):
+            rmin, rmax, sub = av
+            is_large = (rmax is not None and rmax >= 100)
+            if is_large and in_large_repeat:
+                return False, f"Nested unbounded or large repeats detected (inner max={rmax} >= 100)"
+            ok, reason = _analyze_ast_safety(sub, in_large_repeat=(in_large_repeat or is_large))
+            if not ok:
+                return False, reason
+        elif op == SUBPATTERN:
+            ok, reason = _analyze_ast_safety(av[3], in_large_repeat=in_large_repeat)
+            if not ok:
+                return False, reason
+        elif op == BRANCH:
+            branches = [list(b) for b in av[1]]
+            if in_large_repeat:
+                for b in branches:
+                    if is_ast_nullable(b):
+                        return False, "Alternation with empty or nullable branch inside unbounded/large repeat"
+                for i in range(len(branches)):
+                    for j in range(i + 1, len(branches)):
+                        b1, b2 = branches[i], branches[j]
+                        if b1 == b2:
+                            return False, "Alternation with duplicate branches inside unbounded/large repeat"
+                        if len(b1) > 0 and len(b2) > 0:
+                            if len(b1) <= len(b2) and b2[:len(b1)] == b1:
+                                return False, "Alternation with overlapping branch prefixes inside unbounded/large repeat"
+                            if len(b2) <= len(b1) and b1[:len(b2)] == b2:
+                                return False, "Alternation with overlapping branch prefixes inside unbounded/large repeat"
+            for b in branches:
+                ok, reason = _analyze_ast_safety(b, in_large_repeat=in_large_repeat)
+                if not ok:
+                    return False, reason
+    return True, ""
+
+
+def check_pattern_structural_safety(pattern: str) -> Tuple[bool, str]:
+    """
+    Deterministically validate a regular expression pattern for ReDoS safety without wall-clock timing.
+    Performs compilation and AST structural analysis using re._parser (or sre_parse fallback).
+    """
+    if not isinstance(pattern, str) or not pattern.strip():
+        return False, "Pattern cannot be empty"
+    try:
+        re.compile(pattern)
+    except re.error as e:
+        return False, f"Regex syntax error: {e}"
+    try:
+        parsed = sre_parser.parse(pattern)
+    except Exception as e:
+        return False, f"Regex parse error: {e}"
+
+    return _analyze_ast_safety(parsed)
+
+
+def is_pattern_redos_safe(pattern: str, **kwargs: Any) -> bool:
+    """
+    Backward-compatible ReDoS safety check returning a boolean.
+    Uses deterministic AST structural analysis (ignoring any wall-clock timeout parameter).
+    """
+    is_safe, _ = check_pattern_structural_safety(pattern)
+    return is_safe
+
+
+_WIZARD_AVAILABLE: bool = False
+_WIZARD_UNAVAILABLE_REASON: str = ""
+
+
+def is_wizard_available() -> bool:
+    """Return whether wizard ruleset fragments are loaded and available."""
+    return _WIZARD_AVAILABLE
+
+
+def get_wizard_unavailable_reason() -> str:
+    """Return error reason if wizard is unavailable."""
+    return _WIZARD_UNAVAILABLE_REASON
+
+
+def set_wizard_availability(available: bool, reason: str = "") -> None:
+    """Explicitly set wizard availability state (useful for tests and error simulation)."""
+    global _WIZARD_AVAILABLE, _WIZARD_UNAVAILABLE_REASON
+    _WIZARD_AVAILABLE = available
+    _WIZARD_UNAVAILABLE_REASON = reason
+
+
 def load_and_validate_all_fragments() -> None:
-    """Load, validate with Pydantic, and ReDoS-verify all JSON ruleset fragments."""
-    for kind in ("industry", "occasion", "locale", "tone"):
-        dir_path = os.path.join(RULESETS_DIR, kind)
-        if not os.path.isdir(dir_path):
-            continue
-        for file_path in glob.glob(os.path.join(dir_path, "*.json")):
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            fragment = RulesetFragment(**data)
-            # ReDoS and regex compilation check
-            for r in fragment.rules:
-                for pat in r.patterns:
-                    if not is_pattern_redos_safe(pat):
-                        raise ValueError(f"ReDoS vulnerability detected in rule pattern '{pat}' in {file_path}")
-            LOADED_FRAGMENTS[kind][fragment.id] = fragment
+    """Load, validate with Pydantic, and structurally ReDoS-verify all JSON ruleset fragments."""
+    global _WIZARD_AVAILABLE, _WIZARD_UNAVAILABLE_REASON
+    LOADED_FRAGMENTS["industry"].clear()
+    LOADED_FRAGMENTS["occasion"].clear()
+    LOADED_FRAGMENTS["locale"].clear()
+    LOADED_FRAGMENTS["tone"].clear()
+    try:
+        for kind in ("industry", "occasion", "locale", "tone"):
+            dir_path = os.path.join(RULESETS_DIR, kind)
+            if not os.path.isdir(dir_path):
+                continue
+            for file_path in sorted(glob.glob(os.path.join(dir_path, "*.json"))):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                fragment = RulesetFragment(**data)
+                # ReDoS and regex compilation check
+                for r in fragment.rules:
+                    for pat in r.patterns:
+                        is_safe, reason = check_pattern_structural_safety(pat)
+                        if not is_safe:
+                            raise ValueError(
+                                f"ReDoS vulnerability detected in ruleset file '{file_path}', "
+                                f"rule key '{r.key}', pattern '{pat}': {reason}"
+                            )
+                LOADED_FRAGMENTS[kind][fragment.id] = fragment
+        _WIZARD_AVAILABLE = True
+        _WIZARD_UNAVAILABLE_REASON = ""
+        logger.info("Wizard ruleset fragments loaded and validated successfully.")
+    except Exception as exc:
+        _WIZARD_AVAILABLE = False
+        _WIZARD_UNAVAILABLE_REASON = str(exc)
+        logger.error("Failed to load wizard ruleset fragments: %s", exc)
 
 
 # Initialize and validate fragments on module import
