@@ -1,0 +1,43 @@
+{
+  "id": "friendly",
+  "label": "Friendly",
+  "kind": "tone",
+  "summary": [
+    "Warm, empathetic, and approachable conversational voice",
+    "Welcoming language that builds community rapport",
+    "No cold, rigid bureaucratic phrasing"
+  ],
+  "tone_principles": "Warm, encouraging, approachable, and human-centered.",
+  "writing_style": "Conversational, engaging prose with natural sentence flow and helpful explanations.",
+  "messaging_principles": "Connect with readers warmly and offer proactive assistance at every stage.",
+  "rules": [
+    {
+      "key": "RULE-TONE-FRIENDLY",
+      "pillar": "Tone and Voice",
+      "title": "Avoid Cold Bureaucratic Distance",
+      "description": "Friendly communications should replace distant bureaucratic phrasing with welcoming language.",
+      "patterns": [
+        "\\b(?:the\\s+undersigned\\s+hereby\\s+commands|parties\\s+are\\s+severally\\s+bound|failure\\s+to\\s+comply\\s+will\\s+result\\s+in\\s+immediate\\s+forfeiture)\\b"
+      ],
+      "suggested_replacements": {
+        "the undersigned hereby commands": "we kindly invite you to",
+        "parties are severally bound": "our agreement outlines our mutual commitment",
+        "failure to comply will result in immediate forfeiture": "let us know if you need assistance meeting this deadline"
+      },
+      "severity": "medium",
+      "do_example": "We are here to support your team whenever you have questions.",
+      "dont_example": "The undersigned hereby commands all users to comply or face forfeiture."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "reach out to our friendly team",
+      "prohibited": "submit formal complaint docket",
+      "replacement": "contact our support team",
+      "case_sensitive": 0,
+      "notes": "Use welcoming, human-centered terminology.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "target_reading_ease": 55.0
+}

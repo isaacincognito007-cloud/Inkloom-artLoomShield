@@ -1830,3 +1830,161 @@ ins.diff-ins {
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================================================
+   GUIDED WIZARD STYLES (SLICE 1 & 2 POLISH)
+   ============================================================================ */
+.wizard-card {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.05);
+}
+
+.wizard-progress-track {
+  width: 100%;
+  height: 6px;
+  background: #E2E8F0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.wizard-progress-fill {
+  height: 100%;
+  background: var(--primary-action);
+  border-radius: 999px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.wizard-tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+  margin-bottom: 28px;
+}
+
+.wizard-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: 20px;
+  background: #FFFFFF;
+  border: 1.5px solid var(--border-color);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  position: relative;
+  font-family: inherit;
+  color: inherit;
+}
+
+.wizard-tile:hover {
+  border-color: #94A3B8;
+  background: #F8FAFC;
+  transform: translateY(-1px);
+}
+
+.wizard-tile.selected {
+  border-color: var(--primary-action);
+  background: var(--brand-accent-soft);
+  box-shadow: 0 0 0 1px var(--primary-action);
+}
+
+.wizard-tile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.wizard-tile-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--primary-ink);
+}
+
+.wizard-tile.selected .wizard-tile-title {
+  color: var(--primary-action);
+}
+
+.wizard-tile-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.wizard-tile-check {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--primary-action);
+  color: #FFFFFF;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.wizard-tile.selected .wizard-tile-check {
+  display: inline-flex;
+}
+
+.wizard-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+  margin-top: 12px;
+}
+
+.wizard-review-box {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  padding: 24px;
+  margin: 20px 0 28px 0;
+}
+
+.wizard-bullet-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  color: var(--primary-ink);
+}
+
+.wizard-bullet-item:last-child {
+  margin-bottom: 0;
+}
+
+.wizard-bullet-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ECFDF5;
+  color: #0F766E;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+@media (max-width: 640px) {
+  .wizard-card {
+    padding: 16px;
+  }
+  .wizard-tiles-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "id": "finance",
+  "label": "Bank, finance or insurance",
+  "kind": "industry",
+  "summary": [
+    "Strict regulatory compliance on financial returns and risks",
+    "No guaranteed-return or risk-free investment claims",
+    "Clear, transparent disclosures regarding fees and capital conditions"
+  ],
+  "tone_principles": "Prudent, transparent, compliant, and objective. Never promise speculative gains or downplay capital risk.",
+  "writing_style": "Formal, unambiguous sentences with transparent qualifiers and necessary regulatory disclosures.",
+  "messaging_principles": "Every financial product statement must acknowledge capital risk, eligibility requirements, and relevant terms.",
+  "do_examples": [
+    "Yield rates vary based on market conditions. Past performance does not guarantee future results.",
+    "Accounts are insured up to statutory deposit limits under applicable banking regulations."
+  ],
+  "dont_examples": [
+    "Our fund offers 100% risk-free guaranteed returns of 25% annually!",
+    "You can't lose money—get rich quick before legacy banks steal your savings!"
+  ],
+  "rules": [
+    {
+      "key": "RULE-CLAIM-FIN",
+      "pillar": "Promotional Claims",
+      "title": "Prohibit Guaranteed Returns & Risk-Free Investment Claims",
+      "description": "Financial communications must not state or imply guaranteed profits, risk-free growth, or capital invulnerability.",
+      "patterns": [
+        "\\b(?:guaranteed\\s+(?:returns?|profits?|yield)|100%\\s+risk-free|can'?t\\s+lose\\s+money|risk-free\\s+investment|guaranteed\\s+wealth)\\b"
+      ],
+      "suggested_replacements": {
+        "guaranteed returns": "projected target returns based on historical scenarios",
+        "guaranteed profits": "potential earnings subject to market factors",
+        "100% risk-free": "structured with defined risk mitigation strategies",
+        "can't lose money": "investments carry capital risk",
+        "risk-free investment": "risk-managed portfolio"
+      },
+      "severity": "critical",
+      "do_example": "Returns depend on prevailing interest rates and market movements.",
+      "dont_example": "Earn guaranteed returns of 12% with our 100% risk-free strategy."
+    },
+    {
+      "key": "RULE-TONE-FIN",
+      "pillar": "Tone and Voice",
+      "title": "Prohibit Alarmist Urgency & Predatory Financial Rhetoric",
+      "description": "Do not incite panic regarding banking stability or pressure customers with scare tactics.",
+      "patterns": [
+        "\\b(?:banks?\\s+are\\s+destroying\\s+your|before\\s+your\\s+money\\s+disappears|get\\s+out\\s+before\\s+the\\s+crash|secretly\\s+stealing\\s+your\\s+wealth)\\b"
+      ],
+      "suggested_replacements": {
+        "banks are destroying your": "explore alternative treasury options for",
+        "before your money disappears": "to evaluate current inflation impacts on",
+        "secretly stealing your wealth": "affecting your portfolio yields"
+      },
+      "severity": "high",
+      "do_example": "Diversify institutional treasury holdings to manage counterparty concentration.",
+      "dont_example": "Traditional banks are destroying your wealth—move your funds immediately!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "capital remains subject to market risk",
+      "prohibited": "can't lose money",
+      "replacement": "capital remains subject to market risk",
+      "case_sensitive": 0,
+      "notes": "Financial compliance requires explicit capital risk disclosures.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "competitive transaction fee schedule",
+      "prohibited": "zero hidden fees guaranteed forever",
+      "replacement": "transparent published fee schedule",
+      "case_sensitive": 0,
+      "notes": "Fee schedules must be clearly documented rather than absolute blanket promises.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "colours": [
+    {
+      "name": "Institutional Charcoal",
+      "hex_code": "#111827",
+      "usage_role": "Primary headings & text",
+      "max_delta_e": 12.0
+    },
+    {
+      "name": "Trust Forest",
+      "hex_code": "#047857",
+      "usage_role": "Compliance verification & safe badges",
+      "max_delta_e": 12.0
+    }
+  ],
+  "min_contrast_normal": 4.5,
+  "min_contrast_large": 3.0,
+  "target_reading_ease": 50.0
+}

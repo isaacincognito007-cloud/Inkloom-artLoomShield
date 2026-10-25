@@ -1,0 +1,42 @@
+{
+  "id": "en_ca",
+  "label": "Canada",
+  "kind": "locale",
+  "summary": [
+    "Canadian English spelling conventions (e.g., colour, centre, travelling)",
+    "Canadian Dollar (CAD / CA$) notation clarity",
+    "Clear distinction between Canadian and US commercial terms"
+  ],
+  "tone_principles": "Courteous, inclusive, and straightforward.",
+  "writing_style": "Canadian spelling conventions with clear, accessible phrasing.",
+  "messaging_principles": "Disclose applicable GST/HST/PST sales taxes where applicable.",
+  "rules": [
+    {
+      "key": "RULE-LOCALE-CA",
+      "pillar": "Terminology",
+      "title": "Enforce Canadian English Spelling & Currency Clarity",
+      "description": "Ensure Canadian audiences receive localized Canadian spelling and clear CAD currency notation.",
+      "patterns": [
+        "\\b(?:color|center|favor)\\b"
+      ],
+      "suggested_replacements": {
+        "color": "colour",
+        "center": "centre",
+        "favor": "favour"
+      },
+      "severity": "medium",
+      "do_example": "Visit our regional customer centre in Calgary for dedicated support.",
+      "dont_example": "Visit our regional customer center in Calgary."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "colour",
+      "prohibited": "color",
+      "replacement": "colour",
+      "case_sensitive": 0,
+      "notes": "Canadian English uses 'colour'.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

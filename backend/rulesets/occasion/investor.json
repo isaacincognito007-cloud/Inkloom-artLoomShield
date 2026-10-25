@@ -1,0 +1,42 @@
+{
+  "id": "investor",
+  "label": "Investor or regulatory update",
+  "kind": "occasion",
+  "summary": [
+    "Auditable metrics and formal financial precision",
+    "Proper framing of forward-looking statements",
+    "No speculative hype or premature regulatory guarantees"
+  ],
+  "tone_principles": "Rigorous, conservative, balanced, and compliant.",
+  "writing_style": "Structured corporate reporting with clear KPI definitions and standardized accounting disclosures.",
+  "messaging_principles": "Every performance metric must cite source periods, methodology, and relevant assumptions.",
+  "rules": [
+    {
+      "key": "RULE-OCC-INVESTOR",
+      "pillar": "Promotional Claims",
+      "title": "Substantiate Investor Projections & Regulatory Status",
+      "description": "Investor communications must not state speculative financial gains or predict regulatory approvals as certainties.",
+      "patterns": [
+        "\\b(?:guaranteed\\s+10x\\s+ROI|stock\\s+will\\s+explode|regulatory\\s+approval\\s+is\\s+100%\\s+in\\s+the\\s+bag|can'?t\\s+miss\\s+investment)\\b"
+      ],
+      "suggested_replacements": {
+        "guaranteed 10x ROI": "targeted expansion trajectory under current market assumptions",
+        "stock will explode": "aiming for long-term shareholder value creation",
+        "regulatory approval is 100% in the bag": "application remains under active regulatory evaluation"
+      },
+      "severity": "critical",
+      "do_example": "Q3 operational earnings grew 14% year-over-year in constant currency.",
+      "dont_example": "Regulatory approval is 100% in the bag and will yield a guaranteed 10x ROI!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "subject to regulatory review",
+      "prohibited": "100% in the bag",
+      "replacement": "subject to regulatory approval",
+      "case_sensitive": 0,
+      "notes": "Regulatory status must reflect verified filings.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "id": "en_in",
+  "label": "India",
+  "kind": "locale",
+  "summary": [
+    "Indian English business conventions and ₹ (INR) currency formatting",
+    "Clear recognition of lakh and crore numbering conventions",
+    "Standardized phrasing replacing redundant regional bureaucratic idioms"
+  ],
+  "tone_principles": "Courteous, professional, and clear for Indian audiences.",
+  "writing_style": "Indian English spelling (e.g., colour, organise) with clear currency symbols (₹ / INR).",
+  "messaging_principles": "Ensure statutory GST, tax disclosures, and regional delivery schedules are explicitly specified.",
+  "rules": [
+    {
+      "key": "RULE-LOCALE-IN",
+      "pillar": "Terminology",
+      "title": "Indian English Professional Phrasing",
+      "description": "Replace archaic bureaucratic idioms with modern, direct international business expressions.",
+      "patterns": [
+        "\\b(?:do\\s+the\\s+needful|revert\\s+back|out\\s+of\\s+station)\\b"
+      ],
+      "suggested_replacements": {
+        "do the needful": "take the necessary steps",
+        "revert back": "respond with the details",
+        "out of station": "traveling or out of the office"
+      },
+      "severity": "medium",
+      "do_example": "Please reply with your confirmation once the review is complete.",
+      "dont_example": "Kindly do the needful and revert back at the earliest."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "take the required action",
+      "prohibited": "do the needful",
+      "replacement": "take the required action",
+      "case_sensitive": 0,
+      "notes": "Replace archaic bureaucratic phrasing with direct, actionable language.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "reply",
+      "prohibited": "revert back",
+      "replacement": "reply",
+      "case_sensitive": 0,
+      "notes": "'Revert back' is redundant; use 'reply' or 'respond'.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

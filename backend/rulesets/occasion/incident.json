@@ -1,0 +1,43 @@
+{
+  "id": "incident",
+  "label": "Handling a problem or incident",
+  "kind": "occasion",
+  "summary": [
+    "Accountable, empathetic, and calm incident communication",
+    "Direct explanation of root cause and remediation progress",
+    "No shifting of blame or downplaying of customer disruption"
+  ],
+  "tone_principles": "Serious, humble, accountable, and reassuring. Avoid defensive or dismissive wording.",
+  "writing_style": "Concise factual chronology, clear timeline of steps taken, and direct contact avenues.",
+  "messaging_principles": "Acknowledge inconvenience honestly, detail safeguards against recurrence, and honor customer trust.",
+  "rules": [
+    {
+      "key": "RULE-OCC-INCIDENT",
+      "pillar": "Tone and Voice",
+      "title": "Avoid Dismissive or Blame-Shifting Incident Language",
+      "description": "Incident communications must never dismiss customer impact or shift responsibility.",
+      "patterns": [
+        "\\b(?:not\\s+our\\s+fault\\s+at\\s+all|users?\\s+are\\s+overreacting|minor\\s+glitch\\s+with\\s+zero\\s+consequences|nobody\\s+was\\s+actually\\s+harmed)\\b"
+      ],
+      "suggested_replacements": {
+        "not our fault at all": "our team takes full ownership of service restoration",
+        "users are overreacting": "we understand the frustration this service disruption caused",
+        "minor glitch with zero consequences": "we are investigating the scope and impact of this service interruption",
+        "nobody was actually harmed": "we deeply apologize for the disruption to your workflow"
+      },
+      "severity": "critical",
+      "do_example": "We sincerely apologize for the service disruption and have deployed a hotfix.",
+      "dont_example": "It was not our fault at all and users are overreacting to a minor glitch."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "service disruption under remediation",
+      "prohibited": "tiny harmless hiccup",
+      "replacement": "service interruption",
+      "case_sensitive": 0,
+      "notes": "Incident communications must respect customer disruption.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

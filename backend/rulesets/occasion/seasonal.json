@@ -1,0 +1,42 @@
+{
+  "id": "seasonal",
+  "label": "Festival or season",
+  "kind": "occasion",
+  "summary": [
+    "Culturally respectful and inclusive festive voice",
+    "Clear order cutoffs and holiday delivery schedules",
+    "No guilt-based holiday emotional manipulation"
+  ],
+  "tone_principles": "Warm, appreciative, festive, and thoughtful.",
+  "writing_style": "Celebratory yet respectful seasonal greetings combined with practical calendar details.",
+  "messaging_principles": "Celebrate community holidays with inclusive spirit while communicating operational shipping cutoffs accurately.",
+  "rules": [
+    {
+      "key": "RULE-OCC-SEASONAL",
+      "pillar": "Tone and Voice",
+      "title": "Avoid Guilt-Tripping Holiday Pressure Tactics",
+      "description": "Seasonal campaigns must celebrate occasions without exploiting emotional guilt or panic.",
+      "patterns": [
+        "\\b(?:ruin\\s+(?:the\\s+holidays|christmas|diwali)|your\\s+family\\s+will\\s+hate\\s+you|worst\\s+holiday\\s+ever\\s+if\\s+you\\s+miss)\\b"
+      ],
+      "suggested_replacements": {
+        "ruin the holidays": "ensure your gifts arrive on time",
+        "your family will hate you": "surprise your loved ones with thoughtful selections",
+        "worst holiday ever if you miss": "plan ahead for seamless holiday delivery"
+      },
+      "severity": "medium",
+      "do_example": "Order by December 18 for guaranteed delivery in time for holiday celebrations.",
+      "dont_example": "Don't ruin the holidays—order now or your family will hate you!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "warm seasonal greetings",
+      "prohibited": "holiday panic sale",
+      "replacement": "festive celebration sale",
+      "case_sensitive": 0,
+      "notes": "Keep seasonal campaign messaging positive and respectful.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

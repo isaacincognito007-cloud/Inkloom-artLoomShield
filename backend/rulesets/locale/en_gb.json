@@ -1,0 +1,52 @@
+{
+  "id": "en_gb",
+  "label": "United Kingdom",
+  "kind": "locale",
+  "summary": [
+    "British English spelling conventions (e.g., colour, organise, centre)",
+    "British Pound (£ / GBP) currency notation and VAT clarity",
+    "Polite, measured, and understated UK business tone"
+  ],
+  "tone_principles": "Measured, courteous, and understated.",
+  "writing_style": "British spelling conventions and balanced grammatical phrasing.",
+  "messaging_principles": "Specify whether quoted prices include or exclude UK VAT (Value Added Tax).",
+  "rules": [
+    {
+      "key": "RULE-LOCALE-GB",
+      "pillar": "Terminology",
+      "title": "Enforce British English Spelling",
+      "description": "Ensure content directed at UK audiences follows standard British spelling conventions.",
+      "patterns": [
+        "\\b(?:color|center|organize|analyze|favor)\\b"
+      ],
+      "suggested_replacements": {
+        "color": "colour",
+        "center": "centre",
+        "organize": "organise",
+        "analyze": "analyse",
+        "favor": "favour"
+      },
+      "severity": "medium",
+      "do_example": "Customise brand colour and organise operational centres.",
+      "dont_example": "Customize brand color and organize operational centers."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "colour",
+      "prohibited": "color",
+      "replacement": "colour",
+      "case_sensitive": 0,
+      "notes": "British English uses 'colour'.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "organise",
+      "prohibited": "organize",
+      "replacement": "organise",
+      "case_sensitive": 0,
+      "notes": "British English uses '-ise' spelling.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

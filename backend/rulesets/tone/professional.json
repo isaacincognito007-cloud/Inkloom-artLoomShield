@@ -1,0 +1,45 @@
+{
+  "id": "professional",
+  "label": "Professional",
+  "kind": "tone",
+  "summary": [
+    "Objective, authoritative, and respectful business tone",
+    "Balanced sentence structure with precise terminology",
+    "No overly casual colloquialisms or flippant remarks"
+  ],
+  "tone_principles": "Authoritative, dignified, precise, and courteous.",
+  "writing_style": "Structured corporate prose using standard business English and complete grammatical phrasing.",
+  "messaging_principles": "Present assertions with balanced evidence and professional restraint.",
+  "rules": [
+    {
+      "key": "RULE-TONE-PROF",
+      "pillar": "Tone and Voice",
+      "title": "Avoid Overly Casual Slang in Professional Communications",
+      "description": "Maintain a dignified corporate standard by replacing slang or flippant phrases with formal business expressions.",
+      "patterns": [
+        "\\b(?:hey\\s+guys|what'?s\\s+up|no\\s+worries\\s+bro|this\\s+rocks|totally\\s+epic)\\b"
+      ],
+      "suggested_replacements": {
+        "hey guys": "Dear colleagues or valued clients",
+        "what's up": "we are writing to update you",
+        "no worries bro": "we are happy to assist",
+        "this rocks": "this delivers outstanding results",
+        "totally epic": "notable achievement"
+      },
+      "severity": "medium",
+      "do_example": "We appreciate your continued partnership and are pleased to share our annual summary.",
+      "dont_example": "Hey guys, what's up! Check out this totally epic update that rocks!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "demonstrates outstanding performance",
+      "prohibited": "totally rocks",
+      "replacement": "delivers exceptional results",
+      "case_sensitive": 0,
+      "notes": "Maintain an objective, professional standard.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "target_reading_ease": 50.0
+}

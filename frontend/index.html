@@ -234,8 +234,47 @@
              VIEW 2: NEW AUDIT (STEP 1 & 2 INPUT) vs AUDIT RESULTS (STEP 3)
              ================================================================ -->
         <section id="view-new-audit" class="workspace-view" style="display: none;">
-          <!-- STAGE A: NEW AUDIT SUBMISSION FORM -->
-          <div id="auditInputStage">
+          <!-- GUIDED AUDIT WIZARD STAGE (DEFAULT HEADLINE FLOW) -->
+          <div id="wizardStage">
+            <div class="page-header" style="align-items: flex-start;">
+              <div>
+                <div style="display: inline-flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                  <span class="status-badge badge-neutral" style="font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em;">Guided Setup</span>
+                  <span style="font-size: 12.5px; color: var(--text-secondary);" id="wizardStepCounter">Step 1 of 8</span>
+                </div>
+                <h1 class="page-title" id="wizardHeaderTitle">Set up your checks</h1>
+                <p class="page-subtitle" id="wizardHeaderSubtitle">Answer a few quick questions to create a tailor-made compliance profile for your content.</p>
+              </div>
+              <div class="page-actions" style="flex-direction: column; align-items: flex-end; gap: 8px;">
+                <button type="button" class="btn btn-sm btn-ghost" id="wizardUseExistingBtn" title="Use currently selected brand guidelines directly">Use my existing brand guidelines &rarr;</button>
+                <button type="button" class="btn btn-sm btn-link" id="wizardQuickSkipBtn" style="color: var(--text-secondary); font-size: 12px; text-decoration: underline; background: none; border: none; cursor: pointer; padding: 0;">Skip setup and use general business checks</button>
+              </div>
+            </div>
+
+            <!-- Wizard Progress Bar -->
+            <div class="wizard-progress-bar-container" style="margin-bottom: 24px;">
+              <div class="wizard-progress-track">
+                <div class="wizard-progress-fill" id="wizardProgressFill" style="width: 12.5%;"></div>
+              </div>
+            </div>
+
+            <!-- Wizard Content Card -->
+            <div class="card wizard-card" id="wizardCard">
+              <div id="wizardStepContent">
+                <!-- Dynamically rendered by JS: Q1 -> Q2 -> Q3 -> Q4 -> Q5 -> Q6 -> Review -> Add Content -->
+              </div>
+            </div>
+          </div>
+
+          <!-- STAGE A: NEW AUDIT SUBMISSION FORM (MANUAL / EXISTING BRAND FLOW) -->
+          <div id="auditInputStage" style="display: none;">
+            <div class="banner-info" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 12px 18px; border-radius: 10px; background: #FEF3F0; border: 1.5px solid #FCD9D0;">
+              <div>
+                <span style="font-size: 13.5px; font-weight: 600; color: #962E14;">✨ Need checks for a new campaign or client?</span>
+                <div style="font-size: 12px; color: #7B341E; margin-top: 2px;">Answer 5 simple questions to automatically generate tailor-made brand checks.</div>
+              </div>
+              <button type="button" class="btn btn-sm btn-accent" id="switchToWizardBtn">Launch guided setup</button>
+            </div>
             <div class="page-header">
               <div>
                 <h1 class="page-title">New audit</h1>

@@ -1,0 +1,43 @@
+{
+  "id": "global",
+  "label": "Worldwide",
+  "kind": "locale",
+  "summary": [
+    "Internationally accessible plain English suitable for global readers",
+    "ISO standard currency codes (USD, EUR, GBP, INR, JPY) for unambiguous pricing",
+    "Neutral cross-cultural phrasing free of localized idioms"
+  ],
+  "tone_principles": "Culturally neutral, universally respectful, and globally accessible.",
+  "writing_style": "Clear, direct international English avoiding regional slang and ambiguous colloquialisms.",
+  "messaging_principles": "Specify time zones (UTC/GMT) and currency codes explicitly for multinational audiences.",
+  "rules": [
+    {
+      "key": "RULE-LOCALE-GLOBAL",
+      "pillar": "Tone and Voice",
+      "title": "Avoid Regional Slang in Global Communications",
+      "description": "Global audiences require unambiguous phrasing free of culturally narrow regional idioms.",
+      "patterns": [
+        "\\b(?:across\\s+the\\s+pond|ballpark\\s+figure|touch\\s+base\\s+offline|hit\\s+out\\s+of\\s+the\\s+park)\\b"
+      ],
+      "suggested_replacements": {
+        "across the pond": "internationally",
+        "ballpark figure": "approximate estimate",
+        "touch base offline": "schedule a follow-up discussion",
+        "hit out of the park": "exceeded performance targets"
+      },
+      "severity": "medium",
+      "do_example": "We provide dedicated support to international enterprise partners.",
+      "dont_example": "We look forward to touching base offline with folks across the pond."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "international partners",
+      "prohibited": "folks across the pond",
+      "replacement": "international partners",
+      "case_sensitive": 0,
+      "notes": "Use clear international terminology for diverse global audiences.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

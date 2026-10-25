@@ -1,0 +1,33 @@
+{
+  "id": "everyday",
+  "label": "Just everyday content",
+  "kind": "occasion",
+  "summary": [
+    "Consistent routine messaging and brand voice",
+    "Balanced informational prose without artificial hype",
+    "Clear next steps for general readers"
+  ],
+  "tone_principles": "Steady, helpful, and dependable.",
+  "writing_style": "Clear paragraphs with logical transitions and direct information.",
+  "messaging_principles": "Focus on everyday utility, customer needs, and reliable service.",
+  "rules": [
+    {
+      "key": "RULE-OCC-EVERYDAY",
+      "pillar": "Tone and Voice",
+      "title": "Keep Routine Communications Focused & Balanced",
+      "description": "Routine daily communications should avoid artificial dramatic urgency or clickbait phrasing.",
+      "patterns": [
+        "\\b(?:you\\s+won'?t\\s+believe\\s+what\\s+happened|mind-blowing\\s+daily\\s+news|earth-shattering\\s+update)\\b"
+      ],
+      "suggested_replacements": {
+        "you won't believe what happened": "here is an important update",
+        "mind-blowing daily news": "key highlights",
+        "earth-shattering update": "routine operational note"
+      },
+      "severity": "low",
+      "do_example": "Here are three quick tips to get more from your account this week.",
+      "dont_example": "You won't believe what happened in our earth-shattering daily update!"
+    }
+  ],
+  "terminology": []
+}

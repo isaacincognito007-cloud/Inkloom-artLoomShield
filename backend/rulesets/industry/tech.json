@@ -1,0 +1,101 @@
+{
+  "id": "tech",
+  "label": "Technology or software",
+  "kind": "industry",
+  "summary": [
+    "Precise software claims and architecture descriptions",
+    "No unverified absolute uptime or invulnerability promises",
+    "Human supervision acknowledged alongside automation"
+  ],
+  "tone_principles": "Technical, precise, evidence-based, and measured. Avoid sensationalized AI buzzwords.",
+  "writing_style": "Clear technical explanations, defining specialized terms on first use.",
+  "messaging_principles": "Every automated workflow must acknowledge human monitoring and administrative access controls.",
+  "do_examples": [
+    "Designed for 99.9% target service availability under regular operating conditions.",
+    "Automated alerts notify on-call engineers when thresholds are exceeded."
+  ],
+  "dont_examples": [
+    "Our unhackable cloud has zero downtime ever and replaces your entire engineering team!",
+    "Magic AI algorithm runs with zero human oversight!"
+  ],
+  "rules": [
+    {
+      "key": "RULE-CLAIM-TECH",
+      "pillar": "Promotional Claims",
+      "title": "Substantiate Reliability, Uptime & Security Claims",
+      "description": "Software products must not claim absolute security or unverified zero-downtime availability.",
+      "patterns": [
+        "\\b(?:zero\\s+downtime\\s+ever|100%\\s+bug-free|unhackable|infinitely\\s+scalable|military-grade\\s+unbreakable)\\b"
+      ],
+      "suggested_replacements": {
+        "zero downtime ever": "high availability design with scheduled maintenance windows",
+        "unhackable": "SOC 2 aligned and regularly audited for security",
+        "100% bug-free": "tested against rigorous quality benchmarks",
+        "infinitely scalable": "architected for elastic horizontal scale"
+      },
+      "severity": "critical",
+      "do_example": "Our platform is architected for 99.9% target uptime across clustered regions.",
+      "dont_example": "Our platform guarantees zero downtime ever with unhackable protection."
+    },
+    {
+      "key": "RULE-MSG-TECH",
+      "pillar": "Messaging",
+      "title": "Pair Automation with Human Oversight",
+      "description": "Do not imply that automation or AI systems operate without administrative human controls.",
+      "patterns": [
+        "\\b(?:zero\\s+human\\s+oversight|without\\s+human\\s+intervention|replaces?\\s+your\\s+(?:entire\\s+)?(?:team|engineers|staff))\\b"
+      ],
+      "suggested_replacements": {
+        "zero human oversight": "configurable automated alerting with engineer review",
+        "without human intervention": "automated execution subject to administrator controls",
+        "replaces your entire team": "empowers your team with automated workflow assistance"
+      },
+      "severity": "high",
+      "do_example": "Automate routine data ingestion while preserving administrative sign-off.",
+      "dont_example": "Let autonomous AI run your operations with zero human oversight."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "SOC 2 Type II certified security",
+      "prohibited": "unhackable",
+      "replacement": "SOC 2 certified security",
+      "case_sensitive": 0,
+      "notes": "Absolute security claims are prohibited by regulatory standards.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "automated triage",
+      "prohibited": "magic AI algorithm",
+      "replacement": "automated triage model",
+      "case_sensitive": 0,
+      "notes": "Describe technological methods accurately without mystifying jargon.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "scale efficiently",
+      "prohibited": "blitz-scale",
+      "replacement": "scale efficiently",
+      "case_sensitive": 0,
+      "notes": "Avoid startup slang in enterprise technical documentation.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "colours": [
+    {
+      "name": "Obsidian Slate",
+      "hex_code": "#0F172A",
+      "usage_role": "Primary headings & text",
+      "max_delta_e": 12.0
+    },
+    {
+      "name": "Cyan Accent",
+      "hex_code": "#0284C7",
+      "usage_role": "Interactive accents & buttons",
+      "max_delta_e": 12.0
+    }
+  ],
+  "min_contrast_normal": 4.5,
+  "min_contrast_large": 3.0,
+  "target_reading_ease": 50.0
+}

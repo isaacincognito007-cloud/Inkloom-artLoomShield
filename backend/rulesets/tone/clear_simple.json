@@ -1,0 +1,52 @@
+{
+  "id": "clear_simple",
+  "label": "Clear and simple",
+  "kind": "tone",
+  "summary": [
+    "Short, punchy sentences and everyday plain-language words",
+    "Raised reading ease target (65+) for universal comprehension",
+    "No tangled multi-clause syntax or obscure academic vocabulary"
+  ],
+  "tone_principles": "Simple, direct, transparent, and uncluttered.",
+  "writing_style": "Short sentences (under 18 words), common vocabulary, and active voice conforming to plain language standards.",
+  "messaging_principles": "State the single main takeaway first, then provide simple supporting steps.",
+  "rules": [
+    {
+      "key": "RULE-TONE-CLEAR",
+      "pillar": "Tone and Voice",
+      "title": "Eliminate Tangled Circumlocutions & Dense Jargon",
+      "description": "Clear communications replace multi-word bureaucratic padding with direct single words.",
+      "patterns": [
+        "\\b(?:in\\s+the\\s+event\\s+of\\s+the\\s+contingency\\s+that|for\\s+the\\s+purpose\\s+of\\s+ascertaining|utilize\\s+with\\s+respect\\s+to|at\\s+this\\s+particular\\s+point\\s+in\\s+time)\\b"
+      ],
+      "suggested_replacements": {
+        "in the event of the contingency that": "if",
+        "for the purpose of ascertaining": "to check",
+        "utilize with respect to": "use for",
+        "at this particular point in time": "now"
+      },
+      "severity": "medium",
+      "do_example": "If you have questions, please call or email us today.",
+      "dont_example": "In the event of the contingency that questions arise at this particular point in time, reach out."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "use",
+      "prohibited": "utilize",
+      "replacement": "use",
+      "case_sensitive": 0,
+      "notes": "Prefer simple words: 'use' over 'utilize'.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "start",
+      "prohibited": "commence operation of",
+      "replacement": "start",
+      "case_sensitive": 0,
+      "notes": "Prefer direct verbs: 'start' over 'commence operation of'.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "target_reading_ease": 65.0
+}

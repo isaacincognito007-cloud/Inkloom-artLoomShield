@@ -1,0 +1,42 @@
+{
+  "id": "sale",
+  "label": "Sale or discount",
+  "kind": "occasion",
+  "summary": [
+    "Transparent promotional pricing and discount terms",
+    "Clear expiration dates and applicable conditions",
+    "Truthful savings comparisons against standard pricing"
+  ],
+  "tone_principles": "Exciting, transparent, and fair. Avoid deceptive fine print.",
+  "writing_style": "Concise promotional copy emphasizing actual savings and qualification criteria.",
+  "messaging_principles": "Discounts must specify eligible categories, promo codes, and campaign duration.",
+  "rules": [
+    {
+      "key": "RULE-OCC-SALE",
+      "pillar": "Promotional Claims",
+      "title": "Substantiate Promotional Discounts & Exclusions",
+      "description": "Sale copy must clarify promo terms rather than claiming unconstrained giveaways.",
+      "patterns": [
+        "\\b(?:free\\s+with\\s+zero\\s+catches\\s+ever|insane\\s+prices?\\s+that\\s+will\\s+bankrupt\\s+us|giving\\s+everything\\s+away\\s+for\\s+free)\\b"
+      ],
+      "suggested_replacements": {
+        "free with zero catches ever": "complimentary with qualifying purchase",
+        "insane prices that will bankrupt us": "our biggest promotional discount of the season",
+        "giving everything away for free": "enjoy special event pricing"
+      },
+      "severity": "high",
+      "do_example": "Save 20% on selected seasonal items through Sunday evening.",
+      "dont_example": "We are giving everything away for free at insane prices that will bankrupt us!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "promotional savings on eligible items",
+      "prohibited": "insane fire sale",
+      "replacement": "seasonal promotional sale",
+      "case_sensitive": 0,
+      "notes": "State promotional discounts with professional clarity.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

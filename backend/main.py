@@ -49,6 +49,13 @@ from .engine import (
     run_six_pillar_audit,
 )
 from .rate_limiter import SimpleIpRateLimiter, get_client_ip
+from .wizard import (
+    WIZARD_OPTIONS,
+    WizardAnswers,
+    compose,
+    create_wizard_profile_in_db,
+    get_sample_text_for_answers,
+)
 
 logger = logging.getLogger("loomshield.api")
 audit_rate_limiter = SimpleIpRateLimiter(max_requests=30, window_seconds=60)
@@ -650,6 +657,53 @@ def create_brand_profile(req: BrandCreateRequest, role: str = Depends(current_ro
             ),
         )
     return get_brand_vault_bundle(req.id)
+
+
+@app.get("/api/wizard/options")
+def get_wizard_options_endpoint():
+    """Retrieve question options, tiles, and descriptions for guided audit setup."""
+    return WIZARD_OPTIONS
+
+
+@app.post("/api/wizard/preview")
+def preview_wizard_answers_endpoint(req: WizardAnswers):
+    """Preview rule summaries, plain bullets, and tailored example text without writing to database."""
+    spec = compose(req.model_dump())
+    return {
+        "profile_label": spec["profile_label"],
+        "summary": spec["summary"],
+        "brand_text": spec["brand_text"],
+        "accessibility": spec["accessibility"],
+        "sample_text": get_sample_text_for_answers(req.model_dump()),
+    }
+
+
+@app.post("/api/wizard/profile")
+def create_wizard_profile_endpoint(
+    req: WizardAnswers,
+    request: Request,
+    role: str = Depends(current_role),
+):
+    """Atomically create a new isolated brand audit profile from wizard answers."""
+    require_permission(role, "run_audits", "Only users with run_audits permission can create audit profiles")
+    client_ip = get_client_ip(request)
+    if not audit_rate_limiter.is_allowed(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please wait a moment before creating an audit profile.",
+        )
+    with db_session() as conn:
+        profile_res = create_wizard_profile_in_db(conn, req.model_dump())
+
+    vault = get_brand_vault_bundle(profile_res["brand_id"])
+    return {
+        "status": "created",
+        "brand_id": profile_res["brand_id"],
+        "profile_label": profile_res["name"],
+        "summary": profile_res["summary"],
+        "sample_text": profile_res["sample_text"],
+        "vault": vault,
+    }
 
 
 @app.get("/api/overview/{brand_id}")

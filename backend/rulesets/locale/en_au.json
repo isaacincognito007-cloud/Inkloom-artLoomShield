@@ -1,0 +1,51 @@
+{
+  "id": "en_au",
+  "label": "Australia",
+  "kind": "locale",
+  "summary": [
+    "Australian English spelling conventions (e.g., colour, organise, programme)",
+    "Australian Dollar (AUD / A$) currency notation and GST compliance",
+    "Down-to-earth, candid, and transparent commercial voice"
+  ],
+  "tone_principles": "Approachable, genuine, and transparent.",
+  "writing_style": "Australian spelling conventions and straightforward language.",
+  "messaging_principles": "Consumer prices in Australia must clearly specify inclusion of GST (Goods and Services Tax).",
+  "rules": [
+    {
+      "key": "RULE-LOCALE-AU",
+      "pillar": "Terminology",
+      "title": "Enforce Australian English Spelling & Pricing Transparency",
+      "description": "Ensure Australian audiences receive localized Australian spelling and GST-inclusive price clarity.",
+      "patterns": [
+        "\\b(?:color|center|organize|analyze)\\b"
+      ],
+      "suggested_replacements": {
+        "color": "colour",
+        "center": "centre",
+        "organize": "organise",
+        "analyze": "analyse"
+      },
+      "severity": "medium",
+      "do_example": "Customise your plan with our Sydney support centre.",
+      "dont_example": "Customize your plan with our Sydney support center."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "colour",
+      "prohibited": "color",
+      "replacement": "colour",
+      "case_sensitive": 0,
+      "notes": "Australian English uses 'colour'.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "organise",
+      "prohibited": "organize",
+      "replacement": "organise",
+      "case_sensitive": 0,
+      "notes": "Australian English uses '-ise' spelling.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

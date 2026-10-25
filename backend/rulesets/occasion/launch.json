@@ -1,0 +1,43 @@
+{
+  "id": "launch",
+  "label": "Launching something new",
+  "kind": "occasion",
+  "summary": [
+    "Ground product launches in concrete user benefits",
+    "Avoid exaggerated 'revolutionary' or 'disruptive' hyperbole",
+    "State availability dates and release tiers clearly"
+  ],
+  "tone_principles": "Enthusiastic yet credible, grounded in observable capabilities.",
+  "writing_style": "Engaging feature introductions supported by specific use cases.",
+  "messaging_principles": "Celebrate new product launches by showing tangible problems solved rather than relying on empty buzzwords.",
+  "rules": [
+    {
+      "key": "RULE-OCC-LAUNCH",
+      "pillar": "Promotional Claims",
+      "title": "Substantiate Launch Claims & Product Novelty",
+      "description": "Product launches must describe features accurately without unverified claims of historical uniqueness.",
+      "patterns": [
+        "\\b(?:changes\\s+everything\\s+forever|earth-shattering\\s+disruption|first\\s+and\\s+only\\s+in\\s+human\\s+history|revolutionary\\s+miracle)\\b"
+      ],
+      "suggested_replacements": {
+        "changes everything forever": "introduces powerful new capabilities",
+        "earth-shattering disruption": "provides a streamlined approach",
+        "first and only in human history": "a dedicated new capability",
+        "revolutionary miracle": "significant update"
+      },
+      "severity": "high",
+      "do_example": "We are excited to introduce our newly upgraded reporting dashboard.",
+      "dont_example": "This revolutionary miracle changes everything forever across human history!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "innovative new release",
+      "prohibited": "revolutionary miracle product",
+      "replacement": "innovative new release",
+      "case_sensitive": 0,
+      "notes": "Describe new launches with credible excitement.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

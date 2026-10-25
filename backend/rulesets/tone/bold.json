@@ -1,0 +1,43 @@
+{
+  "id": "bold",
+  "label": "Bold and energetic",
+  "kind": "tone",
+  "summary": [
+    "Confident, energetic, and inspiring voice",
+    "Active verbs delivering strong momentum",
+    "No timid, passive hedges or apologetic hesitation"
+  ],
+  "tone_principles": "Bold, spirited, visionary, and proactive.",
+  "writing_style": "High-energy, forward-moving sentences with punchy calls to action and confident declarations.",
+  "messaging_principles": "Inspire action and highlight bold achievements while maintaining truthful claims.",
+  "rules": [
+    {
+      "key": "RULE-TONE-BOLD",
+      "pillar": "Tone and Voice",
+      "title": "Avoid Timid Hesitation & Over-Hedged Passivity",
+      "description": "Bold communications replace apologetic, timid hedges with confident, active statements.",
+      "patterns": [
+        "\\b(?:we\\s+might\\s+somewhat\\s+humbly\\s+suggest|perhaps\\s+maybe\\s+consider|apologies\\s+for\\s+existing)\\b"
+      ],
+      "suggested_replacements": {
+        "we might somewhat humbly suggest": "we recommend",
+        "perhaps maybe consider": "take action to",
+        "apologies for existing": "we are thrilled to partner with you"
+      },
+      "severity": "low",
+      "do_example": "Build the future of your brand with bold confidence.",
+      "dont_example": "We might somewhat humbly suggest that perhaps maybe you could consider our tools."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "lead with confidence",
+      "prohibited": "try not to fail",
+      "replacement": "strive for success",
+      "case_sensitive": 0,
+      "notes": "Inspire proactive confidence rather than timid hesitation.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "target_reading_ease": 55.0
+}

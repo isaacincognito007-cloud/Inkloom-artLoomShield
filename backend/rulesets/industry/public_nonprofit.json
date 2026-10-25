@@ -1,0 +1,91 @@
+{
+  "id": "public_nonprofit",
+  "label": "School, university, government or non-profit",
+  "kind": "industry",
+  "summary": [
+    "Accessible, inclusive public-interest communications",
+    "Precise eligibility criteria for programs, grants, and enrollments",
+    "Equitable language welcoming all community participants"
+  ],
+  "tone_principles": "Respectful, transparent, civic-minded, and welcoming. Avoid elitist jargon or misleading funding claims.",
+  "writing_style": "Plain public-sector English with straightforward guidance and clear contact channels.",
+  "messaging_principles": "All program criteria, admission requirements, and grant details must state conditions plainly.",
+  "do_examples": [
+    "Applications are evaluated according to published civic criteria and community guidelines.",
+    "Donations may be eligible for tax deductibility under applicable non-profit regulations."
+  ],
+  "dont_examples": [
+    "Get 100% free government money with zero eligibility checks guaranteed!",
+    "Our school guarantees 100% placement into top-tier executive roles!"
+  ],
+  "rules": [
+    {
+      "key": "RULE-CLAIM-PUB",
+      "pillar": "Promotional Claims",
+      "title": "Substantiate Accreditation, Placement & Grant Claims",
+      "description": "Public and educational institutions must not promise guaranteed job placement or unconditional grants.",
+      "patterns": [
+        "\\b(?:100%\\s+job\\s+placement\\s+guaranteed|100%\\s+free\\s+government\\s+money|guaranteed\\s+admission\\s+for\\s+everyone|zero\\s+eligibility\\s+checks)\\b"
+      ],
+      "suggested_replacements": {
+        "100% job placement guaranteed": "structured career counseling and internship pathways",
+        "100% free government money": "public grant assistance subject to eligibility criteria",
+        "guaranteed admission for everyone": "accessible enrollment options based on admission requirements"
+      },
+      "severity": "critical",
+      "do_example": "Students benefit from career workshops and institutional employer partnerships.",
+      "dont_example": "We guarantee 100% job placement for all graduating students."
+    },
+    {
+      "key": "RULE-TONE-PUB",
+      "pillar": "Tone and Voice",
+      "title": "Maintain Accessible & Respectful Community Voice",
+      "description": "Avoid exclusionary administrative acronyms or bureaucratic dismissiveness.",
+      "patterns": [
+        "\\b(?:mandatory\\s+decree\\s+or\\s+face\\s+penalties|ignorance\\s+is\\s+no\\s+excuse|bureaucratic\\s+mandate)\\b"
+      ],
+      "suggested_replacements": {
+        "mandatory decree or face penalties": "please review regulatory compliance guidelines",
+        "ignorance is no excuse": "our staff is available to clarify requirements"
+      },
+      "severity": "medium",
+      "do_example": "Please contact our community liaison office if you need assistance submitting documents.",
+      "dont_example": "Compliance is a mandatory decree or face immediate penalties!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "public grant funding for eligible applicants",
+      "prohibited": "free government cash",
+      "replacement": "eligible grant funding",
+      "case_sensitive": 0,
+      "notes": "Public funding must be framed accurately according to statutory requirements.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "accredited academic program",
+      "prohibited": "best school in the universe",
+      "replacement": "nationally recognized program",
+      "case_sensitive": 0,
+      "notes": "Educational institutions should reference accredited standards.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "colours": [
+    {
+      "name": "Civic Navy",
+      "hex_code": "#1E3A8A",
+      "usage_role": "Primary headings & badges",
+      "max_delta_e": 12.0
+    },
+    {
+      "name": "Community Green",
+      "hex_code": "#15803D",
+      "usage_role": "Supportive announcements & status",
+      "max_delta_e": 12.0
+    }
+  ],
+  "min_contrast_normal": 4.5,
+  "min_contrast_large": 3.0,
+  "target_reading_ease": 60.0
+}

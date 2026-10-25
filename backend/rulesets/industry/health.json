@@ -1,0 +1,94 @@
+{
+  "id": "health",
+  "label": "Health, medical or wellness",
+  "kind": "industry",
+  "summary": [
+    "Clinically cautious, evidence-backed health statements",
+    "No promises of universal cures or medical diagnosis guarantees",
+    "Explicit guidance to consult certified medical professionals"
+  ],
+  "tone_principles": "Empathetic, scientifically objective, cautious, and human-centered. Never imply autonomous diagnosis.",
+  "writing_style": "Plain clinical English avoiding both alarmist medical jargon and unscientific hype.",
+  "messaging_principles": "Always frame health tools as supportive resources under the guidance of licensed clinicians.",
+  "do_examples": [
+    "Clinical decision support assists physicians by prioritizing diagnostic scans for review.",
+    "Always consult your qualified healthcare provider regarding symptoms or treatment plans."
+  ],
+  "dont_examples": [
+    "Our miracle algorithm guarantees 100% cure rates and replaces doctors!",
+    "Diagnose your heart condition autonomously without seeing a physician."
+  ],
+  "rules": [
+    {
+      "key": "RULE-CLAIM-HEALTH",
+      "pillar": "Promotional Claims",
+      "title": "Prohibit Unverified Cure Claims & Diagnostic Guarantees",
+      "description": "Health and wellness content must never claim guaranteed medical cures or 100% diagnostic precision.",
+      "patterns": [
+        "\\b(?:guaranteed\\s+cure|100%\\s+cure\\s+rate|miracle\\s+(?:cure|treatment|healing)|replaces?\\s+doctors?|100%\\s+diagnostic\\s+accuracy)\\b"
+      ],
+      "suggested_replacements": {
+        "guaranteed cure": "clinically validated treatment option",
+        "100% cure rate": "high therapeutic response rate observed in clinical trials",
+        "miracle cure": "evidence-supported therapy",
+        "replaces doctors": "assists healthcare professionals",
+        "100% diagnostic accuracy": "high sensitivity in clinical validation studies"
+      },
+      "severity": "critical",
+      "do_example": "Our software assists radiologists by highlighting potential anomalies for clinical inspection.",
+      "dont_example": "Our AI guarantees a 100% cure rate and replaces radiologists."
+    },
+    {
+      "key": "RULE-MSG-HEALTH",
+      "pillar": "Messaging",
+      "title": "Mandate Physician Consultation & Assistive Framing",
+      "description": "Do not state that medical software operates autonomously without practitioner supervision.",
+      "patterns": [
+        "\\b(?:autonomous\\s+(?:doctor|diagnosis)|diagnose\\s+yourself\\s+without\\s+a\\s+doctor|no\\s+physician\\s+needed)\\b"
+      ],
+      "suggested_replacements": {
+        "autonomous doctor": "clinician decision support software",
+        "autonomous diagnosis": "assisted clinical triage",
+        "diagnose yourself without a doctor": "monitor your wellness trends to share with your physician"
+      },
+      "severity": "high",
+      "do_example": "Share these symptom trends with your physician during your next consultation.",
+      "dont_example": "Use our tool to diagnose yourself without a doctor."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "clinician-assisted decision support",
+      "prohibited": "autonomous doctor",
+      "replacement": "clinician-assisted decision support",
+      "case_sensitive": 0,
+      "notes": "Medical devices and software assist board-certified clinicians.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "evidence-supported wellness therapy",
+      "prohibited": "miracle cure",
+      "replacement": "evidence-supported therapy",
+      "case_sensitive": 0,
+      "notes": "Medical products must avoid hyperbolic or unscientific claims.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "colours": [
+    {
+      "name": "Clinical Charcoal",
+      "hex_code": "#0F172A",
+      "usage_role": "Headings & main text",
+      "max_delta_e": 12.0
+    },
+    {
+      "name": "Medical Teal",
+      "hex_code": "#0D9488",
+      "usage_role": "Verified badges & accents",
+      "max_delta_e": 12.0
+    }
+  ],
+  "min_contrast_normal": 4.5,
+  "min_contrast_large": 3.0,
+  "target_reading_ease": 55.0
+}

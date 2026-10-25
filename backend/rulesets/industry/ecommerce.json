@@ -1,0 +1,92 @@
+{
+  "id": "ecommerce",
+  "label": "Shop or e-commerce",
+  "kind": "industry",
+  "summary": [
+    "Transparent pricing, shipping details, and return policies",
+    "No misleading scarcity tactics or false countdown claims",
+    "Clear disclosures for warranties and product specifications"
+  ],
+  "tone_principles": "Helpful, engaging, transparent, and fair. Avoid deceptive urgency or hidden terms.",
+  "writing_style": "Friendly product descriptions with clear specs, delivery estimates, and return guidelines.",
+  "messaging_principles": "Prices, discounts, and return windows must be stated plainly without deceptive asterisks.",
+  "do_examples": [
+    "Enjoy complimentary standard shipping on orders over qualifying cart amounts.",
+    "Returns accepted within 30 days in original condition and packaging."
+  ],
+  "dont_examples": [
+    "Lowest prices anywhere in the universe guaranteed—act in 10 seconds or lose it forever!",
+    "100% free with zero strings attached and lifetime unlimited refunds!"
+  ],
+  "rules": [
+    {
+      "key": "RULE-CLAIM-ECOM",
+      "pillar": "Promotional Claims",
+      "title": "Substantiate Price Guarantees & Promotional Terms",
+      "description": "Retail promotions must not promise unverified universal price match superlatives.",
+      "patterns": [
+        "\\b(?:lowest\\s+prices?\\s+in\\s+the\\s+world|cheapest\\s+prices?\\s+in\\s+the\\s+universe|100%\\s+free\\s+with\\s+no\\s+strings|unbeatable\\s+free\\s+gifts?)\\b"
+      ],
+      "suggested_replacements": {
+        "lowest prices in the world": "competitive seasonal pricing",
+        "cheapest prices in the universe": "value-priced selections",
+        "100% free with no strings": "complimentary bonus with eligible purchase"
+      },
+      "severity": "high",
+      "do_example": "Check our competitive pricing on everyday essentials.",
+      "dont_example": "We guarantee the lowest prices in the world with no exclusions."
+    },
+    {
+      "key": "RULE-TONE-ECOM",
+      "pillar": "Tone and Voice",
+      "title": "Avoid Deceptive Scarcity & High-Pressure Urgency",
+      "description": "Do not manufacture fake countdown urgency or pressure buyers with false stock depletion warnings.",
+      "patterns": [
+        "\\b(?:order\\s+in\\s+(?:3|5|10)\\s+seconds\\s+or\\s+lose\\s+it|disappearing\\s+before\\s+your\\s+eyes|gone\\s+forever\\s+in\\s+minutes)\\b"
+      ],
+      "suggested_replacements": {
+        "order in 3 seconds or lose it": "popular item; order early while supplies last",
+        "disappearing before your eyes": "high demand item",
+        "gone forever in minutes": "available during this promotional event"
+      },
+      "severity": "medium",
+      "do_example": "Available while promotional seasonal stock lasts.",
+      "dont_example": "Only 1 left—order in 3 seconds or lose it forever!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "standard 30-day return policy",
+      "prohibited": "hassle-free lifetime return guarantee with zero conditions",
+      "replacement": "standard 30-day return policy",
+      "case_sensitive": 0,
+      "notes": "Return terms must reflect realistic published warranty guidelines.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "verified customer ratings",
+      "prohibited": "100% flawless five-star perfection",
+      "replacement": "verified buyer reviews",
+      "case_sensitive": 0,
+      "notes": "State rating averages honestly based on verified purchaser reviews.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "colours": [
+    {
+      "name": "Ink Primary",
+      "hex_code": "#18181B",
+      "usage_role": "Primary headings & text",
+      "max_delta_e": 12.0
+    },
+    {
+      "name": "Warm Amber",
+      "hex_code": "#D97706",
+      "usage_role": "Promotional highlights & buttons",
+      "max_delta_e": 12.0
+    }
+  ],
+  "min_contrast_normal": 4.5,
+  "min_contrast_large": 3.0,
+  "target_reading_ease": 55.0
+}

@@ -1,0 +1,52 @@
+{
+  "id": "en_us",
+  "label": "United States",
+  "kind": "locale",
+  "summary": [
+    "American English spelling conventions (e.g., color, organize, center)",
+    "Standardized US Dollar ($ / USD) currency notation",
+    "Direct, concise American business phrasing"
+  ],
+  "tone_principles": "Direct, engaging, and action-oriented American corporate tone.",
+  "writing_style": "US spelling conventions and clear, punchy sentence structures.",
+  "messaging_principles": "Present prices in USD with standard domestic sales tax caveats.",
+  "rules": [
+    {
+      "key": "RULE-LOCALE-US",
+      "pillar": "Terminology",
+      "title": "Enforce American English Spelling",
+      "description": "Ensure content directed at US audiences follows standard American spelling conventions.",
+      "patterns": [
+        "\\b(?:colour|centre|organise|analyse|favour)\\b"
+      ],
+      "suggested_replacements": {
+        "colour": "color",
+        "centre": "center",
+        "organise": "organize",
+        "analyse": "analyze",
+        "favour": "favor"
+      },
+      "severity": "medium",
+      "do_example": "Customize brand color and optimize workflow centers.",
+      "dont_example": "Customise brand colour and organise workflow centres."
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "color",
+      "prohibited": "colour",
+      "replacement": "color",
+      "case_sensitive": 0,
+      "notes": "American English uses 'color'.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "organize",
+      "prohibited": "organise",
+      "replacement": "organize",
+      "case_sensitive": 0,
+      "notes": "American English uses '-ize' spelling.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ]
+}

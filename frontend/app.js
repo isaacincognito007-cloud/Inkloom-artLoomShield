@@ -43,6 +43,23 @@ function updateProcessingModeUI() {
  * Production UI Controller
  */
 
+const LABELS = {
+  pillar: 'Check area',
+  pillars: 'Check areas',
+  findings: 'Issues',
+  finding: 'Issue',
+  brandVault: 'Brand guidelines',
+  terminology: 'Preferred words',
+  verifiedFacts: 'Approved facts',
+  visualIdentity: 'Colours and logo',
+  voiceRules: 'Tone and rules',
+  checkFailed: "Couldn't check",
+  needsReview: 'Needs a human look',
+  ambiguityRadar: 'Guideline insights',
+  localProcessing: 'Local processing',
+  hostedProcessing: 'Hosted engine',
+};
+
 const AppState = {
   brands: [],
   activeBrandId: '',
@@ -59,6 +76,22 @@ const AppState = {
   permissions: {},
   inputMethod: 'paste', // 'paste' | 'upload'
   hasUnsavedChanges: false,
+
+  // Guided wizard state (Slice 1 headline flow)
+  wizardMode: true,
+  wizardStep: 1,
+  wizardAnswers: {
+    content_type: 'webpage',
+    industry: 'general',
+    occasion: 'everyday',
+    locale: 'global',
+    tone: 'professional',
+    company_name: '',
+    never_use_words: '',
+  },
+  wizardOptions: null,
+  wizardPreview: null,
+  wizardSampleText: '',
 
   // Overview state
   overviewData: null,
@@ -729,13 +762,16 @@ function bindNavigationEvents() {
 
   document.getElementById('overviewNewAuditBtn').addEventListener('click', () => {
     AppState.auditStage = 'input';
+    AppState.wizardMode = true;
+    AppState.wizardStep = 1;
     switchView('new-audit');
   });
 
   document.getElementById('overviewTryDemoBtn').addEventListener('click', () => {
     AppState.auditStage = 'input';
+    AppState.wizardMode = true;
+    AppState.wizardStep = 8;
     switchView('new-audit');
-    loadSamplePreset(1);
   });
 
   document.getElementById('demoSampleSelector').addEventListener('change', (e) => {
@@ -1121,6 +1157,42 @@ function syncVisualCheckControlState() {
 }
 
 function bindAuditWorkspaceEvents() {
+  // Wizard flow switcher buttons
+  const wizUseExistingBtn = document.getElementById('wizardUseExistingBtn');
+  const wizQuickSkipBtn = document.getElementById('wizardQuickSkipBtn');
+  const switchToWizardBtn = document.getElementById('switchToWizardBtn');
+
+  if (wizUseExistingBtn) {
+    wizUseExistingBtn.addEventListener('click', () => {
+      AppState.wizardMode = false;
+      renderAuditWorkspace();
+    });
+  }
+
+  if (wizQuickSkipBtn) {
+    wizQuickSkipBtn.addEventListener('click', async () => {
+      AppState.wizardAnswers = {
+        content_type: 'webpage',
+        industry: 'general',
+        occasion: 'everyday',
+        locale: 'global',
+        tone: 'professional',
+        company_name: '',
+        never_use_words: '',
+      };
+      AppState.wizardStep = 8;
+      await renderWizard();
+    });
+  }
+
+  if (switchToWizardBtn) {
+    switchToWizardBtn.addEventListener('click', () => {
+      AppState.wizardMode = true;
+      AppState.wizardStep = 1;
+      renderAuditWorkspace();
+    });
+  }
+
   // Ingestion method toggle: Paste content vs Upload file
   const pasteBtn = document.getElementById('inputMethodPasteBtn');
   const uploadBtn = document.getElementById('inputMethodUploadBtn');
@@ -1613,7 +1685,759 @@ async function executeFileUploadAudit(file) {
   }
 }
 
+// ============================================================================
+// GUIDED "NEW AUDIT" WIZARD (SLICE 1)
+// ============================================================================
+
+async function ensureWizardOptionsLoaded() {
+  if (AppState.wizardOptions) return AppState.wizardOptions;
+  try {
+    const data = await apiFetch('/api/wizard/options');
+    AppState.wizardOptions = data;
+    return data;
+  } catch (err) {
+    console.warn('Failed to fetch wizard options, falling back to local defaults', err);
+    return null;
+  }
+}
+
+function showWizardAlert(type, message) {
+  const alert = document.getElementById('wizFeedbackAlert');
+  if (!alert) return;
+  alert.style.display = 'block';
+  if (type === 'error') {
+    alert.className = 'banner-error';
+    alert.style.background = '#FEF2F2';
+    alert.style.color = '#991B1B';
+    alert.style.padding = '10px 14px';
+    alert.style.borderRadius = '8px';
+    alert.style.border = '1px solid #FECACA';
+  } else {
+    alert.className = 'banner-info';
+    alert.style.background = '#F0FDF4';
+    alert.style.color = '#166534';
+    alert.style.padding = '10px 14px';
+    alert.style.borderRadius = '8px';
+    alert.style.border = '1px solid #BBF7D0';
+  }
+  alert.textContent = message;
+}
+
+function getSampleTextFallback(industry) {
+  if (industry === 'finance') {
+    return "Our institutional fund guarantees 18% returns with guaranteed zero risk capital preservation! Traditional banks are destroying your wealth every day. Please do the needful and check our rates.";
+  }
+  if (industry === 'tech') {
+    return "Our unhackable cloud has zero downtime ever and replaces your entire engineering team permanently! This revolutionary miracle product changes everything forever. Customise your dashboard colour today.";
+  }
+  if (industry === 'health') {
+    return "Our miracle cure guarantees a 100% cure rate and replaces doctors worldwide! Diagnose yourself without a physician using our autonomous doctor software.";
+  }
+  if (industry === 'ecommerce') {
+    return "Lowest prices anywhere in the world guaranteed! Only 2 items left—order in 3 seconds or lose it forever during our insane fire sale with a hassle-free lifetime return guarantee with zero conditions.";
+  }
+  return "We are proud to provide the #1 in the world business consulting service with guaranteed zero risk. Act now or suffer the consequences before it's too late! Our synergistic paradigm delivers silver bullet results.";
+}
+
+async function renderWizard() {
+  const container = document.getElementById('wizardStepContent');
+  if (!container) return;
+
+  await ensureWizardOptionsLoaded();
+
+  const step = AppState.wizardStep || 1;
+  const totalSteps = 8;
+  const pct = Math.round((step / totalSteps) * 100);
+
+  const fill = document.getElementById('wizardProgressFill');
+  const counter = document.getElementById('wizardStepCounter');
+  if (fill) fill.style.width = `${pct}%`;
+  if (counter) counter.textContent = `Step ${step} of ${totalSteps}`;
+
+  const headerTitle = document.getElementById('wizardHeaderTitle');
+  const headerSub = document.getElementById('wizardHeaderSubtitle');
+
+  // Step 1: Q1 What would you like to check?
+  if (step === 1) {
+    if (headerTitle) headerTitle.textContent = 'What would you like to check?';
+    if (headerSub) headerSub.textContent = 'Select the type of content you are preparing to audit.';
+
+    const q = (AppState.wizardOptions?.questions || [])[0] || {
+      options: [
+        { id: 'webpage', label: 'Website page or blog post', description: 'Landing pages, articles, and documentation.' },
+        { id: 'email', label: 'Marketing email or newsletter', description: 'Promotional emails, outreach sequences, and newsletters.' },
+        { id: 'social', label: 'Social media post', description: 'Short updates, announcements, and promotional blurbs.' },
+        { id: 'ad', label: 'Ad or promotion', description: 'Paid digital banners, PPC headlines, and campaign copy.' },
+        { id: 'press_release', label: 'Press release or announcement', description: 'Official company milestones, statements, and media notes.' },
+        { id: 'product_desc', label: 'Product description', description: 'Feature overviews, catalogue copy, and packaging text.' },
+        { id: 'policy', label: 'Policy or legal page', description: 'Terms of service, privacy statements, and customer policies.' },
+        { id: 'report', label: 'Report or presentation', description: 'Whitepapers, executive slides, and research summaries.' },
+        { id: 'image_logo', label: 'Image or logo', description: 'Visual assets, wordmarks, colour palettes, and banner graphics.' },
+      ]
+    };
+
+    container.innerHTML = `
+      <div class="wizard-tiles-grid">
+        ${q.options.map(opt => `
+          <button type="button" class="wizard-tile ${AppState.wizardAnswers.content_type === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.content_type === opt.id}">
+            <div class="wizard-tile-header">
+              <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
+              <span class="wizard-tile-check">✓</span>
+            </div>
+            <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
+          </button>
+        `).join('')}
+      </div>
+      <div class="wizard-nav-row" style="justify-content: flex-end;">
+        <button type="button" class="btn btn-accent" id="wizardNextBtn">Next &rarr;</button>
+      </div>
+    `;
+
+    container.querySelectorAll('.wizard-tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        AppState.wizardAnswers.content_type = tile.getAttribute('data-opt-id');
+        container.querySelectorAll('.wizard-tile').forEach(t => t.classList.remove('selected'));
+        tile.classList.add('selected');
+        setTimeout(() => {
+          AppState.wizardStep = 2;
+          renderWizard();
+        }, 120);
+      });
+    });
+
+    const nextBtn = document.getElementById('wizardNextBtn');
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => {
+        AppState.wizardStep = 2;
+        renderWizard();
+      });
+    }
+    return;
+  }
+
+  // Step 2: Q2 What kind of organisation is this for?
+  if (step === 2) {
+    if (headerTitle) headerTitle.textContent = 'What kind of organisation is this for?';
+    if (headerSub) headerSub.textContent = 'Applies industry-specific compliance rules, prohibited terms, and claims checks.';
+
+    const q = (AppState.wizardOptions?.questions || [])[1] || {
+      options: [
+        { id: 'tech', label: 'Technology or software', description: 'SaaS platforms, developer tools, AI products, and tech infrastructure.' },
+        { id: 'finance', label: 'Bank, finance or insurance', description: 'Financial services, treasury management, fintech, and insurance.' },
+        { id: 'health', label: 'Health, medical or wellness', description: 'Clinical systems, medical devices, wellness apps, and diagnostic tools.' },
+        { id: 'ecommerce', label: 'Shop or e-commerce', description: 'Retail storefronts, consumer brands, and online shopping portals.' },
+        { id: 'public_nonprofit', label: 'School, university or government', description: 'Educational institutions, civic agencies, charities, and non-profits.' },
+        { id: 'general', label: 'Something else', description: 'General business services, consulting, agency work, and other trades.' },
+      ]
+    };
+
+    container.innerHTML = `
+      <div class="wizard-tiles-grid">
+        ${q.options.map(opt => `
+          <button type="button" class="wizard-tile ${AppState.wizardAnswers.industry === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.industry === opt.id}">
+            <div class="wizard-tile-header">
+              <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
+              <span class="wizard-tile-check">✓</span>
+            </div>
+            <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
+          </button>
+        `).join('')}
+      </div>
+      <div class="wizard-nav-row">
+        <button type="button" class="btn" id="wizardBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-accent" id="wizardNextBtn">Next &rarr;</button>
+      </div>
+    `;
+
+    container.querySelectorAll('.wizard-tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        AppState.wizardAnswers.industry = tile.getAttribute('data-opt-id');
+        container.querySelectorAll('.wizard-tile').forEach(t => t.classList.remove('selected'));
+        tile.classList.add('selected');
+        setTimeout(() => {
+          AppState.wizardStep = 3;
+          renderWizard();
+        }, 120);
+      });
+    });
+
+    document.getElementById('wizardBackBtn').addEventListener('click', () => {
+      AppState.wizardStep = 1;
+      renderWizard();
+    });
+    document.getElementById('wizardNextBtn').addEventListener('click', () => {
+      AppState.wizardStep = 3;
+      renderWizard();
+    });
+    return;
+  }
+
+  // Step 3: Q3 Is this for a special occasion?
+  if (step === 3) {
+    if (headerTitle) headerTitle.textContent = 'Is this for a special occasion?';
+    if (headerSub) headerSub.textContent = 'Calibrates urgency, novelty, and sensitivity rules for this specific message.';
+
+    const q = (AppState.wizardOptions?.questions || [])[2] || {
+      options: [
+        { id: 'everyday', label: 'Just everyday content', description: 'Routine communications, ongoing product information, and standard updates.' },
+        { id: 'launch', label: 'Launching something new', description: 'Product debuts, new feature introductions, and major releases.' },
+        { id: 'sale', label: 'Sale or discount', description: 'Promotional events, limited-time savings, and seasonal deals.' },
+        { id: 'incident', label: 'Handling a problem or incident', description: 'Service downtime notes, incident retrospectives, and customer apology notices.' },
+        { id: 'investor', label: 'Investor or regulatory update', description: 'Quarterly shareholder letters, earnings summaries, and compliance filings.' },
+        { id: 'seasonal', label: 'Festival or season', description: 'Holiday campaigns, festival greetings, and seasonal celebrations.' },
+      ]
+    };
+
+    container.innerHTML = `
+      <div class="wizard-tiles-grid">
+        ${q.options.map(opt => `
+          <button type="button" class="wizard-tile ${AppState.wizardAnswers.occasion === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.occasion === opt.id}">
+            <div class="wizard-tile-header">
+              <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
+              <span class="wizard-tile-check">✓</span>
+            </div>
+            <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
+          </button>
+        `).join('')}
+      </div>
+      <div class="wizard-nav-row">
+        <button type="button" class="btn" id="wizardBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-accent" id="wizardNextBtn">Next &rarr;</button>
+      </div>
+    `;
+
+    container.querySelectorAll('.wizard-tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        AppState.wizardAnswers.occasion = tile.getAttribute('data-opt-id');
+        container.querySelectorAll('.wizard-tile').forEach(t => t.classList.remove('selected'));
+        tile.classList.add('selected');
+        setTimeout(() => {
+          AppState.wizardStep = 4;
+          renderWizard();
+        }, 120);
+      });
+    });
+
+    document.getElementById('wizardBackBtn').addEventListener('click', () => {
+      AppState.wizardStep = 2;
+      renderWizard();
+    });
+    document.getElementById('wizardNextBtn').addEventListener('click', () => {
+      AppState.wizardStep = 4;
+      renderWizard();
+    });
+    return;
+  }
+
+  // Step 4: Q4 Where will most readers be?
+  if (step === 4) {
+    if (headerTitle) headerTitle.textContent = 'Where will most readers be?';
+    if (headerSub) headerSub.textContent = 'Enforces regional spelling, currency notations, and local communication standards.';
+
+    const q = (AppState.wizardOptions?.questions || [])[3] || {
+      options: [
+        { id: 'en_in', label: 'India', description: '₹ / INR currency conventions, lakh/crore formats, and Indian English spelling.' },
+        { id: 'en_us', label: 'United States', description: 'American English spelling (color, organize) and $ / USD notation.' },
+        { id: 'en_gb', label: 'United Kingdom', description: 'British English spelling (colour, organise) and £ / GBP notation.' },
+        { id: 'en_ca', label: 'Canada', description: 'Canadian English spelling standards and CAD currency clarity.' },
+        { id: 'en_au', label: 'Australia', description: 'Australian English spelling and AUD GST-inclusive conventions.' },
+        { id: 'global', label: 'Worldwide', description: 'International plain English with standard ISO currency codes.' },
+      ]
+    };
+
+    container.innerHTML = `
+      <div class="wizard-tiles-grid">
+        ${q.options.map(opt => `
+          <button type="button" class="wizard-tile ${AppState.wizardAnswers.locale === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.locale === opt.id}">
+            <div class="wizard-tile-header">
+              <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
+              <span class="wizard-tile-check">✓</span>
+            </div>
+            <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
+          </button>
+        `).join('')}
+      </div>
+      <div class="wizard-nav-row">
+        <button type="button" class="btn" id="wizardBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-accent" id="wizardNextBtn">Next &rarr;</button>
+      </div>
+    `;
+
+    container.querySelectorAll('.wizard-tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        AppState.wizardAnswers.locale = tile.getAttribute('data-opt-id');
+        container.querySelectorAll('.wizard-tile').forEach(t => t.classList.remove('selected'));
+        tile.classList.add('selected');
+        setTimeout(() => {
+          AppState.wizardStep = 5;
+          renderWizard();
+        }, 120);
+      });
+    });
+
+    document.getElementById('wizardBackBtn').addEventListener('click', () => {
+      AppState.wizardStep = 3;
+      renderWizard();
+    });
+    document.getElementById('wizardNextBtn').addEventListener('click', () => {
+      AppState.wizardStep = 5;
+      renderWizard();
+    });
+    return;
+  }
+
+  // Step 5: Q5 How should it sound?
+  if (step === 5) {
+    if (headerTitle) headerTitle.textContent = 'How should it sound?';
+    if (headerSub) headerSub.textContent = 'Sets reading ease targets and vocabulary formality benchmarks.';
+
+    const q = (AppState.wizardOptions?.questions || [])[4] || {
+      options: [
+        { id: 'professional', label: 'Professional', description: 'Authoritative, dignified, and objective corporate communication.' },
+        { id: 'friendly', label: 'Friendly', description: 'Warm, conversational, and approachable community voice.' },
+        { id: 'clear_simple', label: 'Clear and simple', description: 'Plain language with raised reading ease (65+) and short sentences.' },
+        { id: 'bold', label: 'Bold and energetic', description: 'Confident, spirited, and action-driven brand expression.' },
+      ]
+    };
+
+    container.innerHTML = `
+      <div class="wizard-tiles-grid">
+        ${q.options.map(opt => `
+          <button type="button" class="wizard-tile ${AppState.wizardAnswers.tone === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.tone === opt.id}">
+            <div class="wizard-tile-header">
+              <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
+              <span class="wizard-tile-check">✓</span>
+            </div>
+            <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
+          </button>
+        `).join('')}
+      </div>
+      <div class="wizard-nav-row">
+        <button type="button" class="btn" id="wizardBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-accent" id="wizardNextBtn">Next &rarr;</button>
+      </div>
+    `;
+
+    container.querySelectorAll('.wizard-tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        AppState.wizardAnswers.tone = tile.getAttribute('data-opt-id');
+        container.querySelectorAll('.wizard-tile').forEach(t => t.classList.remove('selected'));
+        tile.classList.add('selected');
+        setTimeout(() => {
+          AppState.wizardStep = 6;
+          renderWizard();
+        }, 120);
+      });
+    });
+
+    document.getElementById('wizardBackBtn').addEventListener('click', () => {
+      AppState.wizardStep = 4;
+      renderWizard();
+    });
+    document.getElementById('wizardNextBtn').addEventListener('click', () => {
+      AppState.wizardStep = 6;
+      renderWizard();
+    });
+    return;
+  }
+
+  // Step 6: Q6 (Optional) Company name & words you never want used
+  if (step === 6) {
+    if (headerTitle) headerTitle.textContent = 'Organisation details (optional)';
+    if (headerSub) headerSub.textContent = 'Optionally add your brand name and any custom words you never want used in your content.';
+
+    container.innerHTML = `
+      <div style="max-width: 600px; margin: 20px 0 28px 0;">
+        <div class="form-group" style="margin-bottom: 20px;">
+          <label for="wizCompanyName" style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink); display: block; margin-bottom: 6px;">Your company or product name</label>
+          <input type="text" id="wizCompanyName" class="form-control" placeholder="e.g., NovaPay, Acme Labs, Orbit Software" value="${escapeHtml(AppState.wizardAnswers.company_name || '')}" />
+          <div class="form-helper">Used to label your generated compliance checks.</div>
+        </div>
+
+        <div class="form-group">
+          <label for="wizNeverUseWords" style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink); display: block; margin-bottom: 6px;">Words you never want used (separate with commas)</label>
+          <input type="text" id="wizNeverUseWords" class="form-control" placeholder="e.g., cheap, guru, magic, unhackable" value="${escapeHtml(AppState.wizardAnswers.never_use_words || '')}" />
+          <div class="form-helper">Any flagged words will be automatically checked and reported as issues.</div>
+        </div>
+      </div>
+      <div class="wizard-nav-row">
+        <button type="button" class="btn" id="wizardBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-accent" id="wizardNextBtn">Review your checks &rarr;</button>
+      </div>
+    `;
+
+    document.getElementById('wizardBackBtn').addEventListener('click', () => {
+      AppState.wizardStep = 5;
+      renderWizard();
+    });
+    document.getElementById('wizardNextBtn').addEventListener('click', async () => {
+      const nameInput = document.getElementById('wizCompanyName');
+      const wordsInput = document.getElementById('wizNeverUseWords');
+      if (nameInput) AppState.wizardAnswers.company_name = nameInput.value.trim();
+      if (wordsInput) AppState.wizardAnswers.never_use_words = wordsInput.value.trim();
+      AppState.wizardStep = 7;
+      await renderWizard();
+    });
+    return;
+  }
+
+  // Step 7: Review Screen ("Here's what we'll check")
+  if (step === 7) {
+    if (headerTitle) headerTitle.textContent = "Here's what we'll check";
+    if (headerSub) headerSub.textContent = 'Generated from your answers. Verified automatically using server-enforced compliance engines.';
+
+    container.innerHTML = `
+      <div style="display: flex; align-items: center; justify-content: center; padding: 40px;">
+        <span style="font-size: 14px; color: var(--text-secondary);">Building your compliance checks...</span>
+      </div>
+    `;
+
+    try {
+      const preview = await apiFetch('/api/wizard/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(AppState.wizardAnswers),
+      });
+      AppState.wizardPreview = preview;
+      AppState.wizardSampleText = preview.sample_text || '';
+
+      container.innerHTML = `
+        <div style="margin-top: 8px; margin-bottom: 20px;">
+          <div style="display: inline-flex; align-items: center; gap: 8px; background: #EEF2F6; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; color: #1E293B;">
+            <span>🛡️</span>
+            <span>${escapeHtml(preview.profile_label)}</span>
+          </div>
+        </div>
+
+        <div class="wizard-review-box">
+          <div style="font-size: 14px; font-weight: 600; margin-bottom: 16px; color: var(--primary-ink);">
+            The following verification standards will be applied:
+          </div>
+          <div class="wizard-review-list">
+            ${(preview.summary || []).map(bullet => `
+              <div class="wizard-bullet-item">
+                <span class="wizard-bullet-icon">✓</span>
+                <span>${escapeHtml(bullet)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="wizard-nav-row">
+          <button type="button" class="btn" id="wizardChangeAnswersBtn">&larr; Change my answers</button>
+          <button type="button" class="btn btn-accent" id="wizardLooksGoodBtn">Looks good, add content &rarr;</button>
+        </div>
+      `;
+
+      document.getElementById('wizardChangeAnswersBtn').addEventListener('click', () => {
+        AppState.wizardStep = 1;
+        renderWizard();
+      });
+
+      document.getElementById('wizardLooksGoodBtn').addEventListener('click', () => {
+        AppState.wizardStep = 8;
+        renderWizard();
+      });
+    } catch (err) {
+      container.innerHTML = `
+        <div class="banner-error" style="margin: 20px 0; padding: 16px; border-radius: 8px; background: #FEF2F2; color: #991B1B;">
+          <strong>Error loading checks:</strong> ${escapeHtml(err.message || 'Please verify the server connection.')}
+        </div>
+        <div class="wizard-nav-row">
+          <button type="button" class="btn" id="wizardChangeAnswersBtn">&larr; Change answers</button>
+          <button type="button" class="btn btn-accent" id="wizardRetryPreviewBtn">Retry</button>
+        </div>
+      `;
+      document.getElementById('wizardChangeAnswersBtn').addEventListener('click', () => {
+        AppState.wizardStep = 1;
+        renderWizard();
+      });
+      document.getElementById('wizardRetryPreviewBtn').addEventListener('click', () => {
+        renderWizard();
+      });
+    }
+    return;
+  }
+
+  // Step 8: Add-content screen ("Add your content")
+  if (step === 8) {
+    if (headerTitle) headerTitle.textContent = 'Add your content';
+    if (headerSub) headerSub.textContent = `Audit your content against ${AppState.wizardPreview?.profile_label || 'your newly configured checks'}.`;
+
+    const isImageMode = AppState.wizardAnswers.content_type === 'image_logo';
+    const defaultDocTitle = AppState.wizardAnswers.company_name
+      ? `${AppState.wizardAnswers.company_name} Campaign Draft`
+      : 'Campaign Draft Review';
+
+    container.innerHTML = `
+      <div style="margin-bottom: 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
+          <div>
+            <label for="wizAuditDocTitle" style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink); display: block; margin-bottom: 4px;">Document title</label>
+            <input type="text" id="wizAuditDocTitle" class="form-control" style="width: 320px; max-width: 100%;" value="${escapeHtml(defaultDocTitle)}" />
+          </div>
+          <button type="button" class="btn btn-sm btn-ghost" id="wizTryExampleBtn" style="color: var(--primary-action); border-color: var(--primary-action);">
+            ✨ Try an example with a few mistakes
+          </button>
+        </div>
+
+        <!-- Ingestion Method Tabs -->
+        <div style="margin-bottom: 14px;">
+          <div class="segmented-toggle" role="tablist">
+            <button type="button" class="segmented-btn active" id="wizPasteTabBtn" role="tab" aria-selected="true">Paste your text</button>
+            <button type="button" class="segmented-btn" id="wizUploadTabBtn" role="tab" aria-selected="false">Upload a file (5 MB limit)</button>
+          </div>
+        </div>
+
+        <!-- Paste Text Ingestion -->
+        <div id="wizPasteArea">
+          <textarea id="wizContentText" class="form-control" rows="8" placeholder="Paste your text or marketing copy here..."></textarea>
+        </div>
+
+        <!-- File Upload Ingestion -->
+        <div id="wizUploadArea" style="display: none;">
+          <div class="file-dropzone" id="wizFileDropzone" tabindex="0" role="button" aria-label="Drop or click to upload a file">
+            <div style="font-size: 14px; font-weight: 600; color: var(--primary-ink);">Click to select or drag and drop a file</div>
+            <div class="form-helper" style="margin-top: 4px;">Supported formats: .txt, .md, .html, .docx, .pdf, .svg, .png, .jpg (Max 5 MB)</div>
+            <input type="file" id="wizFileInput" style="display: none;" accept=".txt,.md,.html,.htm,.docx,.pdf,.svg,.png,.jpg,.jpeg" />
+          </div>
+          <div id="wizFileCard" class="file-card" style="display: none; margin-top: 12px;">
+            <div class="file-card-info">
+              <div>
+                <div class="file-card-name" id="wizFileName">document.txt</div>
+                <div class="file-card-size" id="wizFileSize">0 KB</div>
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-danger-outline" id="wizRemoveFileBtn">Remove</button>
+          </div>
+        </div>
+
+        <!-- Optional Image Fields if Q1 == image_logo -->
+        ${isImageMode ? `
+          <div style="margin-top: 16px; padding: 16px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
+            <div style="font-size: 13.5px; font-weight: 600; margin-bottom: 12px;">Image & Brand Colour Specifications</div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+              <div>
+                <label for="wizFgColor" style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Foreground Hex (#RRGGBB)</label>
+                <input type="text" id="wizFgColor" class="form-control" placeholder="#17191C" value="#17191C" />
+              </div>
+              <div>
+                <label for="wizBgColor" style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Background Hex (#RRGGBB)</label>
+                <input type="text" id="wizBgColor" class="form-control" placeholder="#FFFFFF" value="#FFFFFF" />
+              </div>
+              <div style="grid-column: 1 / -1;">
+                <label for="wizAltText" style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Image Alternative Text</label>
+                <input type="text" id="wizAltText" class="form-control" placeholder="Describe the image asset for accessibility compliance" />
+              </div>
+            </div>
+          </div>
+        ` : ''}
+
+        <div id="wizFeedbackAlert" style="display: none; margin-top: 12px;"></div>
+      </div>
+
+      <div class="wizard-nav-row">
+        <button type="button" class="btn" id="wizardBackBtn">&larr; Back to review</button>
+        <button type="button" class="btn btn-accent btn-lg" id="wizardRunCheckBtn" style="padding: 10px 24px; font-weight: 600;">
+          Check my content &rarr;
+        </button>
+      </div>
+    `;
+
+    // Try Example Button
+    let activeUploadedFile = null;
+    const tryExBtn = document.getElementById('wizTryExampleBtn');
+    const textArea = document.getElementById('wizContentText');
+    const docTitleInput = document.getElementById('wizAuditDocTitle');
+
+    if (tryExBtn && textArea) {
+      tryExBtn.addEventListener('click', () => {
+        const sample = AppState.wizardSampleText || getSampleTextFallback(AppState.wizardAnswers.industry);
+        textArea.value = sample;
+        if (docTitleInput) {
+          docTitleInput.value = `${AppState.wizardPreview?.profile_label || 'Campaign'} Sample Review`;
+        }
+        showWizardAlert('info', 'Loaded realistic sample copy containing intentional compliance errors.');
+      });
+    }
+
+    // Toggle Paste / Upload
+    const pasteTabBtn = document.getElementById('wizPasteTabBtn');
+    const uploadTabBtn = document.getElementById('wizUploadTabBtn');
+    const pasteArea = document.getElementById('wizPasteArea');
+    const uploadArea = document.getElementById('wizUploadArea');
+
+    if (pasteTabBtn && uploadTabBtn) {
+      pasteTabBtn.addEventListener('click', () => {
+        pasteTabBtn.classList.add('active');
+        pasteTabBtn.setAttribute('aria-selected', 'true');
+        uploadTabBtn.classList.remove('active');
+        uploadTabBtn.setAttribute('aria-selected', 'false');
+        if (pasteArea) pasteArea.style.display = 'block';
+        if (uploadArea) uploadArea.style.display = 'none';
+      });
+
+      uploadTabBtn.addEventListener('click', () => {
+        uploadTabBtn.classList.add('active');
+        uploadTabBtn.setAttribute('aria-selected', 'true');
+        pasteTabBtn.classList.remove('active');
+        pasteTabBtn.setAttribute('aria-selected', 'false');
+        if (pasteArea) pasteArea.style.display = 'none';
+        if (uploadArea) uploadArea.style.display = 'block';
+      });
+    }
+
+    // Upload handling
+    const dropzone = document.getElementById('wizFileDropzone');
+    const fileInput = document.getElementById('wizFileInput');
+    const fileCard = document.getElementById('wizFileCard');
+    const fileName = document.getElementById('wizFileName');
+    const fileSize = document.getElementById('wizFileSize');
+    const removeBtn = document.getElementById('wizRemoveFileBtn');
+
+    if (dropzone && fileInput) {
+      dropzone.addEventListener('click', () => fileInput.click());
+      dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+      dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+      dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (e.dataTransfer.files && e.dataTransfer.files.length) {
+          handleFile(e.dataTransfer.files[0]);
+        }
+      });
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files && fileInput.files.length) {
+          handleFile(fileInput.files[0]);
+        }
+      });
+    }
+
+    function handleFile(file) {
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        showWizardAlert('error', 'File size exceeds maximum 5 MB limit.');
+        return;
+      }
+      activeUploadedFile = file;
+      if (fileName) fileName.textContent = file.name;
+      if (fileSize) fileSize.textContent = `${Math.round(file.size / 1024)} KB`;
+      if (fileCard) fileCard.style.display = 'flex';
+      if (dropzone) dropzone.style.display = 'none';
+      if (docTitleInput && (!docTitleInput.value || docTitleInput.value === defaultDocTitle)) {
+        docTitleInput.value = file.name.replace(/\.[^/.]+$/, '');
+      }
+    }
+
+    if (removeBtn) {
+      removeBtn.addEventListener('click', () => {
+        activeUploadedFile = null;
+        if (fileInput) fileInput.value = '';
+        if (fileCard) fileCard.style.display = 'none';
+        if (dropzone) dropzone.style.display = 'block';
+      });
+    }
+
+    document.getElementById('wizardBackBtn').addEventListener('click', () => {
+      AppState.wizardStep = 7;
+      renderWizard();
+    });
+
+    // Run Audit
+    const runBtn = document.getElementById('wizardRunCheckBtn');
+    if (runBtn) {
+      runBtn.addEventListener('click', async () => {
+        const isPaste = pasteTabBtn.classList.contains('active');
+        const textContent = (textArea ? textArea.value : '').trim();
+        const docName = (docTitleInput ? docTitleInput.value : '').trim() || 'Audited Document';
+
+        if (isPaste && !textContent) {
+          showWizardAlert('error', 'Please paste your text or click "Try an example" above.');
+          return;
+        }
+        if (!isPaste && !activeUploadedFile) {
+          showWizardAlert('error', 'Please select a file to upload or switch to "Paste your text".');
+          return;
+        }
+
+        runBtn.disabled = true;
+        runBtn.textContent = 'Creating profile & auditing...';
+
+        try {
+          // 1. Create Profile in DB
+          const profileRes = await apiFetch('/api/wizard/profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(AppState.wizardAnswers),
+          });
+
+          const newBrandId = profileRes.brand_id;
+          AppState.activeBrandId = newBrandId;
+
+          // Reload brands list so topbar shows new profile
+          try {
+            const brandsData = await apiFetch('/api/brands');
+            AppState.brands = brandsData.brands || [];
+            updateTopbarContext();
+          } catch (e) {
+            console.warn('Failed to refresh brands list', e);
+          }
+
+          // 2. Run Audit
+          let auditResult = null;
+          if (isPaste) {
+            const payload = {
+              brand_id: newBrandId,
+              document_name: docName,
+              content: textContent,
+              input_format: 'plain_text',
+            };
+            if (isImageMode) {
+              payload.fg_color = document.getElementById('wizFgColor')?.value || '#17191C';
+              payload.bg_color = document.getElementById('wizBgColor')?.value || '#FFFFFF';
+              payload.image_alt_text = document.getElementById('wizAltText')?.value || '';
+              payload.has_visual_asset = true;
+            }
+            auditResult = await apiFetch('/api/audits', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+          } else {
+            const formData = new FormData();
+            formData.append('brand_id', newBrandId);
+            formData.append('document_name', docName);
+            formData.append('file', activeUploadedFile);
+            if (isImageMode) {
+              formData.append('fg_color', document.getElementById('wizFgColor')?.value || '#17191C');
+              formData.append('bg_color', document.getElementById('wizBgColor')?.value || '#FFFFFF');
+              formData.append('image_alt_text', document.getElementById('wizAltText')?.value || '');
+              formData.append('has_visual_asset', 'true');
+            }
+            auditResult = await apiFetch('/api/audits/upload', {
+              method: 'POST',
+              body: formData,
+            });
+          }
+
+          // 3. Navigate to results stage
+          AppState.currentAudit = auditResult;
+          AppState.auditStage = 'results';
+          AppState.wizardMode = false;
+          renderAuditWorkspace();
+          showToast(`Audit complete for ${docName}`);
+        } catch (err) {
+          runBtn.disabled = false;
+          runBtn.textContent = 'Check my content →';
+          showWizardAlert('error', err.message || 'Audit failed. Please try again.');
+        }
+      });
+    }
+  }
+}
+
 function renderAuditWorkspace() {
+  const wizardStage = document.getElementById('wizardStage');
   const inputStage = document.getElementById('auditInputStage');
   const resultsStage = document.getElementById('auditResultsStage');
   const backBtn = document.getElementById('returnToResultsBtn');
@@ -1623,23 +2447,38 @@ function renderAuditWorkspace() {
   }
 
   if (!AppState.currentAudit || AppState.auditStage === 'input') {
-    inputStage.style.display = 'block';
-    resultsStage.style.display = 'none';
-    document.getElementById('topbarViewTitle').textContent = 'New audit';
-    syncVisualCheckControlState();
+    if (resultsStage) resultsStage.style.display = 'none';
+    if (AppState.wizardMode) {
+      if (wizardStage) wizardStage.style.display = 'block';
+      if (inputStage) inputStage.style.display = 'none';
+      document.getElementById('topbarViewTitle').textContent = 'Guided audit setup';
+      renderWizard();
+    } else {
+      if (wizardStage) wizardStage.style.display = 'none';
+      if (inputStage) inputStage.style.display = 'block';
+      document.getElementById('topbarViewTitle').textContent = 'New audit';
+      syncVisualCheckControlState();
+    }
     return;
   }
 
-  inputStage.style.display = 'none';
-  resultsStage.style.display = 'block';
+  if (wizardStage) wizardStage.style.display = 'none';
+  if (inputStage) inputStage.style.display = 'none';
+  if (resultsStage) resultsStage.style.display = 'block';
   document.getElementById('topbarViewTitle').textContent = 'Audit results';
 
   const audit = AppState.currentAudit;
   const openCount = audit.open_findings_count ?? (audit.findings || []).filter((f) => ['open', 'needs_review'].includes(f.review_state)).length;
-  document.getElementById('resultsBreadcrumbDocName').textContent = `New audit / ${audit.document_name}`;
+
+  const activeBrand = AppState.brands.find((b) => b.id === audit.brand_id);
+  const profileHeading = (activeBrand && activeBrand.name && activeBrand.id.startsWith('wiz-'))
+    ? `${activeBrand.name} · ${audit.document_name}`
+    : `New audit / ${audit.document_name}`;
+
+  document.getElementById('resultsBreadcrumbDocName').textContent = profileHeading;
   const procLabel = AppState.processingMode === 'local' ? 'Local processing' : 'Hosted engine';
   document.getElementById('resultsSummarySubtitle').textContent =
-    `${openCount} finding(s) need review · ${procLabel} (${audit.runtime_ms} ms) · Saved ${formatTimestamp(audit.updated_at)}`;
+    `${openCount} issue(s) need attention · ${procLabel} (${audit.runtime_ms} ms) · Saved ${formatTimestamp(audit.updated_at)}`;
 
   updateMobilePanelVisibility();
   renderSixPillarsBar();

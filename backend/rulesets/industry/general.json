@@ -1,0 +1,93 @@
+{
+  "id": "general",
+  "label": "General business or other organisation",
+  "kind": "industry",
+  "summary": [
+    "Clear, transparent business communications",
+    "No unsubstantiated superlative or absolute guarantee claims",
+    "Professional terminology free of vague corporate buzzwords"
+  ],
+  "tone_principles": "Clear, direct, honest, and respectful. Avoid hyperbolic claims or pressure tactics.",
+  "writing_style": "Active voice, concise sentences, and plain language suitable for general audiences.",
+  "messaging_principles": "State features and terms accurately without concealed restrictions.",
+  "do_examples": [
+    "We provide dependable customer support during business hours.",
+    "Our team resolves most customer requests within one business day."
+  ],
+  "dont_examples": [
+    "We are the #1 company in the universe with 100% risk-free guarantees!",
+    "Sign up immediately or your competitors will crush you!"
+  ],
+  "rules": [
+    {
+      "key": "RULE-CLAIM-GEN",
+      "pillar": "Promotional Claims",
+      "title": "Substantiate Promotional & Absolute Claims",
+      "description": "General communications must not use unsubstantiated absolute claims or hyperbolic promises.",
+      "patterns": [
+        "\\b(?:100%\\s+risk-free|guaranteed\\s+zero\\s+risk|#1\\s+in\\s+the\\s+world|best\\s+in\\s+the\\s+industry|zero\\s+chance\\s+of\\s+failure)\\b"
+      ],
+      "suggested_replacements": {
+        "100% risk-free": "backed by our standard satisfaction policy",
+        "guaranteed zero risk": "designed with industry-standard reliability",
+        "#1 in the world": "a recognized provider",
+        "best in the industry": "a trusted industry provider"
+      },
+      "severity": "high",
+      "do_example": "Our services follow established quality benchmarks.",
+      "dont_example": "We guarantee 100% risk-free outcomes for all clients."
+    },
+    {
+      "key": "RULE-TONE-GEN",
+      "pillar": "Tone and Voice",
+      "title": "Avoid High-Pressure or Alarmist Phrasing",
+      "description": "Do not use coercive urgency or panic-inducing expressions to prompt reader action.",
+      "patterns": [
+        "\\b(?:act\\s+now\\s+or\\s+suffer|before\\s+it'?s\\s+too\\s+late|catastrophic\\s+mistake\\s+to\\s+wait|don'?t\\s+be\\s+stupid)\\b"
+      ],
+      "suggested_replacements": {
+        "act now or suffer": "we encourage timely review",
+        "before it's too late": "while current scheduling permits",
+        "catastrophic mistake to wait": "consider reviewing this soon"
+      },
+      "severity": "medium",
+      "do_example": "Review available options before the open registration deadline.",
+      "dont_example": "Act now or suffer the consequences of waiting!"
+    }
+  ],
+  "terminology": [
+    {
+      "preferred": "collaborative alignment",
+      "prohibited": "synergistic paradigm",
+      "replacement": "effective coordination",
+      "case_sensitive": 0,
+      "notes": "Replace dense jargon with clear, direct wording.",
+      "rule_key": "RULE-TERM-01"
+    },
+    {
+      "preferred": "comprehensive solution",
+      "prohibited": "silver bullet",
+      "replacement": "proven approach",
+      "case_sensitive": 0,
+      "notes": "Avoid sensational colloquialisms.",
+      "rule_key": "RULE-TERM-01"
+    }
+  ],
+  "colours": [
+    {
+      "name": "Slate Primary",
+      "hex_code": "#1E293B",
+      "usage_role": "Primary headings & text",
+      "max_delta_e": 12.0
+    },
+    {
+      "name": "Cobalt Accent",
+      "hex_code": "#2563EB",
+      "usage_role": "Action links & buttons",
+      "max_delta_e": 12.0
+    }
+  ],
+  "min_contrast_normal": 4.5,
+  "min_contrast_large": 3.0,
+  "target_reading_ease": 55.0
+}
