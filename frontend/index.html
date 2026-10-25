@@ -62,7 +62,7 @@
         <button type="button" class="nav-item" data-view="brand-vault">
           <span class="nav-item-left">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-            <span>Brand Vault</span>
+            <span>Brand guidelines</span>
           </span>
           <span class="nav-count-pill" id="navRulesCount">0</span>
         </button>
@@ -169,47 +169,52 @@
         <section id="view-overview" class="workspace-view">
           <div class="page-header">
             <div>
-              <h1 class="page-title">Overview</h1>
-              <p class="page-subtitle" id="overviewScopeSubtitle">Compliance summary and recent audits for the selected brand profile.</p>
+              <h1 class="page-title">Welcome to LoomShield</h1>
+              <p class="page-subtitle" id="overviewScopeSubtitle">Automated brand governance and marketing compliance for your content.</p>
             </div>
             <div class="page-actions">
-              <button type="button" class="btn" id="overviewTryDemoBtn">Try a demo</button>
-              <button type="button" class="btn btn-accent" id="overviewNewAuditBtn">New audit</button>
+              <button type="button" class="btn" id="overviewTryDemoBtn">Try a sample</button>
+              <button type="button" class="btn btn-accent" id="overviewNewAuditBtn">Start new audit</button>
             </div>
           </div>
 
-          <!-- 4 Summary Cards Scoped to Active Brand & Version -->
-          <div class="metrics-grid">
+          <!-- 3 KPI Cards Scoped to Active Brand & Version -->
+          <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 20px;">
             <div class="metric-card">
               <div class="metric-label">
                 <span>Documents audited</span>
               </div>
               <div class="metric-value" id="metricDocsAudited">0</div>
-              <div class="metric-note" id="metricDocsScopeNote">Scoped to active brand</div>
+              <div class="metric-note" id="metricDocsScopeNote">Total files checked</div>
             </div>
 
             <div class="metric-card">
               <div class="metric-label">
-                <span>Needs attention</span>
+                <span>Issues needing attention</span>
               </div>
               <div class="metric-value" id="metricOpenFindings">0</div>
-              <div class="metric-note">Unresolved findings requiring review</div>
+              <div class="metric-note">Unresolved issues in draft copy</div>
             </div>
 
             <div class="metric-card">
               <div class="metric-label">
-                <span>Approved</span>
+                <span>Approved content</span>
               </div>
               <div class="metric-value" id="metricApprovedContent">0</div>
-              <div class="metric-note">Documents cleared for publication</div>
+              <div class="metric-note">Cleared for publication</div>
             </div>
+            <span id="metricBrandRules" style="display: none;">0</span>
+          </div>
 
-            <div class="metric-card">
-              <div class="metric-label">
-                <span>Active rules</span>
-              </div>
-              <div class="metric-value" id="metricBrandRules">0</div>
-              <div class="metric-note">Enabled rules in Brand Vault</div>
+          <!-- Hero "Start a new audit" Card -->
+          <div class="card hero-start-card" style="margin-bottom: 24px; padding: 24px; background: linear-gradient(135deg, #FFF7F5 0%, #FFFFFF 100%); border: 1.5px solid #FCD9D0; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+            <div>
+              <div style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; color: var(--primary-action); letter-spacing: 0.05em; margin-bottom: 4px;">Zero-Setup Governance</div>
+              <h3 style="font-size: 18px; font-weight: 700; color: var(--primary-ink); margin-bottom: 4px;">Start a new content audit</h3>
+              <p style="font-size: 13.5px; color: var(--text-secondary); max-width: 580px; margin: 0;">Answer a few quick questions to create a tailor-made compliance profile, or choose a ready-to-test sample.</p>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <button type="button" class="btn btn-accent btn-lg" id="heroStartAuditBtn" style="font-weight: 600;">✨ Guided audit &rarr;</button>
             </div>
           </div>
 
@@ -566,20 +571,20 @@
         <section id="view-brand-vault" class="workspace-view" style="display: none;">
           <div class="page-header">
             <div>
-              <h1 class="page-title">Brand Vault</h1>
-              <p class="page-subtitle">Manage voice principles, terminology rules, verified fact sheets, visual tokens, and accessibility thresholds.</p>
+              <h1 class="page-title">Brand guidelines</h1>
+              <p class="page-subtitle">Manage tone principles, preferred words, approved facts, colours and logo tokens, and accessibility thresholds.</p>
             </div>
             <div class="page-actions">
               <span id="vaultUnsavedBadge" class="unsaved-indicator" style="display: none;">Unsaved changes</span>
-              <input type="search" id="vaultSearchInput" class="form-control" placeholder="Search rules, terms, facts..." style="width: 260px;" aria-label="Search Brand Vault" />
+              <input type="search" id="vaultSearchInput" class="form-control" placeholder="Search rules, terms, facts..." style="width: 260px;" aria-label="Search Brand guidelines" />
             </div>
           </div>
 
           <div class="tabs-bar" role="tablist">
-            <button type="button" class="tab-btn active" data-vault-tab="voice" role="tab">Voice &amp; rules</button>
-            <button type="button" class="tab-btn" data-vault-tab="terminology" role="tab">Terminology</button>
-            <button type="button" class="tab-btn" data-vault-tab="facts" role="tab">Verified facts</button>
-            <button type="button" class="tab-btn" data-vault-tab="visual" role="tab">Visual identity</button>
+            <button type="button" class="tab-btn active" data-vault-tab="voice" role="tab">Tone &amp; rules</button>
+            <button type="button" class="tab-btn" data-vault-tab="terminology" role="tab">Preferred words</button>
+            <button type="button" class="tab-btn" data-vault-tab="facts" role="tab">Approved facts</button>
+            <button type="button" class="tab-btn" data-vault-tab="visual" role="tab">Colours and logo</button>
             <button type="button" class="tab-btn" data-vault-tab="accessibility" role="tab">Accessibility</button>
           </div>
 

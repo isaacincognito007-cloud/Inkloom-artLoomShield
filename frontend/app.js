@@ -154,12 +154,12 @@ const SIX_PILLARS = [
 const VIEW_TITLES = {
   'overview': 'Overview',
   'new-audit': 'New audit',
-  'brand-vault': 'Brand Vault',
+  'brand-vault': 'Brand guidelines',
   'review-queue': 'Review queue',
-  'ambiguity-radar': 'Guideline ambiguity',
+  'ambiguity-radar': 'Guideline insights',
   'audit-history': 'Audit history',
   'settings': 'Settings',
-  'engine-status': 'Privacy and processing',
+  'engine-status': 'Privacy and system status',
 };
 
 // ============================================================================
@@ -232,10 +232,10 @@ function normalizeStatusDisplay(rawState) {
   const map = {
     'Passed': 'Passed',
     'Not Checked': 'Not checked',
-    'Needs Review': 'Needs review',
-    'needs_review': 'Needs review',
-    'Check Failed': 'Failed',
-    'Findings': 'Needs review',
+    'Needs Review': LABELS.needsReview || 'Needs a human look',
+    'needs_review': LABELS.needsReview || 'Needs a human look',
+    'Check Failed': LABELS.checkFailed || "Couldn't check",
+    'Findings': 'Issues found',
     'open': 'Open',
     'accepted': 'Accepted',
     'modified': 'Modified',
@@ -773,6 +773,16 @@ function bindNavigationEvents() {
     AppState.wizardStep = 8;
     switchView('new-audit');
   });
+
+  const heroBtn = document.getElementById('heroStartAuditBtn');
+  if (heroBtn) {
+    heroBtn.addEventListener('click', () => {
+      AppState.auditStage = 'input';
+      AppState.wizardMode = true;
+      AppState.wizardStep = 1;
+      switchView('new-audit');
+    });
+  }
 
   document.getElementById('demoSampleSelector').addEventListener('change', (e) => {
     const val = parseInt(e.target.value, 10);
