@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <title>LoomShield — Round 2 Project Document</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.45;
+      color: #1E293B;
+      background-color: #FFFFFF;
+      -webkit-font-smoothing: antialiased;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .page {
+      width: 210mm;
+      height: 297mm;
+      padding: 14mm 16mm 14mm 16mm;
+      position: relative;
+      page-break-after: always;
+      break-after: page;
+      background: #FFFFFF;
+    }
+
+    /* Running Header */
+    .running-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 8.5pt;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #64748B;
+      border-bottom: 1px solid #CBD5E1;
+      padding-bottom: 2mm;
+      margin-bottom: 4mm;
+    }
+
+    /* Running Footer */
+    .running-footer {
+      position: absolute;
+      bottom: 8mm;
+      left: 16mm;
+      right: 16mm;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 8.5pt;
+      color: #64748B;
+      border-top: 1px solid #E2E8F0;
+      padding-top: 2.5mm;
+    }
+
+    /* Main Page 1 Title Block */
+    .title-block {
+      margin-bottom: 4mm;
+      border-bottom: 2.5px solid #C84624;
+      padding-bottom: 3mm;
+    }
+
+    .doc-title {
+      font-size: 21pt;
+      font-weight: 800;
+      color: #0F172A;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      margin-bottom: 1.5mm;
+    }
+
+    .doc-subtitle {
+      font-size: 11pt;
+      font-weight: 500;
+      color: #475467;
+      line-height: 1.35;
+    }
+
+    /* Section Headings */
+    h2.section-heading {
+      font-size: 12.5pt;
+      font-weight: 700;
+      color: #C84624;
+      letter-spacing: -0.01em;
+      margin-top: 3.5mm;
+      margin-bottom: 2.5mm;
+      border-bottom: 1px solid #F1F5F9;
+      padding-bottom: 1mm;
+    }
+
+    h3.sub-heading {
+      font-size: 10.5pt;
+      font-weight: 700;
+      color: #0F172A;
+      margin-top: 2.5mm;
+      margin-bottom: 1.2mm;
+    }
+
+    .commit-tag {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 8.5pt;
+      font-weight: 600;
+      color: #475467;
+      background: #F1F5F9;
+      padding: 1px 5px;
+      border-radius: 3px;
+      border: 1px solid #CBD5E1;
+      margin-left: 2mm;
+      vertical-align: middle;
+    }
+
+    /* Cards and Callouts */
+    .info-card {
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 6px;
+      padding: 3mm 4mm;
+      margin-bottom: 3mm;
+    }
+
+    .info-card-title {
+      font-size: 9pt;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #334155;
+      margin-bottom: 1.5mm;
+    }
+
+    /* Links */
+    a {
+      color: #C84624;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    /* Lists */
+    ul.bullet-list {
+      list-style-type: disc;
+      margin-left: 5mm;
+      margin-bottom: 2.5mm;
+    }
+
+    ul.bullet-list li {
+      margin-bottom: 1.4mm;
+      line-height: 1.42;
+      font-size: 10pt;
+      color: #1E293B;
+    }
+
+    /* Item Blocks (Sections 3 & 4) */
+    .item-block {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-left: 3.5px solid #C84624;
+      border-radius: 5px;
+      padding: 3mm 4mm;
+      margin-bottom: 2.8mm;
+    }
+
+    .item-block-title {
+      font-size: 10.5pt;
+      font-weight: 700;
+      color: #0F172A;
+      margin-bottom: 1.2mm;
+    }
+
+    .item-block p {
+      font-size: 9.8pt;
+      color: #334155;
+      line-height: 1.42;
+    }
+
+    .done-when-tag {
+      font-size: 9.2pt;
+      font-weight: 600;
+      color: #0c5e57;
+      background: #F0FDF4;
+      border: 1px solid #BBF7D0;
+      border-radius: 4px;
+      padding: 1.8mm 3mm;
+      display: block;
+      margin-top: 1.8mm;
+      line-height: 1.35;
+    }
+
+    /* Tech list (Section 2) */
+    .tech-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2mm;
+      margin-bottom: 2.5mm;
+    }
+
+    .tech-item {
+      font-size: 9.8pt;
+      line-height: 1.42;
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 5px;
+      padding: 2.5mm 3.5mm;
+    }
+
+    .tech-item strong {
+      color: #0F172A;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 9pt;
+      background: #F1F5F9;
+      padding: 1px 4px;
+      border-radius: 3px;
+      border: 1px solid #E2E8F0;
+      color: #0F172A;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ======================================================================
+       PAGE 1: OVERVIEW & COMPLETED FEATURES (PART 1)
+       ====================================================================== -->
+  <div class="page">
+    <div class="title-block">
+      <h1 class="doc-title">LoomShield — Round 2 Project Document</h1>
+      <p class="doc-subtitle">Completed features, technology, changes to the plan and Round 3 improvements</p>
+    </div>
+
+    <!-- PROJECT LINKS CARD -->
+    <div class="info-card">
+      <div class="info-card-title">PROJECT LINKS</div>
+      <ul style="list-style: none; margin-bottom: 2mm; font-size: 10pt; line-height: 1.55;">
+        <li><strong>Working project:</strong> <a href="https://inkloom-artloomshield-frontend.vercel.app/" target="_blank">https://inkloom-artloomshield-frontend.vercel.app/</a></li>
+        <li><strong>Source code:</strong> <a href="https://github.com/isaacincognito007-cloud/Inkloom-artLoomShield" target="_blank">https://github.com/isaacincognito007-cloud/Inkloom-artLoomShield</a></li>
+        <li><strong>Hosted backend (API):</strong> <a href="https://inkloom-artloomshield.onrender.com" target="_blank">https://inkloom-artloomshield.onrender.com</a></li>
+      </ul>
+      <p style="font-size: 9.5pt; color: #475467; line-height: 1.42;">
+        The public deployment exists so evaluators can try LoomShield. It runs as a clearly labelled demo workspace, and the backend sits on Render’s free tier, so the first request after a quiet period can be slow while it wakes up. The README explains this, and the setup wizard has built-in fallbacks so it stays usable in the meantime.
+      </p>
+    </div>
+
+    <!-- WHAT LOOMSHIELD DOES CARD -->
+    <div class="info-card" style="border-left: 3.5px solid #C84624; background: #FFFFFF;">
+      <div class="info-card-title" style="color: #C84624;">WHAT LOOMSHIELD DOES</div>
+      <p style="font-size: 9.8pt; color: #1E293B; line-height: 1.45;">
+        LoomShield checks content against a brand’s guidelines (tone and rules, preferred words, approved facts, colours and logo, and accessibility), flags what needs a human look, and keeps an audit history of review and approval decisions. Its analysis runs on engines built into the backend, so no API key or third-party AI service is required.
+      </p>
+    </div>
+
+    <!-- 1. COMPLETED FEATURES -->
+    <h2 class="section-heading">1. COMPLETED FEATURES</h2>
+
+    <h3 class="sub-heading">Guided “New Audit” setup <span class="commit-tag">commit 823c348</span></h3>
+    <ul class="bullet-list">
+      <li>Interactive wizard with a progress bar, step counter, large selectable tiles, a review summary and an add-content step.</li>
+      <li>22 validated rule-set fragments covering 6 industries, 6 occasions, 6 locales and 4 tones, merged from the user’s answers into a tailored brand profile.</li>
+      <li>Tailored sample text that produces at least three intentional findings, so a new user sees an audit work straight away.</li>
+      <li>Every setup creates its own isolated brand profile (capped at 25 in demo mode) and never alters the seeded demo brands.</li>
+      <li>Role-checked, rate-limited endpoints: <code>GET /api/wizard/options</code>, <code>POST /api/wizard/preview</code> and <code>POST /api/wizard/profile</code>.</li>
+      <li>Rule patterns are checked for regular-expression (ReDoS) safety at startup, and 9 automated tests cover the wizard.</li>
+    </ul>
+
+    <h3 class="sub-heading">SaaS-grade polish <span class="commit-tag">commit 46c9dfa</span></h3>
+    <ul class="bullet-list">
+      <li>CSS design tokens: a slate neutral scale, one primary action colour, state colours specified for WCAG AA contrast, a 4–32 px spacing scale, consistent corner radii, sticky table headers, skeleton loaders and high-visibility keyboard focus rings.</li>
+      <li>Redesigned Overview: a welcome header, three KPI cards (documents audited, open findings, approved content) scoped to the active brand and version, and a prominent “Start a new audit” card.</li>
+      <li>Plain-language labels across navigation, tabs and status badges, driven by one shared labels map, for example “Brand guidelines”, “Preferred words”, “Approved facts”, “Couldn’t check” and “Needs a human look”.</li>
+    </ul>
+
+    <div class="running-footer">
+      <span>LoomShield — Round 2 Project Document</span>
+      <span>Page 1 of 4</span>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       PAGE 2: COMPLETED FEATURES (CONT.) & TECHNOLOGY DETAILS
+       ====================================================================== -->
+  <div class="page">
+    <div class="running-header">
+      <span>LoomShield — Round 2 Project Document</span>
+      <span>Section 1 (cont.) &amp; Section 2</span>
+    </div>
+
+    <h3 class="sub-heading" style="margin-top: 0;">Clarity for first-time users and evaluators <span class="commit-tag">commit 1a29a71</span></h3>
+    <ul class="bullet-list">
+      <li>A “Start here” walkthrough on the Overview in demo mode: answer a few questions, try the example, then review issues and approve.</li>
+      <li>An About &amp; Roadmap view covering what LoomShield does across its six audit pillars, which Round 2 capabilities are backed by code and automated tests, and what is planned for Round 3.</li>
+      <li>A README quickstart (“Try it in 60 seconds”) with public URLs, the free-hosting wake-up notice and the Render deployment configuration.</li>
+    </ul>
+
+    <h3 class="sub-heading">Setup chip and “Redo setup” <span class="commit-tag">commit 4cb7876</span></h3>
+    <ul class="bullet-list">
+      <li>A “Set up for: …” badge on the Brand guidelines header shows the answers the active profile was built from, with a “Redo setup” button beside it that reopens the wizard at step 1.</li>
+    </ul>
+
+    <h3 class="sub-heading">Checked on the live deployment at the Slice 4 release</h3>
+    <ul class="bullet-list">
+      <li>The frontend returned HTTP 200 and the new elements (Start-here card, setup chip, wizard stage) were present in the live page.</li>
+      <li>The session endpoint reported a demo workspace on the hosted deployment, and the engine-status endpoint reported both analysis engines’ self-tests as passing.</li>
+    </ul>
+
+    <!-- 2. TECHNOLOGY AND IMPLEMENTATION DETAILS -->
+    <h2 class="section-heading">2. TECHNOLOGY AND IMPLEMENTATION DETAILS</h2>
+    <div class="tech-list">
+      <div class="tech-item">
+        <strong>Frontend:</strong> plain HTML, CSS and JavaScript (<code>index.html</code>, <code>app.js</code>, <code>styles.css</code>) on Vercel. CSS custom properties carry the design tokens, one labels map keeps wording consistent, and the wizard’s questions and options also exist client-side as a fallback.
+      </div>
+      <div class="tech-item">
+        <strong>Backend:</strong> a Python FastAPI API under <code>/api/</code> on Render. <code>backend/wizard.py</code> handles startup validation, the ReDoS-safety check, a pure <code>compose()</code> function that merges answers, sample-text generation and atomic profile creation; rule-set fragments live in <code>backend/rulesets/</code>.
+      </div>
+      <div class="tech-item">
+        <strong>Analysis engines:</strong> Tier 1 is a deterministic rules-and-patterns engine; Tier 2 is an embedded scikit-learn TF-IDF NLP engine. Both run inside the backend, need no API keys, and report self-test results at <code>/api/engine-status</code>.
+      </div>
+      <div class="tech-item">
+        <strong>Data:</strong> audit results, revisions, approvals and audit events are stored in an SQLite database by the backend (<code>audit_events</code>, <code>revisions</code> and <code>approvals</code> tables).
+      </div>
+      <div class="tech-item">
+        <strong>Safeguards:</strong> role-checked and rate-limited wizard endpoints, a 5 MB upload limit enforced in both the interface and the backend, and a demo-mode cap on generated profiles.
+      </div>
+      <div class="tech-item">
+        <strong>Testing:</strong> 9 automated wizard tests in <code>tests/test_wizard.py</code>.
+      </div>
+      <div class="tech-item">
+        <strong>Hosting:</strong> Vercel for the frontend and a Render free instance for the backend, with the Render URL configured in the Vercel project.
+      </div>
+    </div>
+
+    <div class="running-footer">
+      <span>LoomShield — Round 2 Project Document</span>
+      <span>Page 2 of 4</span>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       PAGE 3: CHANGES TO THE ORIGINAL PLAN
+       ====================================================================== -->
+  <div class="page">
+    <div class="running-header">
+      <span>LoomShield — Round 2 Project Document</span>
+      <span>Section 3: Changes to the Original Plan</span>
+    </div>
+
+    <h2 class="section-heading" style="margin-top: 0;">3. CHANGES TO THE ORIGINAL PLAN</h2>
+
+    <div class="item-block">
+      <div class="item-block-title">Presets create a new profile instead of switching an existing brand</div>
+      <p>The goal is presets that switch all five Brand Vault sections together. In Round 2, the guided setup builds a new, isolated profile from validated rule-set fragments, so a setup cannot overwrite existing custom guidelines. Applying a preset to an existing brand, with rollback, moves to Round 3.</p>
+    </div>
+
+    <div class="item-block">
+      <div class="item-block-title">Upload size</div>
+      <p>The target is 100 MB per file. Round 2 ships with a 5 MB cap enforced in both the interface and the backend; chunked streaming for files up to 100 MB is scheduled for Round 3.</p>
+    </div>
+
+    <div class="item-block">
+      <div class="item-block-title">Scanned PDFs</div>
+      <p>PDFs without selectable text cannot be read yet because there is no OCR. They are flagged as not checkable, with guidance to supply selectable text or run OCR first.</p>
+    </div>
+
+    <div class="item-block">
+      <div class="item-block-title">Added scope for clarity</div>
+      <p>The guided wizard, plain-language labels, evaluator walkthrough and About &amp; Roadmap view were added so first-time users and evaluators reach a first result quickly.</p>
+    </div>
+
+    <div class="item-block">
+      <div class="item-block-title">Demo deployment, not a production service</div>
+      <p>The public deployment is a labelled demo workspace built for evaluators. Roles are previews in demo mode; real authentication is part of the production roadmap.</p>
+    </div>
+
+    <div class="item-block">
+      <div class="item-block-title">Not claimed in this submission</div>
+      <p>Saved data surviving redeploys, per-visitor isolation of demo data, a formal accessibility audit (Lighthouse/axe) and a full traceability check of every Round 1 promise are not claimed here; they remain on the roadmap.</p>
+    </div>
+
+    <div class="running-footer">
+      <span>LoomShield — Round 2 Project Document</span>
+      <span>Page 3 of 4</span>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       PAGE 4: THREE MAJOR IMPROVEMENTS FOR ROUND 3
+       ====================================================================== -->
+  <div class="page">
+    <div class="running-header">
+      <span>LoomShield — Round 2 Project Document</span>
+      <span>Section 4: Round 3 Improvements</span>
+    </div>
+
+    <h2 class="section-heading" style="margin-top: 0;">4. THREE MAJOR IMPROVEMENTS FOR ROUND 3</h2>
+    <p style="font-size: 10pt; color: #475467; margin-bottom: 3.5mm;">
+      Each improvement will ship with a specification, milestones, acceptance criteria and a short demo script.
+    </p>
+
+    <!-- IMPROVEMENT 1 -->
+    <div class="item-block">
+      <div class="item-block-title">1. Clarity Rewriter</div>
+      <p>
+        Vague guideline wording causes inconsistent decisions and repeated overrides. The Clarity Rewriter scores each rule for ambiguity using explainable inputs (documented vagueness indicators, missing measurable criteria, override and dismissal rates above a documented minimum sample, and previously accepted corrections), then proposes a clearer rewrite grounded in verified facts and accepted rule changes. A Brand Administrator must approve it, which creates a new Brand Vault version; we then measure whether violations and overrides change afterwards. It builds on the existing Guideline Ambiguity Radar; the new parts are rewrite proposals, administrator approval with Vault versioning, and before-and-after measurement.
+      </p>
+      <div class="done-when-tag">
+        <strong>Done when:</strong> an administrator can approve a rewrite, a new Vault version appears, and the app reports violations and overrides for that rule before and after the change.
+      </div>
+    </div>
+
+    <!-- IMPROVEMENT 2 -->
+    <div class="item-block">
+      <div class="item-block-title">2. Visual heatmap and clear-space check</div>
+      <p>
+        Shows where a banner or image breaks the brand’s visual rules. The logo is located by one of three supported methods: a user-drawn bounding box, a named SVG group, or a template match against an approved logo asset. Clear space is configured as a multiple of the logo’s height and shown on a configurable grid heatmap. Contrast checks cover only regions the application can genuinely inspect; without OCR, it does not claim to read text in arbitrary images. Labelled banner fixtures with known violations make the feature testable.
+      </p>
+      <div class="done-when-tag">
+        <strong>Done when:</strong> every labelled fixture produces its expected outcome, and any misses are reported openly.
+      </div>
+    </div>
+
+    <!-- IMPROVEMENT 3 -->
+    <div class="item-block">
+      <div class="item-block-title">3. Signed compliance certificate</div>
+      <p>
+        Gives each approved item a tamper-evident certificate. Its JSON is canonicalised and signed with a documented signature algorithm; the private key is kept in a secret store and the public verification key is published with a key ID. The certificate records the content hash, Vault version, reviewer and approver identities, signature, timestamp, verification URL and revocation status. Where stronger tamper evidence is needed, the ledger head or timestamp is anchored outside the application database. We call it tamper-evident and make no claim of legal validity.
+      </p>
+      <div class="done-when-tag">
+        <strong>Done when:</strong> a certificate verifies against the public key, and changing any field makes verification fail.
+      </div>
+    </div>
+
+    <div class="running-footer">
+      <span>LoomShield — Round 2 Project Document</span>
+      <span>Page 4 of 4</span>
+    </div>
+  </div>
+
+</body>
+</html>

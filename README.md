@@ -89,18 +89,29 @@ LoomShield supports local ingestion and brand auditing across **8 document and a
 
 ---
 
-## 5. Quick Start & Verification
+## 5. Quick Start & Local Hosting
 
-### Start the Workspace Server
-```powershell
-cd D:\LoomShield
-python run_loomshield.py
+### Start the Workspace Server Locally
+```bash
+# 1. Clone the repository
+git clone https://github.com/isaacincognito007-cloud/Inkloom-artLoomShield.git
+cd Inkloom-artLoomShield
+
+# 2. Install dependencies (Python 3.11 recommended)
+pip install -r requirements.txt
+
+# 3. Start local workspace server (Demo mode with evaluator role switcher)
+python run_loomshield.py --demo
+
+# Or start in standard production workspace mode:
+# python run_loomshield.py
 ```
-- **Workspace UI:** `http://127.0.0.1:8000`
-- **Interactive OpenAPI Docs:** `http://127.0.0.1:8000/docs`
+- **Local Workspace UI:** `http://127.0.0.1:8000` (or `http://localhost:8000`)
+- **Interactive OpenAPI Documentation:** `http://127.0.0.1:8000/docs`
+- **Engine Status & Privacy Disclosure:** `http://127.0.0.1:8000/api/engine-status`
 
 ### Run the Automated Test Suite (112/112 Automated Tests Passing)
-```powershell
+```bash
 # Run all unit, cycle, API, PDF, and wizard tests
 python -m pytest -q
 ```
