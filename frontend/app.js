@@ -36,6 +36,11 @@ function updateProcessingModeUI() {
   if (banner) {
     banner.style.display = AppState.demoMode ? 'flex' : 'none';
   }
+
+  const startHere = document.getElementById('overviewStartHereCard');
+  if (startHere) {
+    startHere.style.display = AppState.demoMode ? 'block' : 'none';
+  }
 }
 
 /**
@@ -160,6 +165,7 @@ const VIEW_TITLES = {
   'audit-history': 'Audit history',
   'settings': 'Settings',
   'engine-status': 'Privacy and system status',
+  'about-roadmap': 'About & roadmap',
 };
 
 // ============================================================================
@@ -781,6 +787,38 @@ function bindNavigationEvents() {
       AppState.wizardMode = true;
       AppState.wizardStep = 1;
       switchView('new-audit');
+    });
+  }
+
+  const step1Btn = document.getElementById('walkthroughStep1Btn');
+  const step2Btn = document.getElementById('walkthroughStep2Btn');
+  const step3Btn = document.getElementById('walkthroughStep3Btn');
+
+  if (step1Btn) {
+    step1Btn.addEventListener('click', () => {
+      AppState.auditStage = 'input';
+      AppState.wizardMode = true;
+      AppState.wizardStep = 1;
+      switchView('new-audit');
+    });
+  }
+
+  if (step2Btn) {
+    step2Btn.addEventListener('click', () => {
+      AppState.auditStage = 'input';
+      AppState.wizardMode = true;
+      AppState.wizardStep = 8;
+      switchView('new-audit');
+    });
+  }
+
+  if (step3Btn) {
+    step3Btn.addEventListener('click', async () => {
+      try {
+        await openAuditById('AUD-1001');
+      } catch (e) {
+        switchView('review-queue');
+      }
     });
   }
 
