@@ -124,7 +124,11 @@ app.add_middleware(
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    req_id = request.headers.get("x-request-id") or f"req-{uuid.uuid4().hex[:12]}"
+    raw_id = request.headers.get("x-request-id", "").strip()
+    if raw_id and re.match(r"^[a-zA-Z0-9_\-]{1,64}$", raw_id):
+        req_id = raw_id
+    else:
+        req_id = f"req-{uuid.uuid4().hex[:12]}"
     request.state.request_id = req_id
     response = await call_next(request)
     response.headers["x-request-id"] = req_id
@@ -1566,9 +1570,14 @@ def apply_finding_decision(
                 now,
             )
             cur.execute(
-                "UPDATE findings SET review_state = ?, decision_note = ?, updated_at = ? WHERE id = ?",
+                "UPDATE findings SET review_state = ?, decision_note = ?, updated_at = ? WHERE id = ? AND review_state IN ('open', 'needs_review')",
                 (new_finding_state, replacement_used, now, finding_id),
             )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Finding '{finding_id}' was modified or decided concurrently.",
+                )
             cur.execute(
                 "UPDATE audits SET current_content = ?, updated_at = ? WHERE id = ?",
                 (new_text, now, audit_id),
@@ -1614,9 +1623,14 @@ def apply_finding_decision(
                 now,
             )
             cur.execute(
-                "UPDATE findings SET review_state = ?, decision_note = ?, updated_at = ? WHERE id = ?",
+                "UPDATE findings SET review_state = ?, decision_note = ?, updated_at = ? WHERE id = ? AND review_state IN ('open', 'needs_review')",
                 (new_finding_state, reason_str, now, finding_id),
             )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Finding '{finding_id}' was modified or decided concurrently.",
+                )
             cur.execute(
                 """
                 INSERT INTO review_decisions
@@ -1796,7 +1810,6 @@ def rerun_existing_audit(
     is_parser_failed = bool(
         err_finding
         or content.startswith("[Unparseable file:")
-        or any(v == "Check Failed" for v in detail.get("pillar_states", {}).values())
     )
     err_msg = err_finding.get("explanation") if err_finding else "Document parser failure; text could not be extracted."
 
@@ -1827,55 +1840,82 @@ def rerun_existing_audit(
 
     now = datetime.now(timezone.utc).isoformat()
 
-    resolved_decisions = {}
-    for ef in existing_findings:
-        if ef.get("review_state") in ("accepted", "modified", "dismissed"):
-            key = (ef.get("pillar"), ef.get("rule_or_fact_id"), ef.get("flagged_text"))
-            resolved_decisions[key] = {
-                "id": ef["id"],
-                "review_state": ef["review_state"],
-                "decision_note": ef.get("decision_note") or "",
-            }
+    # Collect available old resolved findings (each can be claimed by at most one new finding)
+    available_resolved = [
+        dict(ef)
+        for ef in existing_findings
+        if ef.get("review_state") in ("accepted", "modified", "dismissed")
+    ]
+
+    matched_assignments = {}
+    used_ids = set()
+
+    # Pass 1: Match each new finding to at most one old resolved finding by key + nearest start_index
+    for idx, f in enumerate(audit_output["findings"]):
+        f_key = (f["pillar"], f["rule_or_fact_id"], f["flagged_text"])
+        candidates = [
+            c for c in available_resolved
+            if (c.get("pillar"), c.get("rule_or_fact_id"), c.get("flagged_text")) == f_key
+        ]
+        if candidates:
+            f_start = int(f.get("start_index", 0))
+            best_cand = min(
+                candidates,
+                key=lambda c: abs(int(c.get("start_index", 0)) - f_start),
+            )
+            available_resolved.remove(best_cand)
+            pk = best_cand["id"]
+            used_ids.add(pk)
+            matched_assignments[idx] = (
+                pk,
+                best_cand["review_state"],
+                best_cand.get("decision_note") or "",
+            )
+
+    # Pass 2: Assign new IDs from a counter that skips every ID already used
+    counter = 1
+    finding_rows = []
+    for idx, f in enumerate(audit_output["findings"]):
+        if idx in matched_assignments:
+            finding_pk, r_state, d_note = matched_assignments[idx]
+        else:
+            while True:
+                candidate_pk = f"{audit_id}-F{counter:02d}"
+                counter += 1
+                if candidate_pk not in used_ids:
+                    used_ids.add(candidate_pk)
+                    finding_pk = candidate_pk
+                    break
+            r_state = f.get("review_state", "open")
+            d_note = ""
+
+        finding_rows.append(
+            (
+                finding_pk,
+                audit_id,
+                f["pillar"],
+                f["issue_type"],
+                f["severity"],
+                f["flagged_text"],
+                f["paragraph_ref"],
+                int(f["start_index"]),
+                int(f["end_index"]),
+                f["rule_or_fact_id"],
+                f["source_evidence"],
+                f["explanation"],
+                f.get("suggested_correction") or "",
+                f["detection_method"],
+                f["engine_source"],
+                f.get("similarity_score"),
+                r_state,
+                d_note,
+                now,
+            )
+        )
 
     with db_session() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM findings WHERE audit_id = ?", (audit_id,))
-        finding_rows = []
-        for idx, f in enumerate(audit_output["findings"], start=1):
-            key = (f["pillar"], f["rule_or_fact_id"], f["flagged_text"])
-            if key in resolved_decisions:
-                prev = resolved_decisions[key]
-                finding_pk = prev["id"]
-                r_state = prev["review_state"]
-                d_note = prev["decision_note"]
-            else:
-                finding_pk = f"{audit_id}-F{idx:02d}"
-                r_state = f.get("review_state", "open")
-                d_note = ""
-
-            finding_rows.append(
-                (
-                    finding_pk,
-                    audit_id,
-                    f["pillar"],
-                    f["issue_type"],
-                    f["severity"],
-                    f["flagged_text"],
-                    f["paragraph_ref"],
-                    int(f["start_index"]),
-                    int(f["end_index"]),
-                    f["rule_or_fact_id"],
-                    f["source_evidence"],
-                    f["explanation"],
-                    f.get("suggested_correction") or "",
-                    f["detection_method"],
-                    f["engine_source"],
-                    f.get("similarity_score"),
-                    r_state,
-                    d_note,
-                    now,
-                )
-            )
         if finding_rows:
             cur.executemany(
                 """

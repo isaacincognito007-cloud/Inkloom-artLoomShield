@@ -35,9 +35,10 @@ def get_connection() -> sqlite3.Connection:
 
 @contextmanager
 def db_session() -> Generator[sqlite3.Connection, None, None]:
-    """Context manager for SQLite connections ensuring transactional integrity (commit/rollback/close)."""
+    """Context manager for SQLite connections ensuring transactional integrity with BEGIN IMMEDIATE."""
     conn = get_connection()
     try:
+        conn.execute("BEGIN IMMEDIATE")
         yield conn
         conn.commit()
     except Exception:

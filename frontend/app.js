@@ -20,6 +20,18 @@ function updateProcessingModeUI() {
     }
   }
 
+  const sidebarBtn = document.getElementById('sidebarSystemStatusBtn');
+  const sidebarPillText = document.getElementById('sidebarStatusPillText');
+  if (sidebarBtn && sidebarPillText) {
+    if (isLocal) {
+      sidebarPillText.textContent = 'Local processing';
+      sidebarBtn.title = 'View privacy and local processing status';
+    } else {
+      sidebarPillText.textContent = 'Hosted processing';
+      sidebarBtn.title = 'View privacy and hosted system status';
+    }
+  }
+
   const banner = document.getElementById('demoWorkspaceBanner');
   if (banner) {
     banner.style.display = AppState.demoMode ? 'flex' : 'none';
@@ -43,6 +55,7 @@ const AppState = {
   demoMode: false,
   processingMode: 'hosted',
   sessionAvailable: true,
+  firstLoadSuccess: false,
   permissions: {},
   inputMethod: 'paste', // 'paste' | 'upload'
   hasUnsavedChanges: false,
@@ -418,8 +431,11 @@ async function apiFetch(url, options = {}, timeoutMs = 45000) {
     headers['x-loomshield-role'] = AppState.activeRole;
   }
 
+  const isColdStartEndpoint = url.startsWith('/api/session') || url.startsWith('/api/brands');
+  const effectiveTimeout = (isColdStartEndpoint && !AppState.firstLoadSuccess) ? 90000 : timeoutMs;
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
 
   const opts = Object.assign({}, options, {
     headers,
@@ -432,7 +448,7 @@ async function apiFetch(url, options = {}, timeoutMs = 45000) {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
-      throw new ApiError(0, 'TIMEOUT', `Request timed out after ${Math.round(timeoutMs / 1000)} seconds. Please try again.`);
+      throw new ApiError(0, 'TIMEOUT', `Request timed out after ${Math.round(effectiveTimeout / 1000)} seconds. Please try again.`);
     }
     throw new ApiError(0, 'NETWORK_ERROR', 'Network connection error. Please verify the LoomShield server is running.');
   } finally {
@@ -463,6 +479,11 @@ async function apiFetch(url, options = {}, timeoutMs = 45000) {
     }
     throw new ApiError(res.status, code, message, field, reqId);
   }
+
+  if (isColdStartEndpoint) {
+    AppState.firstLoadSuccess = true;
+  }
+
   return data;
 }
 
@@ -494,12 +515,25 @@ function getApiErrorAction(err) {
     };
   }
   if (status === 409 || code === 'CONFLICT') {
+    const msg = (err.message || '').toLowerCase();
+    let helper = 'Conflict: please refresh the workspace to view the latest status.';
+    if (msg.includes('concurren')) {
+      helper = 'Document or rule state changed concurrently. Refresh to view latest status.';
+    } else if (msg.includes('identical')) {
+      helper = 'The suggested replacement is identical to the current document content.';
+    } else if (msg.includes('approved') || msg.includes('locked')) {
+      helper = 'Approved audits are locked for compliance integrity and cannot be modified.';
+    } else if (msg.includes('transition')) {
+      helper = 'This workflow transition is not permitted in the current stage.';
+    } else if (msg.includes('relocate') || msg.includes('ambiguous')) {
+      helper = 'Document content has shifted. Please rerun the audit or dismiss this finding.';
+    }
     return {
       action: 'refresh',
       label: 'Conflict / State changed',
       canRetry: true,
       retryLabel: 'Refresh',
-      helperText: 'Document or rule state changed concurrently. Refresh to view latest status.',
+      helperText: helper,
       requestId: reqId,
     };
   }
@@ -754,6 +788,14 @@ function bindNavigationEvents() {
     AppState.vaultData = null;
     AppState.overviewData = null;
     AppState.reviewQueueOffset = 0;
+    AppState.lastRefreshed = {
+      overview: null,
+      vault: null,
+      reviewQueue: null,
+      radar: null,
+      history: null,
+      engineStatus: null,
+    };
     try {
       await refreshAllBrandData();
       updateTopbarContext();
@@ -1299,7 +1341,7 @@ function bindAuditWorkspaceEvents() {
     if (!AppState.currentAudit) return;
     const btn = document.getElementById('rerunAuditBtn');
     btn.disabled = true;
-    btn.textContent = 'Auditing locally...';
+    btn.textContent = AppState.processingMode === 'local' ? 'Auditing locally...' : 'Running audit...';
     try {
       const updated = await apiFetch(`/api/audits/${encodeURIComponent(AppState.currentAudit.id)}/rerun`, {
         method: 'POST',
@@ -1595,8 +1637,9 @@ function renderAuditWorkspace() {
   const audit = AppState.currentAudit;
   const openCount = audit.open_findings_count ?? (audit.findings || []).filter((f) => ['open', 'needs_review'].includes(f.review_state)).length;
   document.getElementById('resultsBreadcrumbDocName').textContent = `New audit / ${audit.document_name}`;
+  const procLabel = AppState.processingMode === 'local' ? 'Local processing' : 'Hosted engine';
   document.getElementById('resultsSummarySubtitle').textContent =
-    `${openCount} finding(s) need review · Local processing (${audit.runtime_ms} ms) · Saved ${formatTimestamp(audit.updated_at)}`;
+    `${openCount} finding(s) need review · ${procLabel} (${audit.runtime_ms} ms) · Saved ${formatTimestamp(audit.updated_at)}`;
 
   updateMobilePanelVisibility();
   renderSixPillarsBar();
@@ -3454,6 +3497,9 @@ async function renderAuditHistoryView() {
            ${computeWordDiffHtml(detail.original_content, detail.current_content, AppState.historyFormatView)}
          </div>`;
 
+    const selectedIdx = audits.findIndex((a) => a.id === detail.id);
+    const displayIdx = selectedIdx >= 0 ? selectedIdx + 1 : 1;
+
     container.innerHTML = `
       <div class="card" style="margin-bottom: 16px;">
         <div class="card-header">
@@ -3467,7 +3513,7 @@ async function renderAuditHistoryView() {
               `).join('')}
             </select>
             ${renderStateBadge(detail.overall_status)}
-            <span style="font-size: 11.5px; color: var(--text-secondary); margin-left: 4px;">(${audits.length} record${audits.length === 1 ? '' : 's'})</span>
+            <span style="font-size: 11.5px; color: var(--text-secondary); margin-left: 4px;">(Record ${displayIdx} of ${audits.length})</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
             <div class="segmented-toggle" role="group" aria-label="History content format">
@@ -3602,7 +3648,7 @@ function renderSettingsView() {
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
             <div>
               <div style="font-size: 13.5px; font-weight: 600;">Privacy &amp; system diagnostics</div>
-              <div class="form-helper">Inspect local processing engines, supported file formats, and run an on-device self-test.</div>
+              <div class="form-helper">${AppState.processingMode === 'local' ? 'Inspect local processing engines, supported file formats, and run an on-device self-test.' : 'Inspect verification engines, supported file formats, and run an engine self-test.'}</div>
             </div>
             <button type="button" class="btn btn-sm" id="openPrivacyStatusFromSettingsBtn">Open system status</button>
           </div>
@@ -3615,7 +3661,7 @@ function renderSettingsView() {
         <div>
           <h2 class="card-title">Team &amp; permissions</h2>
           <p style="font-size: 13px; color: var(--text-secondary); margin-top: 2px;">
-            In production deployments, user roles come from organisation authentication. ${AppState.demoMode ? 'Because Demo mode is enabled, you can preview how each role interacts with approval and Brand Vault controls below.' : 'Enable Demo mode above if you want to preview other role permissions locally.'}
+            In production deployments, user roles come from organisation authentication. ${AppState.demoMode ? 'Because Demo mode is enabled, you can preview how each role interacts with approval and Brand Vault controls below.' : 'Role preview is available when the workspace is started with LOOMSHIELD_WORKSPACE_MODE=demo.'}
           </p>
         </div>
       </div>

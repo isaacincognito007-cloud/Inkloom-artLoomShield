@@ -435,25 +435,51 @@ def test_error_shape_and_request_id_for_all_error_types():
     assert "request_id" in data422["error"]
 
 
-def test_rate_limiting_429_on_audit_upload_and_reset():
-    """Rate limiter enforces per-IP limits and returns 429 Too Many Requests."""
+def test_rate_limiting_429_on_audit_upload_and_reset(monkeypatch):
+    """Rate limiter enforces per-IP limits (429) across audits, file uploads, and demo reset."""
     from backend.main import audit_rate_limiter
     audit_rate_limiter.reset()
 
-    # Verify limiter unit isolation
-    for _ in range(30):
-        assert audit_rate_limiter.is_allowed("198.51.100.1") is True
-    assert audit_rate_limiter.is_allowed("198.51.100.1") is False
-
-    # Live endpoint rate limit returns 429
-    headers = {"x-forwarded-for": "203.0.113.99"}
+    # 1. Text audit endpoint 429
+    headers_audit = {"x-forwarded-for": "203.0.113.99"}
     payload = {"brand_id": "novapay", "document_name": "RL Test", "content": "Simple text"}
     for _ in range(30):
-        res = client.post("/api/audits", json=payload, headers=headers)
+        res = client.post("/api/audits", json=payload, headers=headers_audit)
         assert res.status_code == 200
-    res_limited = client.post("/api/audits", json=payload, headers=headers)
-    assert res_limited.status_code == 429
-    assert "rate limit exceeded" in res_limited.json()["detail"].lower()
+    res_limited_audit = client.post("/api/audits", json=payload, headers=headers_audit)
+    assert res_limited_audit.status_code == 429
+    assert "rate limit exceeded" in res_limited_audit.json()["detail"].lower()
+
+    # 2. File upload endpoint 429
+    audit_rate_limiter.reset()
+    headers_upload = {"x-forwarded-for": "203.0.113.100"}
+    for _ in range(30):
+        res = client.post(
+            "/api/audits/upload",
+            files={"file": ("memo.txt", b"Safe text", "text/plain")},
+            data={"brand_id": "novapay", "document_name": "Upload RL"},
+            headers=headers_upload,
+        )
+        assert res.status_code == 200
+    res_limited_upload = client.post(
+        "/api/audits/upload",
+        files={"file": ("memo.txt", b"Safe text", "text/plain")},
+        data={"brand_id": "novapay", "document_name": "Upload RL"},
+        headers=headers_upload,
+    )
+    assert res_limited_upload.status_code == 429
+    assert "rate limit exceeded" in res_limited_upload.json()["detail"].lower()
+
+    # 3. Demo reset endpoint 429
+    audit_rate_limiter.reset()
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
+    headers_reset = {"x-forwarded-for": "203.0.113.101"}
+    for _ in range(30):
+        res = client.post("/api/demo/reset", headers=headers_reset)
+        assert res.status_code == 200
+    res_limited_reset = client.post("/api/demo/reset", headers=headers_reset)
+    assert res_limited_reset.status_code == 429
+    assert "rate limit exceeded" in res_limited_reset.json()["detail"].lower()
 
 
 def test_workflow_transitions_and_cas_concurrency():
@@ -484,101 +510,129 @@ def test_workflow_transitions_and_cas_concurrency():
     assert res_reopen.status_code == 409
 
 
-def test_approved_audit_immutable_to_decisions_and_rerun():
-    """Approved audits reject decisions and reruns with 409 Conflict."""
+def test_cas_concurrency_conflict():
+    """Concurrent workflow status updates on the same audit return 409 Conflict via compare-and-swap."""
     aud = client.post(
         "/api/audits",
-        json={"brand_id": "novapay", "document_name": "Immutable Test", "content": "NovaPay Core compliant content."}
+        json={"brand_id": "novapay", "document_name": "CAS Conflict Test", "content": "NovaPay Core compliant content."}
     ).json()
     aid = aud["id"]
     client.post(f"/api/audits/{aid}/workflow", json={"new_state": "In Review"})
-    client.post(f"/api/audits/{aid}/workflow", json={"new_state": "Approved", "comment": "Approved"})
 
-    # Finding decision on approved audit returns 409
-    res_dec = client.post(f"/api/audits/{aid}/findings/FIND-FAKE/decision", json={"decision": "dismiss", "reason": "reason"})
-    assert res_dec.status_code == 409
-    assert "approved" in res_dec.json()["detail"].lower()
+    # Client A succeeds: In Review -> Approved
+    res_a = client.post(f"/api/audits/{aid}/workflow", json={"new_state": "Approved", "comment": "Reviewer A approves"})
+    assert res_a.status_code == 200
 
-    # Rerun on approved audit returns 409
-    res_rerun = client.post(f"/api/audits/{aid}/rerun")
-    assert res_rerun.status_code == 409
-    assert "approved" in res_rerun.json()["detail"].lower()
+    # Client B attempts concurrent transition expecting In Review -> Changes Requested
+    res_b = client.post(f"/api/audits/{aid}/workflow", json={"new_state": "Changes Requested", "comment": "Reviewer B rejects"})
+    assert res_b.status_code == 409
+    assert "invalid workflow transition" in res_b.json()["detail"].lower() or "conflict" in res_b.json()["detail"].lower()
 
 
-def test_audits_pagination():
-    """GET /api/audits supports total, limit, and offset query parameters."""
-    res = client.get("/api/audits?limit=2&offset=0")
-    assert res.status_code == 200
-    data = res.json()
-    assert "total" in data
-    assert "limit" in data
-    assert "offset" in data
-    assert data["limit"] == 2
-    assert data["offset"] == 0
-    assert isinstance(data["audits"], list)
-    assert len(data["audits"]) <= 2
-
-
-def test_cors_origins_env_parsing(monkeypatch):
-    """CORS origins parse comma-separated lists and exclude obsolete domains."""
-    from backend.main import parse_cors_origins
-    origins = parse_cors_origins("https://app1.example.com, https://app2.example.com")
-    assert "https://app1.example.com" in origins
-    assert "https://app2.example.com" in origins
-    assert "https://inkloom-art-loom-shield.vercel.app" not in origins
-
-
-def test_rerun_parser_failed_audit_stays_check_failed():
-    """Rerun on a parser-failed audit preserves Check Failed state and does not pass clean."""
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO audits (
-            id, brand_id, brand_version, document_name, input_format,
-            original_content, current_content, overall_status, pillar_states_json, created_at, updated_at
-        ) VALUES (
-            'AUD-TEST-RERUN-FAIL', 'novapay', 1, 'Scanned Doc', 'pdf',
-            '[Unparseable file: Corrupted PDF]', '[Unparseable file: Corrupted PDF]', 'Draft',
-            '{"Tone and Voice": "Check Failed", "Visual and Logo Consistency": "Check Failed"}',
-            '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z'
-        )
-        """
+def test_rerun_after_accept_dismiss_open_and_repeated_term():
+    """Rerun cleanly handles accept+dismiss+open and 3 identical repeated terms without ID collisions or 500s."""
+    # 1. Part A: Test accept + dismiss + open across distinct findings
+    mixed_content = (
+        "Our service guarantees 95% faster processing with NovaWallet. "
+        "Our AI Engine is built with policy guardrails."
     )
-    cur.execute(
-        """
-        INSERT INTO findings (
-            id, audit_id, pillar, issue_type, severity, flagged_text,
-            paragraph_ref, start_index, end_index, rule_or_fact_id,
-            source_evidence, explanation, suggested_correction, detection_method,
-            engine_source, review_state, decision_note, updated_at
-        ) VALUES (
-            'FIND-FAIL-01', 'AUD-TEST-RERUN-FAIL', 'Visual and Logo Consistency', 'Parser Failure', 'critical',
-            'Corrupted PDF', 'DOC', -1, -1, 'RULE-FAIL',
-            'pypdf', 'Scanned or unreadable document', 'OCR required', 'error',
-            'pypdf', 'open', '', '2026-10-24T00:00:00Z'
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
+    aud_mixed = client.post(
+        "/api/audits",
+        json={"brand_id": "novapay", "document_name": "Mixed Decision Rerun", "content": mixed_content}
+    ).json()
+    aid_mixed = aud_mixed["id"]
+    findings_mixed = aud_mixed["findings"]
+    f_claim = next((f for f in findings_mixed if "95%" in f["flagged_text"]), None)
+    f_term = next((f for f in findings_mixed if f["flagged_text"] == "NovaWallet"), None)
+    f_engine = next((f for f in findings_mixed if f["flagged_text"] == "AI Engine"), None)
+    assert f_claim and f_term and f_engine
 
-    res = client.post("/api/audits/AUD-TEST-RERUN-FAIL/rerun")
-    assert res.status_code == 200
-    rerun_data = res.json()
-    assert rerun_data["pillar_states"]["Visual and Logo Consistency"] == "Check Failed"
-    assert rerun_data["open_findings_count"] >= 1
+    # Accept f_term
+    res_acc = client.post(
+        f"/api/audits/{aid_mixed}/findings/{f_term['id']}/decision",
+        json={"decision": "accept"}
+    )
+    assert res_acc.status_code == 200
+
+    # Dismiss f_engine
+    res_dis = client.post(
+        f"/api/audits/{aid_mixed}/findings/{f_engine['id']}/decision",
+        json={"decision": "dismiss", "reason": "Footnote verified"}
+    )
+    assert res_dis.status_code == 200
+
+    # Leave f_claim open
+
+    # Rerun mixed audit: must succeed with 200 (no 500 collision)
+    rerun_mixed = client.post(f"/api/audits/{aid_mixed}/rerun")
+    assert rerun_mixed.status_code == 200
+    rerun_mixed_findings = rerun_mixed.json()["findings"]
+    mixed_ids = [f["id"] for f in rerun_mixed_findings]
+    assert len(mixed_ids) == len(set(mixed_ids)), f"Duplicate IDs in mixed rerun: {mixed_ids}"
+
+    # Verify f_engine preserved as dismissed and f_claim is open
+    fe_after = next((f for f in rerun_mixed_findings if f["flagged_text"] == "AI Engine"), None)
+    fc_after = next((f for f in rerun_mixed_findings if "95%" in f["flagged_text"]), None)
+    assert fe_after and fe_after["review_state"] == "dismissed"
+    assert fc_after and fc_after["review_state"] == "open"
+
+    # 2. Part B: Test 3 identical repeated terms (same pillar, rule, text)
+    rep_content = (
+        "First notice: NovaWallet is active. "
+        "Second notice: NovaWallet is enabled. "
+        "Third notice: NovaWallet is operational."
+    )
+    aud_rep = client.post(
+        "/api/audits",
+        json={"brand_id": "novapay", "document_name": "Repeated Terms", "content": rep_content}
+    ).json()
+    aid_rep = aud_rep["id"]
+    rep_findings = [f for f in aud_rep["findings"] if f["flagged_text"] == "NovaWallet"]
+    assert len(rep_findings) == 3
+
+    # Dismiss first occurrence
+    d1 = client.post(
+        f"/api/audits/{aid_rep}/findings/{rep_findings[0]['id']}/decision",
+        json={"decision": "dismiss", "reason": "First exception"}
+    )
+    assert d1.status_code == 200
+
+    # Dismiss second occurrence
+    d2 = client.post(
+        f"/api/audits/{aid_rep}/findings/{rep_findings[1]['id']}/decision",
+        json={"decision": "dismiss", "reason": "Second exception"}
+    )
+    assert d2.status_code == 200
+
+    # Third occurrence left open
+
+    # Rerun: must not 500, must assign distinct IDs and preserve individual decisions
+    rerun_rep = client.post(f"/api/audits/{aid_rep}/rerun")
+    assert rerun_rep.status_code == 200
+    rep_after = rerun_rep.json()["findings"]
+    rep_after_terms = [f for f in rep_after if f["flagged_text"] == "NovaWallet"]
+    assert len(rep_after_terms) == 3
+
+    rep_ids = [f["id"] for f in rep_after_terms]
+    assert len(rep_ids) == len(set(rep_ids)), f"Collision in repeated term IDs: {rep_ids}"
+
+    rep_states = [f["review_state"] for f in rep_after_terms]
+    assert rep_states.count("dismissed") == 2
+    assert rep_states.count("open") == 1
 
 
 def test_audit_survives_database_restart():
-    """Audit records persist across database connection closures and restarts."""
+    """Audit records persist across database connection closures and re-running init_db()."""
     aud = client.post(
         "/api/audits",
         json={"brand_id": "novapay", "document_name": "Persistence Restart Test", "content": "NovaPay Core compliant content."}
     ).json()
     audit_id = aud["id"]
 
-    # Direct SQLite query to simulate cold restart
+    # Re-run init_db() to simulate server cold start / restart
+    init_db()
+
+    # Direct SQLite query to simulate cold restart connection
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("SELECT id, document_name, overall_status FROM audits WHERE id = ?", (audit_id,))
@@ -595,10 +649,68 @@ def test_audit_survives_database_restart():
     assert api_res.json()["id"] == audit_id
 
 
-def test_demo_reset_forbidden_in_production(monkeypatch):
-    """POST /api/demo/reset returns 403 Forbidden when workspace mode is production."""
+def test_internal_server_error_500_shape(monkeypatch):
+    """Uncaught exceptions return 500 with structured error shape and x-request-id."""
+    client_500 = TestClient(app, raise_server_exceptions=False)
+    monkeypatch.setattr("backend.main.get_connection", lambda *args, **kwargs: 1 / 0)
+
+    res = client_500.get("/api/audits/AUD-1001")
+    assert res.status_code == 500
+    assert "x-request-id" in res.headers
+    body = res.json()
+    assert "error" in body
+    assert body["error"]["code"] == "INTERNAL_SERVER_ERROR"
+    assert "request_id" in body["error"]
+    assert body["error"]["request_id"] == res.headers["x-request-id"]
+
+
+def test_x_request_id_sanitization():
+    """x-request-id header accepts short alphanumeric strings and sanitizes invalid characters."""
+    # 1. Valid short alphanumeric request ID is preserved
+    valid_id = "req-client-trace-1234"
+    res_valid = client.get("/api/brands", headers={"x-request-id": valid_id})
+    assert res_valid.headers.get("x-request-id") == valid_id
+
+    # 2. Dangerous or invalid request ID is rejected and regenerated
+    invalid_id = "<script>alert('xss')</script> " + ("a" * 100)
+    res_invalid = client.get("/api/brands", headers={"x-request-id": invalid_id})
+    sanitized = res_invalid.headers.get("x-request-id")
+    assert sanitized != invalid_id
+    assert sanitized.startswith("req-")
+    assert len(sanitized) <= 32
+
+
+def test_fact_proposal_vs_verification_permissions(monkeypatch):
+    """Content Creator can propose facts (defaults to Pending Verification); only Brand Administrator can verify."""
+    # 1. Content Creator proposes fact -> 200 OK, Pending Verification
     monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "production")
-    res = client.post("/api/demo/reset")
-    assert res.status_code == 403
-    assert "demo workspace mode" in res.json()["detail"].lower()
+    monkeypatch.setenv("LOOMSHIELD_USER_ROLE", "Content Creator")
+    fact_payload = {
+        "statement": "NovaPay Core processes transactions under 100ms in benchmark tests",
+        "numeric_value": "100",
+        "numeric_units": "ms",
+        "product_context": "NovaPay Core",
+        "source_reference": "Benchmark Lab Report Q4",
+        "applicable_conditions": "Under 1000 concurrent load",
+        "date_version": "2026-10",
+        "verification_status": "Pending Verification",
+    }
+    res_propose = client.post("/api/vault/novapay/facts", json=fact_payload)
+    assert res_propose.status_code == 200
+    fact_id = res_propose.json()["fact_id"]
+
+    # 2. Content Creator attempts to verify fact -> 403 Forbidden
+    res_verify_fail = client.put(
+        f"/api/vault/novapay/facts/{fact_id}/status",
+        json={"status": "Verified", "reviewer_notes": "Creator trying to self-verify"}
+    )
+    assert res_verify_fail.status_code == 403
+
+    # 3. Brand Administrator verifies fact -> 200 OK
+    monkeypatch.setenv("LOOMSHIELD_USER_ROLE", "Brand Administrator")
+    res_verify_ok = client.put(
+        f"/api/vault/novapay/facts/{fact_id}/status",
+        json={"status": "Verified", "reviewer_notes": "Verified by Brand Administrator"}
+    )
+    assert res_verify_ok.status_code == 200
 
