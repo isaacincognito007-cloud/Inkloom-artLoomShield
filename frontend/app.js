@@ -2936,6 +2936,37 @@ function bindBrandVaultEvents() {
       renderBrandVaultTab();
     });
   }
+
+  const redoBtn = document.getElementById('vaultRedoSetupBtn');
+  if (redoBtn && !redoBtn._bound) {
+    redoBtn._bound = true;
+    redoBtn.addEventListener('click', () => {
+      if (!confirmDiscardUnsavedChanges()) return;
+      AppState.auditStage = 'input';
+      AppState.wizardMode = true;
+      AppState.wizardStep = 1;
+      switchView('new-audit');
+    });
+  }
+}
+
+function updateVaultSetupChip() {
+  const lbl = document.getElementById('vaultSetupChipLabel');
+  if (!lbl) return;
+  if (AppState.vaultData && AppState.vaultData.brand) {
+    const b = AppState.vaultData.brand;
+    if (b.id && b.id.startsWith('profile_')) {
+      lbl.textContent = b.name;
+    } else if (b.industry) {
+      lbl.textContent = `${b.name} (${b.industry})`;
+    } else {
+      lbl.textContent = b.name;
+    }
+  } else if (AppState.wizardAnswers) {
+    const wa = AppState.wizardAnswers;
+    const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
+    lbl.textContent = `${capitalize(wa.industry)} (${wa.locale || 'Global'}, ${capitalize(wa.tone)})`;
+  }
 }
 
 async function refreshBrandVaultDataOnly() {
@@ -2987,6 +3018,8 @@ function renderBrandVaultTab() {
     container.innerHTML = '<div class="card" style="padding: 32px; text-align: center; color: var(--text-secondary);">Loading Brand Vault...</div>';
     return;
   }
+
+  updateVaultSetupChip();
 
   // If user searches with "Search all Brand Vault" scope and a query is entered, show unified results banner
   const q = AppState.vaultSearchQuery;

@@ -606,7 +606,17 @@
         <section id="view-brand-vault" class="workspace-view" style="display: none;">
           <div class="page-header">
             <div>
-              <h1 class="page-title">Brand guidelines</h1>
+              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px;">
+                <h1 class="page-title" style="margin: 0;">Brand guidelines</h1>
+                <div id="vaultSetupHeaderBar" style="display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span class="status-badge badge-neutral" id="vaultSetupChip" style="font-size: 12px; font-weight: 500;">
+                    Set up for: <strong id="vaultSetupChipLabel">General business (Global, Professional)</strong>
+                  </span>
+                  <button type="button" class="btn btn-sm btn-ghost" id="vaultRedoSetupBtn" style="font-size: 11.5px; padding: 3px 10px; border: 1.5px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+                    Redo setup
+                  </button>
+                </div>
+              </div>
               <p class="page-subtitle">Manage tone principles, preferred words, approved facts, colours and logo tokens, and accessibility thresholds.</p>
             </div>
             <div class="page-actions">
