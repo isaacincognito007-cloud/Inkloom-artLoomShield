@@ -17,17 +17,32 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .certificates import (
+    EPHEMERAL_KEY_NOTICE,
+    PERSISTENT_KEY_NOTICE,
+    build_certificate_payload,
+    canonicalize_payload,
+    get_public_key_metadata,
+    get_signing_key,
+    sign_certificate_payload,
+    verify_certificate_envelope,
+)
 from .config import (
+    DEMO_SIGNIN_DISCLOSURE,
+    DEMO_USERS,
     actor_label,
     configured_user_name,
     has_permission,
     is_demo_mode,
+    issue_demo_token,
     processing_mode,
+    resolve_actor,
     resolve_role,
     session_payload,
 )
 from .database import (
     allocate_audit_id,
+    allocate_certificate_id,
     allocate_color_id,
     allocate_fact_id,
     allocate_rule_id,
@@ -62,14 +77,26 @@ from .wizard import (
 
 logger = logging.getLogger("loomshield.api")
 audit_rate_limiter = SimpleIpRateLimiter(max_requests=30, window_seconds=60)
+verify_rate_limiter = SimpleIpRateLimiter(max_requests=30, window_seconds=60)
 
 _LAST_SELFTEST_RESULT: Optional[Dict[str, Any]] = None
 _LAST_SELFTEST_TIME: Optional[str] = None
 
 
-def current_role(x_loomshield_role: Optional[str] = Header(None)) -> str:
-    """Role enforced for this request (deployment-configured; demo workspace may preview roles)."""
-    return resolve_role(x_loomshield_role)
+def current_actor(
+    authorization: Optional[str] = Header(None),
+    x_loomshield_role: Optional[str] = Header(None),
+) -> Dict[str, str]:
+    """Resolve verified actor identity and role for this request."""
+    try:
+        return resolve_actor(authorization=authorization, requested_role=x_loomshield_role)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+def current_role(actor: Dict[str, str] = Depends(current_actor)) -> str:
+    """Role enforced for this request (deployment-configured; demo workspace uses verified token or role preview)."""
+    return actor["role"]
 
 
 def require_permission(role: str, permission: str, message: str) -> None:
@@ -402,6 +429,8 @@ def persist_audit_record(
     confidential_mode: bool,
     audit_output: Dict[str, Any],
     actor_role: str = "Content Creator",
+    actor_name: str = "",
+    actor_user_id: str = "",
 ) -> str:
     now = datetime.now(timezone.utc).isoformat()
     vault = get_brand_vault_bundle(brand_id)
@@ -498,12 +527,13 @@ def persist_audit_record(
             cur,
             audit_id,
             "submitted",
-            configured_user_name(),
+            actor_name or configured_user_name(),
             actor_role,
             f"Submitted for audit (v1). {len(audit_output['findings'])} finding(s) recorded, {open_cnt} need review.",
             {"findings": len(audit_output["findings"]), "open_findings": open_cnt, "input_format": input_format},
             1,
             now,
+            actor_user_id=actor_user_id,
         )
 
     return audit_id
@@ -578,10 +608,41 @@ def run_engine_selftest_endpoint(role: str = Depends(current_role)):
     }
 
 
+class DemoLoginRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+
+
 @app.get("/api/session")
-def get_session(x_loomshield_role: Optional[str] = Header(None)):
+def get_session(
+    authorization: Optional[str] = Header(None),
+    x_loomshield_role: Optional[str] = Header(None),
+):
     """Signed-in identity, enforced role and permissions for the current workspace."""
-    return session_payload(x_loomshield_role)
+    try:
+        return session_payload(requested_role=x_loomshield_role, authorization=authorization)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.get("/api/demo/users")
+def list_demo_users_endpoint():
+    return {
+        "users": list(DEMO_USERS) if is_demo_mode() else [],
+        "disclosure": DEMO_SIGNIN_DISCLOSURE if is_demo_mode() else "",
+    }
+
+
+@app.post("/api/demo/login")
+def demo_login_endpoint(req: DemoLoginRequest):
+    if not is_demo_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Demo sign-in is only available when the server runs in demo workspace mode.",
+        )
+    try:
+        return issue_demo_token(req.user_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/demo/reset")
@@ -1250,8 +1311,9 @@ def delete_brand_rule(brand_id: str, rule_id: str, role: str = Depends(current_r
 def create_and_run_audit(
     req: NewAuditRequest,
     request: Request,
-    role: str = Depends(current_role),
+    actor: Dict[str, str] = Depends(current_actor),
 ):
+    role = actor["role"]
     require_permission(role, "run_audits", "Your role is not authorized to create and run audits")
     client_ip = get_client_ip(request)
     if not audit_rate_limiter.is_allowed(client_ip):
@@ -1295,6 +1357,8 @@ def create_and_run_audit(
         confidential_mode=req.confidential_mode,
         audit_output=audit_output,
         actor_role=role,
+        actor_name=actor["user_name"],
+        actor_user_id=actor["user_id"],
     )
     return get_audit_detail(audit_id)
 
@@ -1414,8 +1478,8 @@ def list_audits(
             """
             SELECT
                 a.id, a.brand_id, a.brand_version, a.document_name, a.input_format,
-                a.overall_status, a.assigned_reviewer, a.pillar_states_json,
-                a.runtime_ms, a.created_at, a.updated_at,
+                a.overall_status, a.assigned_reviewer, a.submitted_by_user_id, a.submitted_by_name,
+                a.pillar_states_json, a.runtime_ms, a.created_at, a.updated_at,
                 COUNT(f.id) AS total_findings,
                 SUM(CASE WHEN f.review_state IN ('open', 'needs_review') THEN 1 ELSE 0 END) AS open_findings
             FROM audits a
@@ -1434,8 +1498,8 @@ def list_audits(
             """
             SELECT
                 a.id, a.brand_id, a.brand_version, a.document_name, a.input_format,
-                a.overall_status, a.assigned_reviewer, a.pillar_states_json,
-                a.runtime_ms, a.created_at, a.updated_at,
+                a.overall_status, a.assigned_reviewer, a.submitted_by_user_id, a.submitted_by_name,
+                a.pillar_states_json, a.runtime_ms, a.created_at, a.updated_at,
                 COUNT(f.id) AS total_findings,
                 SUM(CASE WHEN f.review_state IN ('open', 'needs_review') THEN 1 ELSE 0 END) AS open_findings
             FROM audits a
@@ -1526,8 +1590,9 @@ def apply_finding_decision(
     audit_id: str,
     finding_id: str,
     req: FindingDecisionRequest,
-    role: str = Depends(current_role),
+    actor: Dict[str, str] = Depends(current_actor),
 ):
+    role = actor["role"]
     if req.decision not in ("accept", "modify", "dismiss", "needs_review"):
         raise HTTPException(status_code=400, detail="Decision must be 'accept', 'modify', 'dismiss', or 'needs_review'.")
 
@@ -1644,7 +1709,7 @@ def apply_finding_decision(
                 cur,
                 audit_id,
                 "correction_applied",
-                configured_user_name(),
+                actor["user_name"],
                 role,
                 change_desc,
                 {
@@ -1656,6 +1721,7 @@ def apply_finding_decision(
                 },
                 next_ver,
                 now,
+                actor_user_id=actor["user_id"],
             )
             cur.execute(
                 "UPDATE findings SET review_state = ?, decision_note = ?, updated_at = ? WHERE id = ? AND review_state IN ('open', 'needs_review')",
@@ -1685,7 +1751,7 @@ def apply_finding_decision(
                 cur,
                 audit_id,
                 "finding_flagged_for_review",
-                configured_user_name(),
+                actor["user_name"],
                 role,
                 f"Marked {finding_id} ({target['rule_or_fact_id']}) for human review: \"{note_str}\"",
                 {
@@ -1695,6 +1761,7 @@ def apply_finding_decision(
                 },
                 None,
                 now,
+                actor_user_id=actor["user_id"],
             )
             cur.execute(
                 "UPDATE findings SET review_state = 'needs_review', decision_note = ?, updated_at = ? WHERE id = ? AND review_state IN ('open', 'needs_review')",
@@ -1734,7 +1801,7 @@ def apply_finding_decision(
                 cur,
                 audit_id,
                 "finding_dismissed",
-                configured_user_name(),
+                actor["user_name"],
                 role,
                 f'Dismissed {finding_id} ({target["rule_or_fact_id"]}): "{reason_str}"',
                 {
@@ -1744,6 +1811,7 @@ def apply_finding_decision(
                 },
                 None,
                 now,
+                actor_user_id=actor["user_id"],
             )
             cur.execute(
                 "UPDATE findings SET review_state = ?, decision_note = ?, updated_at = ? WHERE id = ? AND review_state IN ('open', 'needs_review')",
@@ -1770,8 +1838,9 @@ def apply_finding_decision(
 def transition_audit_workflow(
     audit_id: str,
     req: WorkflowStateRequest,
-    role: str = Depends(current_role),
+    actor: Dict[str, str] = Depends(current_actor),
 ):
+    role = actor["role"]
     detail = get_audit_detail(audit_id)
     current_state = detail["overall_status"]
     target_state = req.new_state
@@ -1782,6 +1851,17 @@ def transition_audit_workflow(
             raise HTTPException(
                 status_code=403,
                 detail=f"Signed-in role '{role}' is not authorized to approve audits.",
+            )
+        # Separation of duties: the user who submitted an audit for review cannot approve it
+        submitted_by_uid = str(detail.get("submitted_by_user_id") or "").strip()
+        actor_uid = str(actor.get("user_id") or "").strip()
+        if is_demo_mode() and actor_uid and submitted_by_uid and actor_uid == submitted_by_uid:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Separation of duties: '{actor['user_name']}' submitted this audit for review "
+                    "and cannot approve their own submission. A different Reviewer or Brand Administrator must approve it."
+                ),
             )
     elif target_state == "In Review":
         require_permission(role, "submit_for_review", "Your role is not authorized to submit for review")
@@ -1840,17 +1920,29 @@ def transition_audit_workflow(
     now = datetime.now(timezone.utc).isoformat()
     content_hash = hashlib.sha256(detail["current_content"].encode("utf-8")).hexdigest()
     latest_version = len(detail["revisions"])
+    actor_uid = str(actor.get("user_id") or "")
+    actor_uname = str(actor.get("user_name") or configured_user_name())
 
     with db_session() as conn:
         cur = conn.cursor()
-        cur.execute(
-            """
-            UPDATE audits
-            SET overall_status = ?, updated_at = ?
-            WHERE id = ? AND overall_status = ?
-            """,
-            (target_state, now, audit_id, current_state),
-        )
+        if target_state == "In Review":
+            cur.execute(
+                """
+                UPDATE audits
+                SET overall_status = ?, submitted_by_user_id = ?, submitted_by_name = ?, updated_at = ?
+                WHERE id = ? AND overall_status = ?
+                """,
+                (target_state, actor_uid, actor_uname, now, audit_id, current_state),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE audits
+                SET overall_status = ?, updated_at = ?
+                WHERE id = ? AND overall_status = ?
+                """,
+                (target_state, now, audit_id, current_state),
+            )
         if cur.rowcount == 0:
             raise HTTPException(
                 status_code=409,
@@ -1859,15 +1951,17 @@ def transition_audit_workflow(
         cur.execute(
             """
             INSERT INTO approvals
-            (audit_id, previous_state, new_state, approver_role, version_reviewed,
+            (audit_id, previous_state, new_state, approver_role, approver_user_id, approver_name, version_reviewed,
              unresolved_findings_count, override_acknowledged, comment, content_sha256, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 audit_id,
                 current_state,
                 target_state,
                 role,
+                actor_uid,
+                actor_uname,
                 latest_version,
                 unresolved_count,
                 1 if req.override_acknowledged else 0,
@@ -1878,16 +1972,16 @@ def transition_audit_workflow(
         )
         event_type = "approved" if target_state == "Approved" else "status_changed"
         event_summary = (
-            f"Approved for publication with {unresolved_count} unresolved finding(s)"
+            f"Approved for publication by {actor_uname} ({role}) with {unresolved_count} unresolved finding(s)"
             + (" (authorised override recorded)." if req.override_acknowledged else ".")
             if target_state == "Approved"
-            else f"Workflow state transitioned from {current_state} to {target_state} by {role}."
+            else f"Workflow state transitioned from {current_state} to {target_state} by {actor_uname} ({role})."
         )
         record_audit_event(
             cur,
             audit_id,
             event_type,
-            configured_user_name(),
+            actor_uname,
             role,
             event_summary,
             {
@@ -1896,12 +1990,203 @@ def transition_audit_workflow(
                 "unresolved_findings": unresolved_count,
                 "override_acknowledged": bool(req.override_acknowledged),
                 "comment": req.comment.strip(),
+                "actor_user_id": actor_uid,
             },
             latest_version,
             now,
+            actor_user_id=actor_uid,
         )
 
     return get_audit_detail(audit_id)
+
+
+# ============================================================================
+# PART B: ED25519 SIGNED COMPLIANCE CERTIFICATES
+# ============================================================================
+
+def _issue_or_get_certificate(audit_id: str, actor: Dict[str, str]) -> Dict[str, Any]:
+    detail = get_audit_detail(audit_id)
+    if detail.get("overall_status") != "Approved":
+        raise HTTPException(
+            status_code=409,
+            detail="Compliance certificates can only be issued for Approved audits.",
+        )
+
+    _, _, active_kid, is_ephemeral = get_signing_key()
+
+    # Check if already issued in certificates table
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM certificates WHERE audit_id = ?", (audit_id,))
+    existing = cur.fetchone()
+    cur.execute("SELECT name FROM brands WHERE id = ?", (detail["brand_id"],))
+    b_row = cur.fetchone()
+    brand_name = str(b_row["name"]) if b_row else str(detail["brand_id"])
+    conn.close()
+
+    if existing and existing["kid"] == active_kid:
+        payload = json.loads(existing["payload_json"])
+        return {
+            "payload": payload,
+            "alg": "Ed25519",
+            "kid": existing["kid"],
+            "signature_b64": existing["signature"],
+            "ephemeral_key": bool(payload.get("ephemeral_key", is_ephemeral)),
+            "key_notice": payload.get("key_notice", EPHEMERAL_KEY_NOTICE if is_ephemeral else PERSISTENT_KEY_NOTICE),
+        }
+
+    # Locate the latest Approved record in approvals
+    approved_rows = [ap for ap in (detail.get("approvals") or []) if ap.get("new_state") == "Approved"]
+    approval_row = approved_rows[-1] if approved_rows else {}
+
+    with db_session() as s_conn:
+        s_cur = s_conn.cursor()
+        s_cur.execute("SELECT * FROM certificates WHERE audit_id = ?", (audit_id,))
+        row = s_cur.fetchone()
+
+        if row and row["kid"] == active_kid:
+            payload = json.loads(row["payload_json"])
+            return {
+                "payload": payload,
+                "alg": "Ed25519",
+                "kid": row["kid"],
+                "signature_b64": row["signature"],
+                "ephemeral_key": bool(payload.get("ephemeral_key", is_ephemeral)),
+                "key_notice": payload.get("key_notice", EPHEMERAL_KEY_NOTICE if is_ephemeral else PERSISTENT_KEY_NOTICE),
+            }
+
+        cert_id = str(row["id"]) if row else allocate_certificate_id(s_cur)
+        issued_at = str(row["issued_at"]) if row else datetime.now(timezone.utc).isoformat()
+        issued_by = str(row["issued_by"]) if row else (actor.get("user_name") or configured_user_name())
+
+        try:
+            payload = build_certificate_payload(
+                certificate_id=cert_id,
+                issued_at=issued_at,
+                audit=detail,
+                brand_name=brand_name,
+                approval_row=approval_row,
+                processing_mode_str=processing_mode(),
+                is_ephemeral=is_ephemeral,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        envelope = sign_certificate_payload(payload)
+        canonical_str = canonicalize_payload(payload).decode("utf-8")
+
+        if row:
+            s_cur.execute(
+                """
+                UPDATE certificates
+                SET payload_json = ?, signature = ?, kid = ?
+                WHERE audit_id = ?
+                """,
+                (canonical_str, envelope["signature_b64"], envelope["kid"], audit_id),
+            )
+        else:
+            s_cur.execute(
+                """
+                INSERT INTO certificates (id, audit_id, payload_json, signature, kid, issued_at, issued_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cert_id,
+                    audit_id,
+                    canonical_str,
+                    envelope["signature_b64"],
+                    envelope["kid"],
+                    issued_at,
+                    issued_by,
+                ),
+            )
+        return envelope
+
+
+@app.post("/api/audits/{audit_id}/certificate")
+def create_or_get_audit_certificate(
+    audit_id: str,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    return _issue_or_get_certificate(audit_id, actor)
+
+
+@app.get("/api/audits/{audit_id}/certificate")
+def download_audit_certificate(
+    audit_id: str,
+    download: bool = False,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    envelope = _issue_or_get_certificate(audit_id, actor)
+    headers = {}
+    if download:
+        safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", audit_id)
+        headers["Content-Disposition"] = f'attachment; filename="LoomShield_Certificate_{safe_id}.json"'
+    return JSONResponse(content=envelope, headers=headers)
+
+
+@app.get("/api/certificates/public-key")
+def get_certificate_public_key_endpoint():
+    return get_public_key_metadata()
+
+
+@app.post("/api/certificates/verify")
+async def verify_certificate_endpoint(request: Request):
+    client_ip = get_client_ip(request)
+    if not verify_rate_limiter.is_allowed(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded for certificate verification. Please wait a moment and try again.",
+        )
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Malformed JSON request body.") from exc
+
+    if not isinstance(body, dict):
+        return verify_certificate_envelope(body)
+
+    # Support either {payload, alg, kid, signature_b64} directly or {certificate: {...}, public_key_b64: "..."}
+    envelope = body.get("certificate") if isinstance(body.get("certificate"), dict) else body
+    pub_override = body.get("public_key_b64") if isinstance(body.get("public_key_b64"), str) else None
+
+    result = verify_certificate_envelope(envelope, public_key_b64=pub_override)
+
+    # If payload has audit_id, check if the audit exists on this server and whether its content hash still matches
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    audit_id = payload.get("audit_id") if isinstance(payload, dict) else None
+    cert_hash = payload.get("content_sha256") if isinstance(payload, dict) else None
+
+    if isinstance(audit_id, str) and audit_id.strip():
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT current_content, overall_status FROM audits WHERE id = ?", (audit_id.strip(),))
+        a_row = cur.fetchone()
+        conn.close()
+
+        if a_row:
+            live_hash = hashlib.sha256(str(a_row["current_content"] or "").encode("utf-8")).hexdigest()
+            matches = live_hash == cert_hash
+            result["audit_exists_on_server"] = True
+            result["server_audit_status"] = a_row["overall_status"]
+            result["server_content_sha256"] = live_hash
+            result["content_hash_matches_server"] = matches
+            if not matches:
+                if result.get("valid"):
+                    result["status"] = "content_hash_mismatch"
+                result["valid"] = False
+                result["reasons"].append(
+                    f"Server audit content hash ({live_hash[:16]}…) no longer matches certificate content_sha256 ({str(cert_hash)[:16]}…)."
+                )
+        else:
+            result["audit_exists_on_server"] = False
+            result["content_hash_matches_server"] = None
+    else:
+        result["audit_exists_on_server"] = False
+        result["content_hash_matches_server"] = None
+
+    return result
 
 
 @app.post("/api/audits/{audit_id}/rerun")

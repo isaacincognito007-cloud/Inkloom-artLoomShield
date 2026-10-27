@@ -722,8 +722,13 @@ def test_approved_audit_immutable_to_decisions_and_rerun():
         json={"brand_id": "novapay", "document_name": "Immutable Test", "content": "NovaPay Core compliant content."}
     ).json()
     aid = aud["id"]
-    client.post(f"/api/audits/{aid}/workflow", json={"new_state": "In Review"})
-    client.post(f"/api/audits/{aid}/workflow", json={"new_state": "Approved", "comment": "Approved"})
+    res_wf1 = client.post(f"/api/audits/{aid}/workflow", json={"new_state": "In Review"})
+    assert res_wf1.status_code == 200
+    res_wf2 = client.post(
+        f"/api/audits/{aid}/workflow",
+        json={"new_state": "Approved", "comment": "Approved", "override_acknowledged": True},
+    )
+    assert res_wf2.status_code == 200
 
     # Finding decision on approved audit returns 409
     res_dec = client.post(f"/api/audits/{aid}/findings/FIND-FAKE/decision", json={"decision": "dismiss", "reason": "reason"})

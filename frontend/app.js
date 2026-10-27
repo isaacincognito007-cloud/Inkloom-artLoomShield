@@ -72,7 +72,11 @@ const AppState = {
   auditStage: 'input', // 'input' | 'results'
   activeMobilePanel: 'source', // 'source' | 'findings' | 'correction'
   session: null,
+  userId: '',
   userName: '',
+  userInitials: '',
+  demoToken: '',
+  demoUsers: [],
   activeRole: 'Content Creator',
   demoMode: false,
   processingMode: 'hosted',
@@ -165,6 +169,7 @@ const VIEW_TITLES = {
   'audit-history': 'Audit history',
   'settings': 'Settings',
   'engine-status': 'Privacy and system status',
+  'verify-certificate': 'Verify certificate',
   'about-roadmap': 'About & roadmap',
 };
 
@@ -479,7 +484,9 @@ class ApiError extends Error {
 
 async function apiFetch(url, options = {}, timeoutMs = 45000) {
   const headers = Object.assign({}, options.headers || {});
-  if (AppState.activeRole && !headers['x-loomshield-role']) {
+  if (AppState.demoToken && !headers['Authorization']) {
+    headers['Authorization'] = `Bearer ${AppState.demoToken}`;
+  } else if (AppState.activeRole && !headers['x-loomshield-role']) {
     headers['x-loomshield-role'] = AppState.activeRole;
   }
 
@@ -620,6 +627,8 @@ function getApiErrorAction(err) {
 
 function openModalDialog({ title, bodyHtml, confirmLabel = 'Confirm', cancelLabel = 'Cancel', onConfirm, onCancel }) {
   document.getElementById('appSidebar')?.classList.remove('mobile-open');
+  const signInMenu = document.getElementById('demoSignInMenu');
+  if (signInMenu) signInMenu.style.display = 'none';
   const root = document.getElementById('modalRoot');
   root.style.display = 'block';
   root.innerHTML = `
@@ -727,7 +736,7 @@ function updateTopbarContext() {
   }
   const roleBtn = document.getElementById('accountRoleBtn');
   if (roleBtn) {
-    const initials = (AppState.userName || 'Workspace User')
+    const initials = AppState.userInitials || (AppState.userName || 'Workspace User')
       .split(' ')
       .filter(Boolean)
       .map((w) => w[0])
@@ -736,11 +745,12 @@ function updateTopbarContext() {
       .toUpperCase();
     roleBtn.innerHTML = `
       <span class="user-avatar-initials">${escapeHtml(initials)}</span>
-      <span style="font-weight: 600;">${escapeHtml(AppState.userName || 'Workspace User')}</span>
-      <span class="role-pill-badge">${escapeHtml(AppState.activeRole)}</span>
+      <span style="font-weight: 600;" id="topbarSignedInUserName">${escapeHtml(AppState.userName || 'Workspace User')}</span>
+      <span class="role-pill-badge" id="accountRoleLabel">${escapeHtml(AppState.activeRole)}</span>
     `;
-    roleBtn.setAttribute('title', `Signed in as ${AppState.userName || 'Workspace User'} (${AppState.activeRole}) — Workspace settings`);
+    roleBtn.setAttribute('title', `Sign in as demo user — Currently ${AppState.userName || 'Workspace User'} (${AppState.activeRole})`);
   }
+  renderDemoSignInMenu();
   const demoBanner = document.getElementById('demoWorkspaceBanner');
   if (demoBanner) {
     demoBanner.style.display = AppState.demoMode ? 'flex' : 'none';
@@ -776,8 +786,67 @@ function bindNavigationEvents() {
     switchView('engine-status');
   });
 
-  document.getElementById('accountRoleBtn').addEventListener('click', () => {
+  document.getElementById('accountRoleBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!AppState.demoMode) {
+      switchView('settings');
+      return;
+    }
+    const menu = document.getElementById('demoSignInMenu');
+    const btn = document.getElementById('accountRoleBtn');
+    if (!menu) {
+      switchView('settings');
+      return;
+    }
+    const isOpening = menu.style.display === 'none' || !menu.style.display;
+    if (isOpening) {
+      document.getElementById('appSidebar')?.classList.remove('mobile-open');
+      const cp = document.getElementById('commandPaletteModal');
+      if (cp) cp.style.display = 'none';
+      const mr = document.getElementById('modalRoot');
+      if (mr) mr.style.display = 'none';
+      renderDemoSignInMenu();
+      menu.style.display = 'block';
+      btn?.setAttribute('aria-expanded', 'true');
+    } else {
+      menu.style.display = 'none';
+      btn?.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  document.getElementById('openSettingsFromSignInMenuBtn')?.addEventListener('click', () => {
+    const menu = document.getElementById('demoSignInMenu');
+    if (menu) menu.style.display = 'none';
     switchView('settings');
+  });
+
+  document.addEventListener('click', (e) => {
+    const wrap = document.getElementById('signInDropdownWrap');
+    const menu = document.getElementById('demoSignInMenu');
+    if (menu && menu.style.display !== 'none' && wrap && !wrap.contains(e.target)) {
+      menu.style.display = 'none';
+      document.getElementById('accountRoleBtn')?.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  document.getElementById('resultsCertificateBtn')?.addEventListener('click', () => {
+    if (AppState.currentAudit && AppState.currentAudit.id) {
+      openCertificateModal(AppState.currentAudit.id);
+    }
+  });
+
+  window.addEventListener('hashchange', async () => {
+    const h = window.location.hash;
+    if (h === '#verify') {
+      await switchView('verify-certificate');
+    } else if (h === '#new-audit') {
+      AppState.auditStage = 'input';
+      AppState.wizardMode = false;
+      await switchView('new-audit');
+    } else if (h === '#results') {
+      const firstId = AppState.overviewData?.recent_audits?.[0]?.id || 'AUD-1001';
+      await openAuditById(firstId);
+    }
   });
 
   document.getElementById('overviewNewAuditBtn').addEventListener('click', () => {
@@ -787,7 +856,7 @@ function bindNavigationEvents() {
     switchView('new-audit');
   });
 
-  document.getElementById('overviewTryDemoBtn').addEventListener('click', () => {
+  document.getElementById('overviewTryDemoBtn')?.addEventListener('click', () => {
     AppState.auditStage = 'input';
     AppState.wizardMode = true;
     AppState.wizardStep = 8;
@@ -983,6 +1052,7 @@ async function switchView(viewName) {
   if (viewName === 'audit-history') await renderAuditHistoryView();
   if (viewName === 'settings') renderSettingsView();
   if (viewName === 'engine-status') await renderEngineStatusView();
+  if (viewName === 'verify-certificate') await renderVerifyCertificateView();
 }
 
 let isInitialStartup = true;
@@ -1014,8 +1084,11 @@ async function loadBrandsAndInit() {
         AppState.session = sessionData;
         AppState.demoMode = Boolean(sessionData.is_demo_mode);
         AppState.processingMode = sessionData.processing_mode || 'hosted';
+        AppState.userId = sessionData.user_id || '';
         AppState.activeRole = sessionData.user_role || 'Content Creator';
         AppState.userName = sessionData.user_name || 'Workspace User';
+        AppState.userInitials = sessionData.user_initials || '';
+        AppState.demoUsers = sessionData.demo_users || [];
         AppState.permissions = sessionData.permissions || {};
         AppState.sessionAvailable = true;
         if (sessionBanner) sessionBanner.style.display = 'none';
@@ -1048,6 +1121,16 @@ async function loadBrandsAndInit() {
     }
     await refreshAllBrandData();
     updateTopbarContext();
+    if (window.location.hash === '#verify') {
+      await switchView('verify-certificate');
+    } else if (window.location.hash === '#new-audit') {
+      AppState.auditStage = 'input';
+      AppState.wizardMode = false;
+      await switchView('new-audit');
+    } else if (window.location.hash === '#results') {
+      const firstId = AppState.overviewData?.recent_audits?.[0]?.id || 'AUD-1001';
+      await openAuditById(firstId);
+    }
   } catch (err) {
     isInitialStartup = false;
     showToast(`Failed to initialize workspace: ${err.message}`);
@@ -1266,7 +1349,7 @@ async function openAuditById(auditId) {
     AppState.selectedSeverityFilter = 'ALL';
     AppState.selectedStatusFilter = 'ALL';
     AppState.findingSearchQuery = '';
-    AppState.selectedFindingId = audit.findings && audit.findings.length > 0 ? audit.findings[0].id : null;
+    AppState.selectedFindingId = null;
     await switchView('new-audit');
   } catch (err) {
     showToast(`Could not load audit ${auditId}: ${err.message}`);
@@ -1582,7 +1665,7 @@ function bindAuditWorkspaceEvents() {
         method: 'POST',
       });
       AppState.currentAudit = updated;
-      AppState.selectedFindingId = updated.findings && updated.findings.length > 0 ? updated.findings[0].id : null;
+      AppState.selectedFindingId = null;
       renderAuditWorkspace();
       await refreshOverview();
       showToast(`Reran audit ${updated.id} (${updated.findings.length} finding(s)).`);
@@ -1794,7 +1877,7 @@ async function executeTextAudit() {
     AppState.selectedSeverityFilter = 'ALL';
     AppState.selectedStatusFilter = 'ALL';
     AppState.findingSearchQuery = '';
-    AppState.selectedFindingId = audit.findings && audit.findings.length > 0 ? audit.findings[0].id : null;
+    AppState.selectedFindingId = null;
     renderAuditWorkspace();
     await refreshOverview();
     showToast(`Audit ${audit.id} saved (${audit.findings.length} finding(s)).`);
@@ -1839,7 +1922,7 @@ async function executeFileUploadAudit(file) {
     AppState.sourceViewMode = 'working';
     AppState.sourceFormatView = 'rendered';
     AppState.selectedPillarFilter = 'ALL';
-    AppState.selectedFindingId = audit.findings && audit.findings.length > 0 ? audit.findings[0].id : null;
+    AppState.selectedFindingId = null;
     renderAuditWorkspace();
     await refreshOverview();
     showToast(`Uploaded "${file.name}" — Audit ${audit.id} saved.`);
@@ -2636,6 +2719,10 @@ function renderAuditWorkspace() {
   document.getElementById('topbarViewTitle').textContent = 'Audit results';
 
   const audit = AppState.currentAudit;
+  const certBtn = document.getElementById('resultsCertificateBtn');
+  if (certBtn) {
+    certBtn.style.display = audit.overall_status === 'Approved' ? 'inline-flex' : 'none';
+  }
   const openCount = audit.open_findings_count ?? (audit.findings || []).filter((f) => ['open', 'needs_review'].includes(f.review_state)).length;
 
   const activeBrand = AppState.brands.find((b) => b.id === audit.brand_id);
@@ -2770,11 +2857,19 @@ function selectFindingByIndex(index) {
 }
 
 function handleResultsKeyNavigation(e) {
+  // Ignore any key event with Ctrl, Meta, or Alt held (e.g., Ctrl+A selects text, Ctrl+K only opens palette)
+  if (e.ctrlKey || e.metaKey || e.altKey) {
+    return;
+  }
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) {
     return;
   }
   const modal = document.getElementById('commandPaletteModal');
   if (modal && modal.style.display !== 'none') {
+    return;
+  }
+  const dialogRoot = document.getElementById('modalRoot');
+  if (dialogRoot && dialogRoot.style.display !== 'none') {
     return;
   }
   if (AppState.activeView !== 'new-audit' || AppState.auditStage !== 'results' || !AppState.currentAudit) {
@@ -2796,15 +2891,19 @@ function handleResultsKeyNavigation(e) {
     const prevIdx = (currentIndex > 0) ? currentIndex - 1 : findings.length - 1;
     selectFindingByIndex(prevIdx);
   } else if (key === 'a') {
-    e.preventDefault();
-    const curr = findings[currentIndex >= 0 ? currentIndex : 0];
+    // Act ONLY on an explicitly selected finding (never default to the first)
+    if (currentIndex < 0) return;
+    const curr = findings[currentIndex];
     if (curr && curr.suggested_correction && !['accepted', 'modified', 'dismissed'].includes(curr.review_state)) {
+      e.preventDefault();
       submitFindingDecision(curr.id, { decision: 'accept', reviewer_role: AppState.activeRole });
     }
   } else if (key === 'd') {
-    e.preventDefault();
-    const curr = findings[currentIndex >= 0 ? currentIndex : 0];
+    // Act ONLY on an explicitly selected finding (never default to the first)
+    if (currentIndex < 0) return;
+    const curr = findings[currentIndex];
     if (curr && !['accepted', 'modified', 'dismissed'].includes(curr.review_state)) {
+      e.preventDefault();
       const box = document.getElementById(`dismissBox_${curr.id}`);
       if (box) {
         box.style.display = 'block';
@@ -3093,15 +3192,36 @@ function updateWorkspaceApprovalGuard() {
 
   if (!approveBtn) return;
 
+  const isSubmitter = Boolean(
+    AppState.demoMode &&
+    AppState.userId &&
+    audit.submitted_by_user_id &&
+    audit.submitted_by_user_id === AppState.userId
+  );
+
+  if (isSubmitter) {
+    overrideRow.style.display = openCount > 0 ? 'flex' : 'none';
+    const submitterLabel = audit.submitted_by_name || AppState.userName || AppState.userId;
+    const sodMsg = `Separation of duties: ${submitterLabel} submitted this audit for review and cannot approve it. Sign in as a different Reviewer or Brand Administrator to approve.`;
+    noticeEl.innerHTML = `<span style="color: var(--status-error); font-weight: 600;">${escapeHtml(sodMsg)}</span>`;
+    approveBtn.disabled = true;
+    approveBtn.title = sodMsg;
+    return;
+  }
+
+  const submittedInfoHtml = audit.submitted_by_name
+    ? `<div style="margin-bottom: 4px; color: var(--text-secondary);">Submitted for review by: <strong>${escapeHtml(audit.submitted_by_name)}</strong></div>`
+    : '';
+
   if (openCount === 0) {
     overrideRow.style.display = 'none';
-    noticeEl.innerHTML = `<span style="color: var(--status-success); font-weight: 600;">All findings are resolved. Document is ready for Reviewer approval.</span>`;
+    noticeEl.innerHTML = `${submittedInfoHtml}<span style="color: var(--status-success); font-weight: 600;">All findings are resolved. Document is ready for Reviewer approval.</span>`;
     approveBtn.disabled = false;
     approveBtn.title = 'Approve document for publication';
   } else {
     overrideRow.style.display = 'flex';
     const canOverride = overrideCheck.checked && commentInput.value.trim().length > 0;
-    noticeEl.innerHTML = `<span style="color: var(--status-error); font-weight: 600;">${openCount} unresolved finding(s) remain.</span> Resolve all findings first, or record an authorised override with a mandatory written justification.`;
+    noticeEl.innerHTML = `${submittedInfoHtml}<span style="color: var(--status-error); font-weight: 600;">${openCount} unresolved finding(s) remain.</span> Resolve all findings first, or record an authorised override with a mandatory written justification.`;
     approveBtn.disabled = !canOverride;
     approveBtn.title = canOverride
       ? 'Approve with authorised override'
@@ -4424,6 +4544,7 @@ async function renderReviewQueueView() {
             <thead>
               <tr>
                 <th class="rq-doc-col">Document</th>
+                <th>Submitted by</th>
                 <th>Assigned reviewer</th>
                 <th>Status</th>
                 <th>Unresolved findings</th>
@@ -4436,11 +4557,12 @@ async function renderReviewQueueView() {
                 const hasUnresolved = a.open_findings > 0;
                 return `
                   <tr>
-                    <td class="rq-doc-col">
+                    <td class="rq-doc-col" data-label="Document">
                       <strong style="font-size: 14.5px; line-height: 20px; display: block;">${escapeHtml(a.document_name)}</strong>
                       <div style="margin-top: 4px;"><span class="mono-id">${escapeHtml(a.id)}</span></div>
                     </td>
-                    <td>${escapeHtml(a.assigned_reviewer)}</td>
+                    <td data-label="Submitted by">${escapeHtml(a.submitted_by_name || '—')}</td>
+                    <td data-label="Assigned reviewer">${escapeHtml(a.assigned_reviewer)}</td>
                     <td class="nowrap-col">${renderStateBadge(a.overall_status)}</td>
                     <td class="nowrap-col">
                       ${hasUnresolved
@@ -4486,6 +4608,8 @@ async function renderReviewQueueView() {
                   <div>${renderStateBadge(a.overall_status)}</div>
                 </div>
                 <div class="rq-card-meta">
+                  <span>Submitted by: <strong>${escapeHtml(a.submitted_by_name || '—')}</strong></span>
+                  <span>&bull;</span>
                   <span>Reviewer: <strong>${escapeHtml(a.assigned_reviewer)}</strong></span>
                   <span>&bull;</span>
                   ${hasUnresolved
@@ -4808,13 +4932,17 @@ async function renderAuditHistoryView() {
               `).join('')}
             </select>
             ${renderStateBadge(detail.overall_status)}
+            <span style="font-size: 12px; color: var(--text-secondary); margin-left: 4px;">Submitted by: <strong>${escapeHtml(detail.submitted_by_name || '—')}</strong></span>
             <span style="font-size: 11.5px; color: var(--text-secondary); margin-left: 4px;">(Record ${displayIdx} of ${audits.length})</span>
           </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
             <div class="segmented-toggle" role="group" aria-label="History content format">
               <button type="button" class="segmented-btn ${AppState.historyFormatView === 'rendered' ? 'active' : ''}" id="histViewRenderedBtn">Rendered</button>
               <button type="button" class="segmented-btn ${AppState.historyFormatView === 'source' ? 'active' : ''}" id="histViewSourceBtn">Source</button>
             </div>
+            ${detail.overall_status === 'Approved' ? `
+              <button type="button" class="btn btn-sm btn-success" id="histCertificateBtn">Certificate</button>
+            ` : ''}
             <button type="button" class="btn btn-sm" id="histOpenWorkspaceBtn">Open review</button>
           </div>
         </div>
@@ -4859,7 +4987,7 @@ async function renderAuditHistoryView() {
                   </span>
                 </div>
                 <div style="font-size: 13.5px; margin-top: 6px; color: var(--text-primary);">
-                  <strong>${escapeHtml(ap.approver_role)}:</strong> ${escapeHtml(ap.comment)}
+                  <strong>${escapeHtml(ap.approver_name ? `${ap.approver_name} (${ap.approver_role})` : ap.approver_role)}:</strong> ${escapeHtml(ap.comment)}
                 </div>
                 <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 4px;">
                   SHA-256: <span class="mono-id" style="font-size: 11px;">${escapeHtml(ap.content_sha256.slice(0, 24))}...</span>
@@ -4889,6 +5017,13 @@ async function renderAuditHistoryView() {
     document.getElementById('histOpenWorkspaceBtn').addEventListener('click', () => {
       openAuditById(detail.id);
     });
+
+    const histCertBtn = document.getElementById('histCertificateBtn');
+    if (histCertBtn) {
+      histCertBtn.addEventListener('click', () => {
+        openCertificateModal(detail.id);
+      });
+    }
   } catch (err) {
     const action = getApiErrorAction(err);
     const lastTime = AppState.lastRefreshed.history ? formatTimestamp(AppState.lastRefreshed.history) : 'Never';
@@ -5239,6 +5374,7 @@ function initCommandPalette() {
       { type: 'Navigation', label: 'Go to Audit history', detail: 'Audited versions, word diffs, and approval audit logs', run: () => switchView('audit-history') },
       { type: 'Navigation', label: 'Go to Settings', detail: 'Role selector and workspace preferences', run: () => switchView('settings') },
       { type: 'Navigation', label: 'Go to Privacy and processing', detail: 'Engine self-tests and honest processing status', run: () => switchView('engine-status') },
+      { type: 'Navigation', label: 'Go to Verify certificate', detail: 'Verify Ed25519 compliance certificates (#verify)', run: () => switchView('verify-certificate') },
       { type: 'Navigation', label: 'Go to About & roadmap', detail: 'Architecture and verified system capabilities', run: () => switchView('about-roadmap') },
       { type: 'Action', label: 'Run engine self-test', detail: 'Execute deterministic engine verification diagnostics', run: () => triggerEngineSelftest() },
     ];
@@ -5323,6 +5459,8 @@ function initCommandPalette() {
 
   function openPalette() {
     document.getElementById('appSidebar')?.classList.remove('mobile-open');
+    const signInMenu = document.getElementById('demoSignInMenu');
+    if (signInMenu) signInMenu.style.display = 'none';
     modal.style.display = 'flex';
     input.value = '';
     renderPaletteList('');
@@ -5383,4 +5521,397 @@ function initCommandPalette() {
       closePalette();
     }
   });
+}
+
+
+// ============================================================================
+// ROUND 3 DAY 2: DEMO IDENTITIES SIGN-IN & SIGNED COMPLIANCE CERTIFICATES
+// ============================================================================
+
+const DEFAULT_DEMO_USERS = [
+  { user_id: 'usr_priya', id: 'usr_priya', name: 'Priya Nair', role: 'Content Creator', initials: 'PN' },
+  { user_id: 'usr_marcus', id: 'usr_marcus', name: 'Marcus Lee', role: 'Reviewer', initials: 'ML' },
+  { user_id: 'usr_ava', id: 'usr_ava', name: 'Ava Chen', role: 'Brand Administrator', initials: 'AC' },
+];
+
+function renderDemoSignInMenu() {
+  const listEl = document.getElementById('demoSignInUsersList');
+  if (!listEl) return;
+  const users = (AppState.demoUsers && AppState.demoUsers.length > 0)
+    ? AppState.demoUsers
+    : DEFAULT_DEMO_USERS;
+
+  listEl.innerHTML = users.map((u) => {
+    const uid = u.user_id || u.id || '';
+    const uname = u.name || u.user_name || 'Demo User';
+    const isCurrent = (AppState.userId && AppState.userId === uid) || (!AppState.userId && AppState.userName === uname);
+    return `
+      <button type="button" class="signin-user-option ${isCurrent ? 'active-user' : ''}" data-demo-user-id="${escapeHtml(uid)}" role="menuitem">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="user-avatar-initials">${escapeHtml(u.initials || uname.slice(0, 2).toUpperCase())}</span>
+          <div>
+            <div style="font-weight: 600; color: var(--glass-text-primary);">${escapeHtml(uname)}</div>
+            <div style="font-size: 11.5px; color: var(--glass-text-secondary);">${escapeHtml(u.role)}</div>
+          </div>
+        </div>
+        ${isCurrent ? '<span class="status-badge badge-passed" style="font-size: 10.5px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Active</span></span>' : '<span style="font-size: 11.5px; color: var(--glass-text-secondary);">Sign in &rarr;</span>'}
+      </button>
+    `;
+  }).join('');
+
+  listEl.querySelectorAll('.signin-user-option').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const uid = btn.getAttribute('data-demo-user-id');
+      await signInAsDemoUser(uid);
+      const menu = document.getElementById('demoSignInMenu');
+      if (menu) menu.style.display = 'none';
+      document.getElementById('accountRoleBtn')?.setAttribute('aria-expanded', 'false');
+    });
+  });
+}
+
+async function signInAsDemoUser(userId) {
+  try {
+    const res = await apiFetch('/api/demo/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    AppState.demoToken = res.token || '';
+    const u = res.user || res;
+    AppState.userId = u.user_id || u.id || userId;
+    AppState.userName = u.user_name || u.name || 'Demo User';
+    AppState.userInitials = u.initials || '';
+    AppState.activeRole = u.role || 'Content Creator';
+    const sessionData = await apiFetch('/api/session');
+    if (sessionData) {
+      AppState.session = sessionData;
+      AppState.permissions = sessionData.permissions || {};
+    }
+    updateTopbarContext();
+    if (AppState.activeView === 'new-audit' && AppState.auditStage === 'results') {
+      updateWorkspaceApprovalGuard();
+    } else if (AppState.activeView === 'settings') {
+      renderSettingsView();
+    } else if (AppState.activeView === 'review-queue') {
+      await renderReviewQueueView();
+    }
+    showToast(`Signed in as ${AppState.userName} (${AppState.activeRole}).`);
+  } catch (err) {
+    showToast(`Demo sign-in failed: ${err.message}`);
+  }
+}
+
+async function openCertificateModal(auditId) {
+  document.getElementById('appSidebar')?.classList.remove('mobile-open');
+  const signInMenu = document.getElementById('demoSignInMenu');
+  if (signInMenu) signInMenu.style.display = 'none';
+
+  try {
+    const certRes = await apiFetch(`/api/audits/${encodeURIComponent(auditId)}/certificate`, {
+      method: 'POST',
+    });
+    const envelope = certRes.certificate || certRes;
+    const payload = envelope.payload || {};
+    const isEphemeral = Boolean(envelope.ephemeral_key ?? payload.ephemeral_key);
+    const ephemeralWarning = isEphemeral
+      ? (envelope.key_notice || payload.key_notice || 'ephemeral demo key: valid only until the server restarts')
+      : '';
+    const fs = payload.findings_summary || { total: 0, accepted: 0, modified: 0, dismissed: 0, open: 0 };
+    const ap = payload.approval || {};
+    const dismissals = payload.dismissals || [];
+
+    const root = document.getElementById('modalRoot');
+    root.style.display = 'block';
+    root.innerHTML = `
+      <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="certModalTitle">
+        <div class="modal-card certificate-modal-card">
+          ${ephemeralWarning ? `
+            <div class="alert alert-warning" style="margin-bottom: 12px; font-size: 12.5px;">
+              <strong>Ephemeral key notice:</strong> <span>${escapeHtml(ephemeralWarning)}</span>
+            </div>
+          ` : ''}
+
+          <div class="certificate-sheet" id="printableCertificateSheet">
+            <div class="certificate-sheet-header">
+              <div>
+                <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--slate-600);">LoomShield Brand Governance</div>
+                <h2 id="certModalTitle" style="font-size: 20px; font-weight: 700; color: var(--slate-900); margin-top: 2px;">Signed Compliance Certificate</h2>
+                <div style="font-size: 12px; color: var(--slate-600); margin-top: 2px;">Certificate ID: <span class="mono-id">${escapeHtml(payload.certificate_id)}</span> &bull; Issued (UTC): <span class="mono-id">${escapeHtml(payload.issued_at)}</span></div>
+              </div>
+              <div style="text-align: right;">
+                <span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Ed25519 Signed (v${escapeHtml(payload.certificate_version)})</span></span>
+              </div>
+            </div>
+
+            <div class="certificate-grid">
+              <div class="certificate-field-box">
+                <div class="certificate-field-label">Document &amp; Audit ID</div>
+                <div class="certificate-field-value">${escapeHtml(payload.document_name)} (<span class="mono-id">${escapeHtml(payload.audit_id)}</span>)</div>
+              </div>
+              <div class="certificate-field-box">
+                <div class="certificate-field-label">Brand Guideline Version</div>
+                <div class="certificate-field-value">${escapeHtml(payload.brand_name)} (<span class="mono-id">${escapeHtml(payload.brand_id)}</span> &bull; v${escapeHtml(payload.brand_version)})</div>
+              </div>
+              <div class="certificate-field-box">
+                <div class="certificate-field-label">Approval Sign-Off</div>
+                <div class="certificate-field-value">${escapeHtml(ap.approver_name || ap.approver_role)} (${escapeHtml(ap.approver_role)}) at ${escapeHtml(ap.approved_at)}</div>
+                <div style="font-size: 11.5px; color: var(--slate-600); margin-top: 2px;">Override: ${ap.override_acknowledged ? 'Yes' : 'No'} &bull; Note: "${escapeHtml(ap.comment || '—')}"</div>
+              </div>
+              <div class="certificate-field-box">
+                <div class="certificate-field-label">Findings Summary &amp; Mode</div>
+                <div class="certificate-field-value">Total: ${fs.total} &bull; Accepted: ${fs.accepted} &bull; Modified: ${fs.modified} &bull; Dismissed: ${fs.dismissed} &bull; Open: ${fs.open}</div>
+                <div style="font-size: 11.5px; color: var(--slate-600); margin-top: 2px;">Engine: ${escapeHtml(payload.engine_version)} (${escapeHtml(payload.processing_mode)})</div>
+              </div>
+            </div>
+
+            ${dismissals.length > 0 ? `
+              <div style="margin-bottom: 12px; font-size: 12px;">
+                <strong>Recorded Dismissals (${dismissals.length}):</strong>
+                <ul style="padding-left: 18px; margin-top: 4px;">
+                  ${dismissals.map((d) => `<li><span class="mono-id">${escapeHtml(d.finding_id)}</span>: ${escapeHtml(d.reason)}</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+
+            <div class="certificate-hash-block">
+              <div><strong>Approved Content SHA-256:</strong> ${escapeHtml(payload.content_sha256)}</div>
+              <div style="margin-top: 4px;"><strong>Original Content SHA-256:</strong> ${escapeHtml(payload.original_content_sha256)}</div>
+              <div style="margin-top: 4px;"><strong>Signing Key ID (kid):</strong> ${escapeHtml(envelope.kid)} &bull; <strong>Algorithm:</strong> ${escapeHtml(envelope.alg)}</div>
+              <div style="margin-top: 4px;"><strong>Ed25519 Signature (Base64):</strong> ${escapeHtml(envelope.signature_b64)}</div>
+            </div>
+
+            <div class="certificate-limitations-box">
+              <div><strong>Scope &amp; Limitations:</strong> ${escapeHtml(payload.limitations)}</div>
+              ${ephemeralWarning ? `<div style="margin-top: 4px;"><strong>Signing Key Mode:</strong> ${escapeHtml(ephemeralWarning)}</div>` : ''}
+            </div>
+          </div>
+
+          <div class="modal-actions-row no-print" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 16px;">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="btn btn-sm btn-accent" id="certDownloadJsonBtn">Download JSON</button>
+              <button type="button" class="btn btn-sm" id="certPrintBtn">Print (A4)</button>
+              <button type="button" class="btn btn-sm" id="certOpenVerifierBtn">Verify on #verify page</button>
+            </div>
+            <button type="button" class="btn btn-sm btn-ghost" id="certModalCloseBtn">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const closeModal = () => {
+      document.body.classList.remove('printing-certificate');
+      root.style.display = 'none';
+      root.innerHTML = '';
+    };
+
+    document.getElementById('certModalCloseBtn')?.addEventListener('click', closeModal);
+
+    document.getElementById('certDownloadJsonBtn')?.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `loomshield-certificate-${auditId}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showToast(`Downloaded certificate JSON for ${auditId}.`);
+    });
+
+    document.getElementById('certPrintBtn')?.addEventListener('click', () => {
+      document.body.classList.add('printing-certificate');
+      window.print();
+      setTimeout(() => {
+        document.body.classList.remove('printing-certificate');
+      }, 500);
+    });
+
+    document.getElementById('certOpenVerifierBtn')?.addEventListener('click', async () => {
+      closeModal();
+      const ta = document.getElementById('verifyCertTextarea');
+      if (ta) {
+        ta.value = JSON.stringify(envelope, null, 2);
+      }
+      window.location.hash = '#verify';
+      await switchView('verify-certificate');
+      await runCertificateVerification();
+    });
+  } catch (err) {
+    showToast(`Could not issue or load certificate: ${err.message}`);
+  }
+}
+
+async function renderVerifyCertificateView() {
+  const infoBar = document.getElementById('verifyPublicKeyInfoBar');
+  if (infoBar) {
+    try {
+      const pk = await apiFetch('/api/certificates/public-key');
+      const isEph = Boolean(pk.ephemeral_key ?? pk.is_ephemeral);
+      const keyNotice = pk.key_notice || pk.ephemeral_warning || 'ephemeral demo key: valid only until the server restarts';
+      infoBar.innerHTML = `
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+          <div>
+            <div style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink);">Active Server Ed25519 Verification Key</div>
+            <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 4px;">
+              Key ID (<code>kid</code>): <span class="mono-id">${escapeHtml(pk.kid)}</span> &bull;
+              Public Key (Base64): <span class="mono-id">${escapeHtml(pk.public_key_b64)}</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+              Offline CLI verifier: <code>python scripts/verify_certificate.py cert.json --public-key ${escapeHtml(pk.public_key_b64)}</code>
+            </div>
+          </div>
+          ${isEph ? `
+            <span class="status-badge badge-warning"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>${escapeHtml(keyNotice)}</span></span>
+          ` : `
+            <span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Configured Signing Key</span></span>
+          `}
+        </div>
+      `;
+    } catch (err) {
+      infoBar.innerHTML = `<div style="font-size: 13px; color: var(--status-error);">Could not load public key: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  const runBtn = document.getElementById('runVerifyCertBtn');
+  if (runBtn && !runBtn._bound) {
+    runBtn._bound = true;
+    runBtn.addEventListener('click', () => runCertificateVerification());
+  }
+
+  const clearBtn = document.getElementById('clearVerifyCertBtn');
+  if (clearBtn && !clearBtn._bound) {
+    clearBtn._bound = true;
+    clearBtn.addEventListener('click', () => {
+      const ta = document.getElementById('verifyCertTextarea');
+      const box = document.getElementById('verifyCertResultBox');
+      if (ta) ta.value = '';
+      if (box) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+      }
+    });
+  }
+
+  const fileInput = document.getElementById('verifyCertFileInput');
+  if (fileInput && !fileInput._bound) {
+    fileInput._bound = true;
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const textContent = await file.text();
+      const ta = document.getElementById('verifyCertTextarea');
+      if (ta) ta.value = textContent;
+      await runCertificateVerification();
+      fileInput.value = '';
+    });
+  }
+
+  const sampleBtn = document.getElementById('verifyLoadSampleBtn');
+  if (sampleBtn && !sampleBtn._bound) {
+    sampleBtn._bound = true;
+    sampleBtn.addEventListener('click', async () => {
+      try {
+        const listRes = await apiFetch(`/api/audits?brand_id=${encodeURIComponent(AppState.activeBrandId)}&limit=50`);
+        const approved = (listRes.audits || []).find((a) => a.overall_status === 'Approved');
+        if (!approved) {
+          showToast('No Approved audit found in current brand. Approve an audit first to issue a certificate.');
+          return;
+        }
+        const certRes = await apiFetch(`/api/audits/${encodeURIComponent(approved.id)}/certificate`, { method: 'POST' });
+        const env = certRes.certificate || certRes;
+        const ta = document.getElementById('verifyCertTextarea');
+        if (ta) ta.value = JSON.stringify(env, null, 2);
+        await runCertificateVerification();
+      } catch (err) {
+        showToast(`Could not load sample certificate: ${err.message}`);
+      }
+    });
+  }
+}
+
+async function runCertificateVerification() {
+  const ta = document.getElementById('verifyCertTextarea');
+  const box = document.getElementById('verifyCertResultBox');
+  if (!ta || !box) return;
+
+  const rawText = ta.value.trim();
+  if (!rawText) {
+    showToast('Paste a certificate JSON envelope or upload a .json file first.');
+    return;
+  }
+
+  let parsedEnvelope = null;
+  try {
+    parsedEnvelope = JSON.parse(rawText);
+  } catch (_e) {
+    box.style.display = 'block';
+    box.innerHTML = `
+      <div class="card" style="border-left: 4px solid var(--status-error);">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+          <h3 class="card-title">Verification Result: Not valid</h3>
+          <span class="status-badge badge-error"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Not valid (malformed)</span></span>
+        </div>
+        <p style="font-size: 13.5px; color: var(--text-primary);">Certificate input is malformed JSON and could not be parsed.</p>
+      </div>
+    `;
+    return;
+  }
+
+  try {
+    const res = await apiFetch('/api/certificates/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ certificate: parsedEnvelope }),
+    });
+
+    const isValid = Boolean(res.valid);
+    const reasonText = Array.isArray(res.reasons) && res.reasons.length > 0
+      ? res.reasons.join(' ')
+      : (res.reason || (isValid ? 'Ed25519 signature and canonical JSON payload verified.' : 'Certificate verification failed.'));
+    const isEph = Boolean(res.ephemeral_key ?? res.is_ephemeral_key);
+    const keyNotice = isEph ? (res.key_notice || res.ephemeral_warning || 'ephemeral demo key: valid only until the server restarts') : '';
+
+    const payload = (parsedEnvelope && typeof parsedEnvelope.payload === 'object' && parsedEnvelope.payload) || {};
+    let serverHashText = 'Audit record is not stored on this server instance.';
+    if (res.audit_exists_on_server) {
+      serverHashText = res.content_hash_matches_server
+        ? 'Matches stored audit content SHA-256 on this server.'
+        : 'MISMATCH: Stored audit content hash on this server does not match the certificate.';
+    }
+
+    const badgeSvg = isValid
+      ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>'
+      : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+
+    box.style.display = 'block';
+    box.innerHTML = `
+      <div class="card" style="border-left: 4px solid ${isValid ? 'var(--status-success)' : 'var(--status-error)'};">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px;">
+          <h3 class="card-title" id="verifyResultHeading">Verification Result: ${isValid ? 'Valid' : 'Not valid'}</h3>
+          <span class="status-badge ${isValid ? 'badge-passed' : 'badge-error'}" id="verifyResultBadge">
+            ${badgeSvg}
+            <span>${isValid ? 'Valid' : `Not valid (${escapeHtml(res.status || 'invalid')})`}</span>
+          </span>
+        </div>
+        <p style="font-size: 14px; font-weight: 600; color: var(--primary-ink); margin-bottom: 8px;" id="verifyResultReason">${escapeHtml(reasonText)}</p>
+        <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+          <div><strong>Server Content Hash Check:</strong> ${escapeHtml(serverHashText)}</div>
+          ${payload.certificate_id ? `<div><strong>Certificate ID:</strong> <span class="mono-id">${escapeHtml(payload.certificate_id)}</span> &bull; <strong>Audit ID:</strong> <span class="mono-id">${escapeHtml(payload.audit_id || '—')}</span></div>` : ''}
+          ${payload.content_sha256 ? `<div><strong>Certified Content SHA-256:</strong> <span class="mono-id">${escapeHtml(payload.content_sha256)}</span></div>` : ''}
+          ${keyNotice ? `<div style="margin-top: 6px; color: var(--status-warning);"><strong>Signing Key Notice:</strong> ${escapeHtml(keyNotice)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    box.style.display = 'block';
+    box.innerHTML = `
+      <div class="card" style="border-left: 4px solid var(--status-error);">
+        <h3 class="card-title">Verification request failed</h3>
+        <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 4px;">${escapeHtml(err.message)}</p>
+      </div>
+    `;
+  }
 }

@@ -9,9 +9,8 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="preload" href="/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/GeistMono-Variable.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -92,6 +91,13 @@
           </span>
         </button>
 
+        <button type="button" class="nav-item" data-view="verify-certificate" id="navVerifyCertificateBtn">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            <span>Verify certificate</span>
+          </span>
+        </button>
+
         <button type="button" class="nav-item" data-view="about-roadmap">
           <span class="nav-item-left">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -165,10 +171,22 @@
           <div class="brand-context-pill" id="topbarBrandContextPill">
             Brand: <strong>Loading brand...</strong>
           </div>
-          <button type="button" class="account-menu-btn" id="accountRoleBtn" title="Signed-in team role and workspace settings">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span id="accountRoleLabel">Loading...</span>
-          </button>
+          <div class="signin-dropdown-wrap" id="signInDropdownWrap">
+            <button type="button" class="account-menu-btn" id="accountRoleBtn" aria-haspopup="true" aria-expanded="false" title="Sign in as a demo user or open workspace settings">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span id="accountRoleLabel">Loading...</span>
+            </button>
+            <div class="dropdown-menu signin-dropdown-menu" id="demoSignInMenu" style="display: none;" role="menu" aria-label="Sign in as demo user">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <span style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--glass-text-secondary);">Sign in as</span>
+                <button type="button" class="btn btn-sm btn-ghost" id="openSettingsFromSignInMenuBtn" style="padding: 2px 6px; font-size: 11.5px; min-height: 26px;">Settings &rarr;</button>
+              </div>
+              <div id="demoSignInUsersList"></div>
+              <div class="signin-disclosure-note" id="demoSignInDisclosureNote">
+                Demo sign-in: anyone can choose any demo user. This shows separation of duties; it is not authentication.
+              </div>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -183,40 +201,11 @@
               <p class="page-subtitle" id="overviewScopeSubtitle">Automated brand governance and marketing compliance for your content.</p>
             </div>
             <div class="page-actions">
-              <button type="button" class="btn btn-ghost" id="overviewTryDemoBtn" style="border: 1px solid var(--border-color);">Try a sample</button>
               <button type="button" class="btn btn-accent" id="overviewNewAuditBtn">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 4px;">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
                 <span>New audit</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Quick-Tour: 3-step evaluator walkthrough -->
-          <div class="card" id="overviewStartHereCard" style="margin-bottom: 24px; padding: 22px; background: var(--slate-50); border: 1px solid var(--border-color); border-radius: var(--radius-card);">
-            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--primary-action); flex-shrink: 0;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-                <h3 style="font-size: 15px; font-weight: 700; color: var(--primary-ink); margin: 0;">Start here — 3-step evaluator walkthrough</h3>
-              </div>
-              <span class="status-badge badge-neutral" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Quick tour</span></span>
-            </div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
-              <button type="button" class="btn btn-ghost" id="walkthroughStep1Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1px solid var(--border-color); background: #FFFFFF; border-radius: var(--radius-control);">
-                <div style="font-size: 11.5px; font-weight: 700; color: var(--primary-action);">STEP 1</div>
-                <div style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink);">1. Answer a few questions</div>
-                <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">Launch the guided wizard to generate tailored checks.</div>
-              </button>
-              <button type="button" class="btn btn-ghost" id="walkthroughStep2Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1px solid var(--border-color); background: #FFFFFF; border-radius: var(--radius-control);">
-                <div style="font-size: 11.5px; font-weight: 700; color: var(--primary-action);">STEP 2</div>
-                <div style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink);">2. Try the example</div>
-                <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">Load intentional sample copy to test deterministic engines.</div>
-              </button>
-              <button type="button" class="btn btn-ghost" id="walkthroughStep3Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1px solid var(--border-color); background: #FFFFFF; border-radius: var(--radius-control);">
-                <div style="font-size: 11.5px; font-weight: 700; color: var(--primary-action);">STEP 3</div>
-                <div style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink);">3. Review issues &amp; approve</div>
-                <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">Inspect findings, accept word fixes, and grant sign-off.</div>
               </button>
             </div>
           </div>
@@ -484,6 +473,7 @@
                 <p class="page-subtitle" id="resultsSummarySubtitle">Inspect findings, verify Brand Vault evidence, and apply human-reviewed corrections.</p>
               </div>
               <div class="page-actions">
+                <button type="button" class="btn btn-success" id="resultsCertificateBtn" style="display: none;" title="View, download, or print the signed Ed25519 compliance certificate">Certificate</button>
                 <button type="button" class="btn" id="editContentBtn">Edit content</button>
                 <button type="button" class="btn" id="rerunAuditBtn">Rerun audit</button>
                 <button type="button" class="btn btn-accent" id="startAnotherAuditBtn">New audit</button>
@@ -720,6 +710,48 @@
         </section>
 
         <!-- ================================================================
+             VIEW 8B: PUBLIC VERIFY CERTIFICATE PAGE (#verify)
+             ================================================================ -->
+        <section id="view-verify-certificate" class="workspace-view" style="display: none;">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Verify compliance certificate</h1>
+              <p class="page-subtitle">Verify any Ed25519-signed LoomShield compliance certificate JSON envelope against the active public key and live server content hash.</p>
+            </div>
+          </div>
+
+          <div class="card" id="verifyPublicKeyInfoBar" style="margin-bottom: 16px; padding: 16px 20px;">
+            <div style="font-size: 13px; color: var(--text-secondary);">Loading active Ed25519 verification key...</div>
+          </div>
+
+          <div class="card" style="margin-bottom: 16px;">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">Certificate JSON envelope</h2>
+                <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;">Paste a signed certificate JSON envelope or upload a downloaded <code>.json</code> certificate file.</div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <label for="verifyCertFileInput" class="btn btn-sm" style="cursor: pointer; margin: 0;">Upload JSON file</label>
+                <input type="file" id="verifyCertFileInput" accept=".json,application/json" style="display: none;" />
+                <button type="button" class="btn btn-sm" id="verifyLoadSampleBtn">Load from approved audit</button>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label for="verifyCertTextarea">Signed certificate JSON (<code>{payload, alg, kid, signature_b64}</code>)</label>
+              <textarea id="verifyCertTextarea" class="form-control" rows="10" style="font-family: var(--font-mono); font-size: 12px;" placeholder='{"payload": {"certificate_version": 1, ...}, "alg": "Ed25519", "kid": "...", "signature_b64": "..."}'></textarea>
+            </div>
+
+            <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px;">
+              <button type="button" class="btn btn-ghost" id="clearVerifyCertBtn">Clear</button>
+              <button type="button" class="btn btn-accent" id="runVerifyCertBtn">Verify certificate</button>
+            </div>
+          </div>
+
+          <div id="verifyCertResultBox" style="display: none;"></div>
+        </section>
+
+        <!-- ================================================================
              VIEW 9: ABOUT AND ROADMAP (SLICE 3 JUDGE-FACING CLARITY)
              ================================================================ -->
         <section id="view-about-roadmap" class="workspace-view" style="display: none;">
@@ -802,6 +834,24 @@
                 <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
                   <em>Also scheduled for upcoming releases: 100 MB streaming uploads and non-destructive preset application to existing brands with one-click undo.</em>
                 </div>
+              </div>
+            </div>
+
+            <!-- Card 4: Signed Certificate Threat Model & Separation of Duties -->
+            <div class="card" style="padding: 24px;" id="aboutThreatModelCard">
+              <h2 class="card-title" style="margin-bottom: 8px;">Signed Compliance Certificate Threat Model &amp; Separation of Duties</h2>
+              <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+                Cryptographic guarantees and explicit boundaries for Ed25519 compliance certificates and demo identities:
+              </p>
+              <ol style="padding-left: 20px; font-size: 13.5px; color: var(--primary-ink); line-height: 1.65; margin-bottom: 14px;">
+                <li><strong>Proves who issued it:</strong> Each certificate envelope is signed with Ed25519 over canonical JSON (<code>sort_keys=True</code>, compact separators) bound to key ID <code>kid</code> (first 16 hex of <code>SHA-256(public_key)</code>).</li>
+                <li><strong>Proves it was not altered:</strong> Modifying any field in <code>payload</code> (content SHA-256, guideline version, pillar states, findings summary, dismissals, or approval metadata) or <code>signature_b64</code> causes signature verification to fail.</li>
+                <li><strong>Checks live server hash:</strong> When verified via <code>/api/certificates/verify</code> on the issuing server, the verifier also reports whether the stored audit's current content hash still matches the certified <code>content_sha256</code>.</li>
+                <li><strong>Does not prove the content is legally compliant:</strong> Certifies that this review process was completed against the stated guideline version and content hash; not legal advice; not a guarantee of regulatory compliance.</li>
+                <li><strong>Ephemeral key caveat:</strong> If <code>LOOMSHIELD_SIGNING_KEY</code> is unset, the server generates an ephemeral key at startup and labels every certificate and the verify page <code>"ephemeral demo key: valid only until the server restarts"</code>.</li>
+              </ol>
+              <div style="font-size: 12.5px; color: var(--text-secondary); padding-top: 10px; border-top: 1px solid var(--border-color);">
+                <strong>Separation of duties &amp; demo sign-in limitation:</strong> Demo sign-in (<code>POST /api/demo/login</code>) issues an 8-hour HMAC-signed bearer token enforcing that the user who submitted an audit for review cannot approve it (<code>403</code>). Anyone can choose any demo user in demo mode; production deployments retain server-configured role behaviour until connected to an external identity provider.
               </div>
             </div>
           </div>
