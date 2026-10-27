@@ -8,14 +8,14 @@ function updateProcessingModeUI() {
     if (isLocal) {
       title.textContent = 'Local on-device processing';
       helper.textContent = 'Processed on this device; nothing leaves your machine.';
-      badge.textContent = 'On-device';
+      badge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>On-device</span>';
       badge.className = 'status-badge badge-passed';
     } else {
       title.textContent = 'Hosted server processing';
       helper.textContent = AppState.demoMode
         ? 'Your content is sent to the LoomShield server for processing and the audit is saved to history. Demo workspace: do not submit confidential material.'
         : 'Your content is sent to the LoomShield server for processing and the audit is saved to history. This workspace has no sign-in: submitted content is stored and visible to anyone using this deployment; do not submit confidential material.';
-      badge.textContent = 'Hosted server';
+      badge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Hosted server</span>';
       badge.className = 'status-badge badge-neutral';
     }
   }
@@ -619,6 +619,7 @@ function getApiErrorAction(err) {
 }
 
 function openModalDialog({ title, bodyHtml, confirmLabel = 'Confirm', cancelLabel = 'Cancel', onConfirm, onCancel }) {
+  document.getElementById('appSidebar')?.classList.remove('mobile-open');
   const root = document.getElementById('modalRoot');
   root.style.display = 'block';
   root.innerHTML = `
@@ -1202,8 +1203,8 @@ function renderRecentAuditsTable() {
               (AppState.overviewData && AppState.overviewData.is_demo)
             );
             const sourceBadge = isDemoAudit
-              ? `<span class="status-badge badge-neutral" style="font-size: 11px;">Demo</span>`
-              : `<span class="status-badge badge-info" style="font-size: 11px;">Custom</span>`;
+              ? `<span class="status-badge badge-neutral" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Demo</span></span>`
+              : `<span class="status-badge badge-info" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>Custom</span></span>`;
 
             let actionLabel = 'Open review';
             let actionClass = 'btn btn-sm open-audit-btn';
@@ -1234,8 +1235,8 @@ function renderRecentAuditsTable() {
               <td data-label="Status" class="nowrap-col">${renderStateBadge(a.overall_status)}</td>
               <td data-label="Open findings" class="nowrap-col">
                 ${a.open_findings > 0
-                  ? `<span class="status-badge badge-error">${a.open_findings} open</span>`
-                  : `<span class="status-badge badge-passed">0 open (${a.total_findings} resolved)</span>`}
+                  ? `<span class="status-badge badge-error"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>${a.open_findings} open</span></span>`
+                  : `<span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>0 open (${a.total_findings} resolved)</span></span>`}
               </td>
               <td data-label="Next action" class="nowrap-col">
                 <button type="button" class="${actionClass}" data-audit-id="${escapeHtml(a.id)}">${actionLabel}</button>
@@ -1474,7 +1475,7 @@ function bindAuditWorkspaceEvents() {
       const fFormatEl = document.getElementById('uploadCardDetectedFormat');
       if (fNameEl) fNameEl.textContent = f.name;
       if (fSizeEl) fSizeEl.textContent = `${sizeKb} KB`;
-      if (fFormatEl) fFormatEl.textContent = detected;
+      if (fFormatEl) fFormatEl.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>${escapeHtml(detected)}</span>`;
       fileCard.style.display = 'flex';
     }
 
@@ -2834,7 +2835,7 @@ function renderFindingsCenterPanel() {
     return true;
   });
 
-  countBadge.textContent = `${filtered.length} of ${allFindings.length} finding(s)`;
+  countBadge.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>${filtered.length} of ${allFindings.length} finding(s)</span>`;
 
   if (filtered.length === 0) {
     container.innerHTML = `
@@ -3420,7 +3421,7 @@ function renderVaultGlobalSearchResults(container, q) {
     <div class="card">
       <div class="card-header">
         <h2 class="card-title">All Brand Vault matches for "${escapeHtml(q)}"</h2>
-        <span class="status-badge badge-neutral">${rules.length + terms.length + facts.length + colors.length} match(es)</span>
+        <span class="status-badge badge-neutral"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>${rules.length + terms.length + facts.length + colors.length} match(es)</span></span>
       </div>
       <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
         Matches across Rules (${rules.length}), Terminology (${terms.length}), Verified facts (${facts.length}), and Visual tokens (${colors.length}). Switch search scope to "Search active tab" to edit records in place.
@@ -3464,7 +3465,7 @@ function renderVaultVoiceTab(container) {
       <div class="card-header">
         <div>
           <h2 class="card-title">Voice, tone &amp; messaging profile (v${b.version})</h2>
-          ${b.is_demo ? '<span class="status-badge badge-warning" style="margin-top: 4px;">Demo profile</span>' : ''}
+          ${b.is_demo ? '<span class="status-badge badge-warning" style="margin-top: 4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Demo profile</span></span>' : ''}
         </div>
         <button type="button" class="btn btn-accent btn-sm" id="saveVoiceProfileBtn">Save voice profile</button>
       </div>
@@ -3780,8 +3781,8 @@ function renderVaultTerminologyTab(container) {
             ${terms.map((t) => `
               <tr>
                 <td class="nowrap-col"><span class="mono-id">${escapeHtml(t.id)}</span></td>
-                <td class="nowrap-col"><span class="status-badge badge-error">${escapeHtml(t.prohibited_term)}</span></td>
-                <td class="nowrap-col"><span class="status-badge badge-passed">${escapeHtml(t.replacement_term)}</span></td>
+                <td class="nowrap-col"><span class="status-badge badge-error"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>${escapeHtml(t.prohibited_term)}</span></span></td>
+                <td class="nowrap-col"><span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>${escapeHtml(t.replacement_term)}</span></span></td>
                 <td class="nowrap-col"><span class="mono-id">${t.case_sensitive ? 'Case-sensitive' : 'Case-insensitive'}</span></td>
                 <td style="font-size: 13px; color: var(--text-secondary);">${escapeHtml(t.notes)}</td>
                 <td class="nowrap-col">
@@ -3979,7 +3980,7 @@ function renderVaultFactsTab(container) {
               <tr>
                 <td class="nowrap-col">
                   <span class="mono-id">${escapeHtml(f.id)}</span>
-                  ${f.is_demo ? '<div style="margin-top: 4px;"><span class="status-badge badge-warning" style="font-size: 10.5px; padding: 1px 6px;">Demo data</span></div>' : ''}
+                  ${f.is_demo ? '<div style="margin-top: 4px;"><span class="status-badge badge-warning" style="font-size: 10.5px; padding: 1px 6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Demo data</span></span></div>' : ''}
                 </td>
                 <td>
                   <strong>${escapeHtml(f.statement)}</strong>
@@ -4443,8 +4444,8 @@ async function renderReviewQueueView() {
                     <td class="nowrap-col">${renderStateBadge(a.overall_status)}</td>
                     <td class="nowrap-col">
                       ${hasUnresolved
-                        ? `<span class="status-badge badge-error">${a.open_findings} unresolved</span>`
-                        : `<span class="status-badge badge-passed">0 unresolved</span>`}
+                        ? `<span class="status-badge badge-error"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>${a.open_findings} unresolved</span></span>`
+                        : `<span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>0 unresolved</span></span>`}
                     </td>
                     <td class="nowrap-col" style="font-size: 12.5px; color: var(--text-secondary);" title="${escapeHtml(a.updated_at)}">${escapeHtml(formatTimestamp(a.updated_at))}</td>
                     <td class="rq-actions-col">
@@ -4488,8 +4489,8 @@ async function renderReviewQueueView() {
                   <span>Reviewer: <strong>${escapeHtml(a.assigned_reviewer)}</strong></span>
                   <span>&bull;</span>
                   ${hasUnresolved
-                    ? `<span class="status-badge badge-error">${a.open_findings} unresolved</span>`
-                    : `<span class="status-badge badge-passed">0 unresolved</span>`}
+                    ? `<span class="status-badge badge-error"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>${a.open_findings} unresolved</span></span>`
+                    : `<span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>0 unresolved</span></span>`}
                   <span>&bull;</span>
                   <span>Updated: ${escapeHtml(formatTimestamp(a.updated_at))}</span>
                 </div>
@@ -4654,11 +4655,11 @@ async function renderAmbiguityRadarView() {
                 <div class="insight-card-main">
                   <span class="mono-id">${escapeHtml(r.rule_id)} · v${r.version}</span>
                   <div class="insight-card-title">${escapeHtml(r.title)}</div>
-                  <span class="status-badge badge-neutral" style="font-size: 11px;">${escapeHtml(r.pillar)}</span>
+                  <span class="status-badge badge-neutral" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>${escapeHtml(r.pillar)}</span></span>
                 </div>
                 <div class="insight-card-meta">
-                  <span class="status-badge badge-neutral">${r.violations_recorded} violation(s)</span>
-                  <span class="status-badge ${r.overrides_recorded > 0 ? 'badge-warning' : 'badge-neutral'}">${r.overrides_recorded} override(s)</span>
+                  <span class="status-badge badge-neutral"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>${r.violations_recorded} violation(s)</span></span>
+                  <span class="status-badge ${r.overrides_recorded > 0 ? 'badge-warning' : 'badge-neutral'}">${r.overrides_recorded > 0 ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>'}<span>${r.overrides_recorded} override(s)</span></span>
                   ${renderStateBadge(r.recommendation_status)}
                   <span class="insight-card-chevron" aria-hidden="true">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -4838,7 +4839,7 @@ async function renderAuditHistoryView() {
               Cryptographic SHA-256 verification and reviewer sign-offs recorded for this document.
             </div>
           </div>
-          ${(detail.approvals || []).length > 0 ? `<span class="status-badge badge-neutral">${(detail.approvals || []).length} event(s)</span>` : ''}
+          ${(detail.approvals || []).length > 0 ? `<span class="status-badge badge-neutral"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>${(detail.approvals || []).length} event(s)</span></span>` : ''}
         </div>
         ${(detail.approvals || []).length === 0 ? `
           <div class="empty-state-box" style="padding: 24px 16px; margin: 0;">
@@ -4933,7 +4934,7 @@ function renderSettingsView() {
               <div class="form-helper">Server deployment environment configured via <code>LOOMSHIELD_WORKSPACE_MODE</code>.</div>
             </div>
             <span class="status-badge ${AppState.demoMode ? 'badge-warning' : 'badge-passed'}">
-              ${AppState.demoMode ? 'Demo Workspace' : 'Production Workspace'}
+              ${AppState.demoMode ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Demo Workspace</span>' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Production Workspace</span>'}
             </span>
           </div>
         </div>
@@ -4963,7 +4964,7 @@ function renderSettingsView() {
       ${AppState.demoMode ? `
         <div style="background: var(--bg-main); padding: 14px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
           <div>
-            <span class="status-badge badge-warning">Demo role preview</span>
+            <span class="status-badge badge-warning"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Demo role preview</span></span>
             <span style="font-size: 13px; margin-left: 8px;">Select role to preview permission boundaries:</span>
           </div>
           <select id="settingsRolePreviewSelect" class="form-control" style="width: auto;">
@@ -5096,7 +5097,7 @@ async function renderEngineStatusView() {
           <div class="metric-label"><span>Storage &amp; records</span></div>
           <div style="margin: 10px 0 6px;">
             <span class="status-badge ${status.storage_type === 'persistent' ? 'badge-passed' : 'badge-neutral'}">
-              ${escapeHtml(status.storage_type === 'persistent' ? 'Persistent disk' : 'Ephemeral instance')}
+              ${status.storage_type === 'persistent' ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Persistent disk</span>' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Ephemeral instance</span>'}
             </span>
           </div>
           <div class="metric-note">${status.record_counts && status.record_counts.audits !== undefined ? `${status.record_counts.audits} audits · ${status.record_counts.rules || 0} rules · ${status.record_counts.findings || 0} findings` : 'Zero external API keys'}</div>
@@ -5301,7 +5302,7 @@ function initCommandPalette() {
           <div style="font-weight: 600; color: var(--primary-ink);">${escapeHtml(item.label)}</div>
           <div style="font-size: 11.5px; color: var(--slate-700); margin-top: 2px;">${escapeHtml(item.detail)}</div>
         </div>
-        <span class="status-badge badge-neutral" style="font-size: 10px;">${escapeHtml(item.type)}</span>
+        <span class="status-badge badge-neutral" style="font-size: 10px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>${escapeHtml(item.type)}</span></span>
       </div>
     `).join('');
 
@@ -5321,6 +5322,7 @@ function initCommandPalette() {
   }
 
   function openPalette() {
+    document.getElementById('appSidebar')?.classList.remove('mobile-open');
     modal.style.display = 'flex';
     input.value = '';
     renderPaletteList('');

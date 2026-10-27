@@ -125,7 +125,7 @@
       <!-- Demo Workspace Banner (Visible only when Demo Mode is active) -->
       <div class="demo-workspace-banner" id="demoWorkspaceBanner" role="region" aria-label="Demo workspace announcement" style="display: none;">
         <div class="demo-banner-left">
-          <span class="status-badge badge-warning">Demo workspace</span>
+          <span class="status-badge badge-warning"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Demo workspace</span></span>
           <span>Demo workspace: sample data shared by everyone using this link; don't submit confidential material.</span>
         </div>
         <div class="demo-banner-actions">
@@ -200,7 +200,7 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--primary-action); flex-shrink: 0;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
                 <h3 style="font-size: 15px; font-weight: 700; color: var(--primary-ink); margin: 0;">Start here — 3-step evaluator walkthrough</h3>
               </div>
-              <span class="status-badge badge-neutral" style="font-size: 11px;">Quick tour</span>
+              <span class="status-badge badge-neutral" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Quick tour</span></span>
             </div>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
               <button type="button" class="btn btn-ghost" id="walkthroughStep1Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1px solid var(--border-color); background: #FFFFFF; border-radius: var(--radius-control);">
@@ -256,15 +256,15 @@
             </div>
           </div>
 
-          <!-- Guided Setup Alternative Entry Point -->
-          <div class="card hero-start-card" style="margin-bottom: 24px; padding: 20px 24px; background: #FFFFFF; border: 1px solid var(--border-color); border-radius: var(--radius-card); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+          <!-- Guided Setup Alternative Entry Point (Allowed Glass Surface 4: Overview Hero Card) -->
+          <div class="card hero-start-card">
             <div>
-              <div style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; color: var(--primary-action); letter-spacing: 0.05em; margin-bottom: 4px;">Zero-Setup Governance</div>
-              <h3 style="font-size: 16px; font-weight: 700; color: var(--primary-ink); margin-bottom: 4px;">Need customized checks for a new campaign?</h3>
-              <p style="font-size: 13.5px; color: var(--text-secondary); max-width: 580px; margin: 0;">Answer 5 quick questions to create a tailor-made compliance profile, or choose a ready-to-test sample.</p>
+              <div class="hero-eyebrow">Zero-Setup Governance</div>
+              <h3>Need customized checks for a new campaign?</h3>
+              <p>Answer 5 quick questions to create a tailor-made compliance profile, or choose a ready-to-test sample.</p>
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
-              <button type="button" class="btn btn-ghost" id="heroStartAuditBtn" style="font-weight: 600; border: 1px solid var(--border-color);">Guided setup &rarr;</button>
+              <button type="button" class="btn btn-ghost" id="heroStartAuditBtn">Guided setup &rarr;</button>
             </div>
           </div>
 
@@ -294,7 +294,7 @@
             <div class="page-header" style="align-items: flex-start;">
               <div>
                 <div style="display: inline-flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                  <span class="status-badge badge-neutral" style="font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em;">Guided Setup</span>
+                  <span class="status-badge badge-neutral" style="font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Guided Setup</span></span>
                   <span style="font-size: 12.5px; color: var(--text-secondary);" id="wizardStepCounter">Step 1 of 8</span>
                 </div>
                 <h1 class="page-title" id="wizardHeaderTitle">Set up your checks</h1>
@@ -398,7 +398,7 @@
                       <div class="file-card-name" id="uploadCardFileName">document.docx</div>
                       <div class="file-card-size" id="uploadCardFileSize">0 KB</div>
                     </div>
-                    <span class="status-badge badge-neutral" id="uploadCardDetectedFormat">Detected format</span>
+                    <span class="status-badge badge-neutral" id="uploadCardDetectedFormat"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Detected format</span></span>
                   </div>
                   <button type="button" class="btn btn-sm btn-danger-outline" id="removeUploadedFileBtn">Remove file</button>
                 </div>
@@ -420,7 +420,7 @@
                       <div style="font-size: 13.5px; font-weight: 600;" id="processingModeTitle">Processing mode</div>
                       <div class="form-helper" id="localModeHelper">Detecting server operating mode...</div>
                     </div>
-                    <span class="status-badge badge-neutral" id="processingModeBadge">Detecting</span>
+                    <span class="status-badge badge-neutral" id="processingModeBadge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Detecting</span></span>
                   </div>
                   <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary);" id="cloudProcessingNote">
                     <strong>Verification engines:</strong> Audits execute via deterministic rules and embedded NLP on the LoomShield backend. No third-party AI APIs are used.
@@ -541,7 +541,7 @@
                 <div class="panel-header">
                   <div class="panel-title">
                     <span>FINDINGS RAIL</span>
-                    <span class="status-badge badge-neutral" id="findingsCountBadge">0 findings</span>
+                    <span class="status-badge badge-neutral" id="findingsCountBadge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>0 findings</span></span>
                   </div>
                   <span id="activeWorkflowStateBadge"></span>
                 </div>
@@ -625,7 +625,7 @@
                 <h1 class="page-title" style="margin: 0;">Brand guidelines</h1>
                 <div id="vaultSetupHeaderBar" style="display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                   <span class="status-badge badge-neutral" id="vaultSetupChip" style="font-size: 12px; font-weight: 500;">
-                    Set up for: <strong id="vaultSetupChipLabel">General business (Global, Professional)</strong>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Set up for: <strong id="vaultSetupChipLabel">General business (Global, Professional)</strong></span>
                   </span>
                   <button type="button" class="btn btn-sm btn-ghost" id="vaultRedoSetupBtn" style="font-size: 11.5px; padding: 3px 10px; border: 1.5px solid var(--border-color); border-radius: 6px; cursor: pointer;">
                     Redo setup
@@ -769,7 +769,7 @@
             <div class="card" style="padding: 24px; border-left: 4px solid var(--status-success);">
               <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <h2 class="card-title">Verified System Capabilities (Verified in Code &amp; Tests)</h2>
-                <span class="status-badge badge-passed">All Automated Tests Passing</span>
+                <span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>All Automated Tests Passing</span></span>
               </div>
               <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px;">Every item below is backed by running automated tests in the repository test suite:</p>
               <ul style="padding-left: 20px; font-size: 13.5px; color: var(--primary-ink); line-height: 1.7;">
@@ -814,11 +814,11 @@
   <div id="commandPaletteModal" class="command-palette-backdrop" style="display: none;" role="dialog" aria-modal="true" aria-label="Command palette">
     <div class="command-palette-card">
       <div class="command-palette-input-wrap">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="color: var(--slate-400); flex-shrink: 0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="color: var(--glass-text-secondary); flex-shrink: 0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input type="search" id="commandPaletteInput" class="command-palette-input" placeholder="Type a command or search (e.g., 'new audit', 'switch brand', 'settings')..." aria-label="Search commands and actions" autocomplete="off" />
         <span class="command-palette-badge">ESC to close</span>
       </div>
-      <div class="command-palette-results" id="commandPaletteResults" role="listbox"></div>
+      <div class="command-palette-results" id="commandPaletteResults" role="listbox" aria-label="Command palette results" tabindex="0"></div>
       <div class="command-palette-footer">
         <span><kbd>↑</kbd> <kbd>↓</kbd> to navigate</span>
         <span><kbd>↵</kbd> to select</span>
