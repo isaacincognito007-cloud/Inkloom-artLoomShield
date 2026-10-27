@@ -52,9 +52,12 @@ from .rate_limiter import SimpleIpRateLimiter, get_client_ip
 from .wizard import (
     WIZARD_OPTIONS,
     WizardAnswers,
+    check_pattern_structural_safety,
     compose,
     create_wizard_profile_in_db,
     get_sample_text_for_answers,
+    get_wizard_unavailable_reason,
+    is_wizard_available,
 )
 
 logger = logging.getLogger("loomshield.api")
@@ -156,6 +159,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         422: "VALIDATION_ERROR",
         429: "RATE_LIMITED",
         500: "INTERNAL_SERVER_ERROR",
+        503: "SERVICE_UNAVAILABLE",
     }
     err_code = code_map.get(exc.status_code, "HTTP_ERROR")
     msg = exc.detail if isinstance(exc.detail, str) else "Request failed"
@@ -187,6 +191,7 @@ async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPE
         422: "VALIDATION_ERROR",
         429: "RATE_LIMITED",
         500: "INTERNAL_SERVER_ERROR",
+        503: "SERVICE_UNAVAILABLE",
     }
     err_code = code_map.get(exc.status_code, "HTTP_ERROR")
     msg = exc.detail if isinstance(exc.detail, str) else "Request failed"
@@ -662,12 +667,22 @@ def create_brand_profile(req: BrandCreateRequest, role: str = Depends(current_ro
 @app.get("/api/wizard/options")
 def get_wizard_options_endpoint():
     """Retrieve question options, tiles, and descriptions for guided audit setup."""
+    if not is_wizard_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Guided setup is temporarily unavailable",
+        )
     return WIZARD_OPTIONS
 
 
 @app.post("/api/wizard/preview")
 def preview_wizard_answers_endpoint(req: WizardAnswers):
     """Preview rule summaries, plain bullets, and tailored example text without writing to database."""
+    if not is_wizard_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Guided setup is temporarily unavailable",
+        )
     spec = compose(req.model_dump())
     return {
         "profile_label": spec["profile_label"],
@@ -685,6 +700,11 @@ def create_wizard_profile_endpoint(
     role: str = Depends(current_role),
 ):
     """Atomically create a new isolated brand audit profile from wizard answers."""
+    if not is_wizard_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Guided setup is temporarily unavailable",
+        )
     require_permission(role, "run_audits", "Only users with run_audits permission can create audit profiles")
     client_ip = get_client_ip(request)
     if not audit_rate_limiter.is_allowed(client_ip):
@@ -1134,6 +1154,13 @@ def delete_brand_color(brand_id: str, color_id: str, role: str = Depends(current
 @app.post("/api/vault/{brand_id}/rules")
 def add_brand_rule(brand_id: str, req: RuleCreate, role: str = Depends(current_role)):
     require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    if req.pattern_regex.strip():
+        is_safe, reason = check_pattern_structural_safety(req.pattern_regex.strip())
+        if not is_safe:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Rule pattern rejected: {reason} for pattern '{req.pattern_regex.strip()}'",
+            )
     now = datetime.now(timezone.utc).isoformat()
     cfg = {"patterns": [req.pattern_regex]} if req.pattern_regex.strip() else {}
     with db_session() as conn:
@@ -1166,6 +1193,13 @@ def add_brand_rule(brand_id: str, req: RuleCreate, role: str = Depends(current_r
 @app.put("/api/vault/{brand_id}/rules/{rule_id}")
 def update_brand_rule(brand_id: str, rule_id: str, req: RuleCreate, role: str = Depends(current_role)):
     require_permission(role, "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    if req.pattern_regex.strip():
+        is_safe, reason = check_pattern_structural_safety(req.pattern_regex.strip())
+        if not is_safe:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Rule pattern rejected: {reason} for pattern '{req.pattern_regex.strip()}'",
+            )
     now = datetime.now(timezone.utc).isoformat()
     cfg = {"patterns": [req.pattern_regex]} if req.pattern_regex.strip() else {}
     with db_session() as conn:
@@ -1494,8 +1528,8 @@ def apply_finding_decision(
     req: FindingDecisionRequest,
     role: str = Depends(current_role),
 ):
-    if req.decision not in ("accept", "modify", "dismiss"):
-        raise HTTPException(status_code=400, detail="Decision must be 'accept', 'modify', or 'dismiss'.")
+    if req.decision not in ("accept", "modify", "dismiss", "needs_review"):
+        raise HTTPException(status_code=400, detail="Decision must be 'accept', 'modify', 'dismiss', or 'needs_review'.")
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -1643,6 +1677,41 @@ def apply_finding_decision(
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (audit_id, finding_id, req.decision, replacement_used, req.reason or "", role, now),
+            )
+
+        elif req.decision == "needs_review":
+            note_str = (req.reason or "Marked for human review").strip()
+            record_audit_event(
+                cur,
+                audit_id,
+                "finding_flagged_for_review",
+                configured_user_name(),
+                role,
+                f"Marked {finding_id} ({target['rule_or_fact_id']}) for human review: \"{note_str}\"",
+                {
+                    "finding_id": finding_id,
+                    "rule_or_fact_id": target["rule_or_fact_id"],
+                    "reason": note_str,
+                },
+                None,
+                now,
+            )
+            cur.execute(
+                "UPDATE findings SET review_state = 'needs_review', decision_note = ?, updated_at = ? WHERE id = ? AND review_state IN ('open', 'needs_review')",
+                (note_str, now, finding_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Finding '{finding_id}' was modified or decided concurrently.",
+                )
+            cur.execute(
+                """
+                INSERT INTO review_decisions
+                (audit_id, finding_id, decision, replacement_applied, reason, reviewer_role, created_at)
+                VALUES (?, ?, 'needs_review', '', ?, ?, ?)
+                """,
+                (audit_id, finding_id, note_str, role, now),
             )
 
         else:

@@ -9,6 +9,9 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -120,14 +123,14 @@
          ==================================================================== -->
     <div class="main-wrapper">
       <!-- Demo Workspace Banner (Visible only when Demo Mode is active) -->
-      <div class="demo-workspace-banner" id="demoWorkspaceBanner" style="display: none;">
+      <div class="demo-workspace-banner" id="demoWorkspaceBanner" role="region" aria-label="Demo workspace announcement" style="display: none;">
         <div class="demo-banner-left">
           <span class="status-badge badge-warning">Demo workspace</span>
           <span>Demo workspace: sample data shared by everyone using this link; don't submit confidential material.</span>
         </div>
         <div class="demo-banner-actions">
           <label for="demoSampleSelector" style="font-size: 12px; font-weight: 600;">Try a demo:</label>
-          <select id="demoSampleSelector" class="form-control" style="padding: 4px 8px; font-size: 12px; width: auto;">
+          <select id="demoSampleSelector" class="form-control" style="padding: 4px 8px; font-size: 12px; width: auto;" aria-label="Try a demo example">
             <option value="">Load example...</option>
             <option value="1">Example 1: Unsupported 95% claim &amp; markup issues</option>
             <option value="2">Example 2: Claim without Brand Vault evidence</option>
@@ -138,7 +141,7 @@
       </div>
 
       <!-- Session Unavailable / Offline Degraded Banner -->
-      <div class="session-unavailable-banner" id="sessionUnavailableBanner" style="display: none; background: #FEF3F2; color: #B42318; border-bottom: 1px solid #FECDCA; padding: 10px 24px; font-size: 13px; font-weight: 500; align-items: center; justify-content: space-between;">
+      <div class="session-unavailable-banner" id="sessionUnavailableBanner" role="region" aria-label="Connection status" style="display: none; background: #FEF3F2; color: #B42318; border-bottom: 1px solid #FECDCA; padding: 10px 24px; font-size: 13px; font-weight: 500; align-items: center; justify-content: space-between;">
         <div style="display: inline-flex; align-items: center; gap: 8px;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           <span id="sessionUnavailableText">Cannot connect to LoomShield server. Audits and write actions are temporarily disabled.</span>
@@ -180,32 +183,37 @@
               <p class="page-subtitle" id="overviewScopeSubtitle">Automated brand governance and marketing compliance for your content.</p>
             </div>
             <div class="page-actions">
-              <button type="button" class="btn" id="overviewTryDemoBtn">Try a sample</button>
-              <button type="button" class="btn btn-accent" id="overviewNewAuditBtn">Start new audit</button>
+              <button type="button" class="btn btn-ghost" id="overviewTryDemoBtn" style="border: 1px solid var(--border-color);">Try a sample</button>
+              <button type="button" class="btn btn-accent" id="overviewNewAuditBtn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 4px;">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <span>New audit</span>
+              </button>
             </div>
           </div>
 
-          <!-- Start here — Evaluator Walkthrough (Visible in Demo Workspace) -->
-          <div class="card" id="overviewStartHereCard" style="margin-bottom: 24px; padding: 22px; background: #F8FAFC; border: 1.5px solid #CBD5E1; border-radius: 12px;">
+          <!-- Quick-Tour: 3-step evaluator walkthrough -->
+          <div class="card" id="overviewStartHereCard" style="margin-bottom: 24px; padding: 22px; background: var(--slate-50); border: 1px solid var(--border-color); border-radius: var(--radius-card);">
             <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;">
               <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-size: 18px;">🎯</span>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--primary-action); flex-shrink: 0;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
                 <h3 style="font-size: 15px; font-weight: 700; color: var(--primary-ink); margin: 0;">Start here — 3-step evaluator walkthrough</h3>
               </div>
-              <span class="status-badge badge-neutral" style="font-size: 11px;">Evaluator guide</span>
+              <span class="status-badge badge-neutral" style="font-size: 11px;">Quick tour</span>
             </div>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
-              <button type="button" class="btn btn-ghost" id="walkthroughStep1Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1.5px solid var(--border-color); background: #FFFFFF; border-radius: 8px;">
+              <button type="button" class="btn btn-ghost" id="walkthroughStep1Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1px solid var(--border-color); background: #FFFFFF; border-radius: var(--radius-control);">
                 <div style="font-size: 11.5px; font-weight: 700; color: var(--primary-action);">STEP 1</div>
                 <div style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink);">1. Answer a few questions</div>
                 <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">Launch the guided wizard to generate tailored checks.</div>
               </button>
-              <button type="button" class="btn btn-ghost" id="walkthroughStep2Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1.5px solid var(--border-color); background: #FFFFFF; border-radius: 8px;">
+              <button type="button" class="btn btn-ghost" id="walkthroughStep2Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1px solid var(--border-color); background: #FFFFFF; border-radius: var(--radius-control);">
                 <div style="font-size: 11.5px; font-weight: 700; color: var(--primary-action);">STEP 2</div>
                 <div style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink);">2. Try the example</div>
                 <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">Load intentional sample copy to test deterministic engines.</div>
               </button>
-              <button type="button" class="btn btn-ghost" id="walkthroughStep3Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1.5px solid var(--border-color); background: #FFFFFF; border-radius: 8px;">
+              <button type="button" class="btn btn-ghost" id="walkthroughStep3Btn" style="padding: 14px; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1px solid var(--border-color); background: #FFFFFF; border-radius: var(--radius-control);">
                 <div style="font-size: 11.5px; font-weight: 700; color: var(--primary-action);">STEP 3</div>
                 <div style="font-size: 13.5px; font-weight: 600; color: var(--primary-ink);">3. Review issues &amp; approve</div>
                 <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">Inspect findings, accept word fixes, and grant sign-off.</div>
@@ -213,43 +221,50 @@
             </div>
           </div>
 
-          <!-- 3 KPI Cards Scoped to Active Brand & Version -->
-          <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 20px;">
-            <div class="metric-card">
+          <!-- 4 KPI Cards Scoped to Active Brand & Version (Clickable into filtered views) -->
+          <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-bottom: 20px;">
+            <div class="metric-card" id="metricCardDocs" role="button" tabindex="0" title="Click to view all audited documents" style="cursor: pointer;">
               <div class="metric-label">
                 <span>Documents audited</span>
               </div>
               <div class="metric-value" id="metricDocsAudited">0</div>
-              <div class="metric-note" id="metricDocsScopeNote">Total files checked</div>
+              <div class="metric-note" id="metricDocsScopeNote">Total files checked against brand guidelines</div>
             </div>
 
-            <div class="metric-card">
+            <div class="metric-card" id="metricCardFindings" role="button" tabindex="0" title="Click to filter to audits with open findings" style="cursor: pointer;">
               <div class="metric-label">
                 <span>Issues needing attention</span>
               </div>
               <div class="metric-value" id="metricOpenFindings">0</div>
-              <div class="metric-note">Unresolved issues in draft copy</div>
+              <div class="metric-note">Unresolved findings in draft and in-review copy</div>
             </div>
 
-            <div class="metric-card">
+            <div class="metric-card" id="metricCardApproved" role="button" tabindex="0" title="Click to filter to approved audits" style="cursor: pointer;">
               <div class="metric-label">
                 <span>Approved content</span>
               </div>
               <div class="metric-value" id="metricApprovedContent">0</div>
-              <div class="metric-note">Cleared for publication</div>
+              <div class="metric-note">Cleared and signed off for public distribution</div>
             </div>
-            <span id="metricBrandRules" style="display: none;">0</span>
+
+            <div class="metric-card" id="metricCardRules" role="button" tabindex="0" title="Click to view active brand guidelines and rules" style="cursor: pointer;">
+              <div class="metric-label">
+                <span>Brand rules</span>
+              </div>
+              <div class="metric-value" id="metricBrandRules">0</div>
+              <div class="metric-note">Active tone, term, fact, and visual rules enforced</div>
+            </div>
           </div>
 
-          <!-- Hero "Start a new audit" Card -->
-          <div class="card hero-start-card" style="margin-bottom: 24px; padding: 24px; background: linear-gradient(135deg, #FFF7F5 0%, #FFFFFF 100%); border: 1.5px solid #FCD9D0; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+          <!-- Guided Setup Alternative Entry Point -->
+          <div class="card hero-start-card" style="margin-bottom: 24px; padding: 20px 24px; background: #FFFFFF; border: 1px solid var(--border-color); border-radius: var(--radius-card); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
             <div>
               <div style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; color: var(--primary-action); letter-spacing: 0.05em; margin-bottom: 4px;">Zero-Setup Governance</div>
-              <h3 style="font-size: 18px; font-weight: 700; color: var(--primary-ink); margin-bottom: 4px;">Start a new content audit</h3>
-              <p style="font-size: 13.5px; color: var(--text-secondary); max-width: 580px; margin: 0;">Answer a few quick questions to create a tailor-made compliance profile, or choose a ready-to-test sample.</p>
+              <h3 style="font-size: 16px; font-weight: 700; color: var(--primary-ink); margin-bottom: 4px;">Need customized checks for a new campaign?</h3>
+              <p style="font-size: 13.5px; color: var(--text-secondary); max-width: 580px; margin: 0;">Answer 5 quick questions to create a tailor-made compliance profile, or choose a ready-to-test sample.</p>
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
-              <button type="button" class="btn btn-accent btn-lg" id="heroStartAuditBtn" style="font-weight: 600;">✨ Guided audit &rarr;</button>
+              <button type="button" class="btn btn-ghost" id="heroStartAuditBtn" style="font-weight: 600; border: 1px solid var(--border-color);">Guided setup &rarr;</button>
             </div>
           </div>
 
@@ -308,12 +323,12 @@
 
           <!-- STAGE A: NEW AUDIT SUBMISSION FORM (MANUAL / EXISTING BRAND FLOW) -->
           <div id="auditInputStage" style="display: none;">
-            <div class="banner-info" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 12px 18px; border-radius: 10px; background: #FEF3F0; border: 1.5px solid #FCD9D0;">
+            <div class="banner-info" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding: 12px 18px; border-radius: var(--radius-control); background: var(--brand-accent-soft); border: 1px solid #FCD9D0;">
               <div>
-                <span style="font-size: 13.5px; font-weight: 600; color: #962E14;">✨ Need checks for a new campaign or client?</span>
+                <span style="font-size: 13.5px; font-weight: 600; color: #962E14;">Need checks for a new campaign or client?</span>
                 <div style="font-size: 12px; color: #7B341E; margin-top: 2px;">Answer 5 simple questions to automatically generate tailor-made brand checks.</div>
               </div>
-              <button type="button" class="btn btn-sm btn-accent" id="switchToWizardBtn">Launch guided setup</button>
+              <button type="button" class="btn btn-sm btn-accent" id="switchToWizardBtn">Guided setup</button>
             </div>
             <div class="page-header">
               <div>
@@ -335,7 +350,7 @@
               <div class="input-form-grid" style="margin-bottom: 16px;">
                 <div class="form-group" style="grid-column: span 2;">
                   <label for="auditDocName">Document title</label>
-                  <input type="text" id="auditDocName" class="form-control" placeholder="e.g., Q4 Settlement Launch Brief" value="Q4 Settlement Launch Brief" />
+                  <input type="text" id="auditDocName" class="form-control" placeholder="e.g., Q4 Settlement Launch Brief" />
                 </div>
               </div>
 
@@ -361,10 +376,7 @@
                     </select>
                   </div>
                 </div>
-                <textarea id="auditContentText" class="form-control" rows="8" placeholder="Paste marketing copy, press release, HTML markup or Markdown text..."><h2>Launch Faster with Instant Payouts</h2>
-<h4>Key Settlement Highlights</h4>
-<p>Our platform guarantees 95% faster processing for cross-border treasury teams. Using our proprietary AI Engine, finance leaders can execute zero-touch autonomous settlement with guaranteed zero risk.</p>
-<p>Unlike legacy banking rails, our frictionless synergetic paradigm shift redefines global liquidity across 65 currencies.</p></textarea>
+                <textarea id="auditContentText" class="form-control" rows="8" placeholder="Paste marketing copy, press release, HTML markup or Markdown text..."></textarea>
               </div>
 
               <!-- Ingestion Mode B: Upload File (Drag & Drop Zone + Auto Format Detection) -->
@@ -401,36 +413,32 @@
                 <h2 class="audit-step-title">Review audit options</h2>
               </div>
 
-              <fieldset style="border: none; padding: 0; margin: 0 0 16px 0;">
-                <div class="audit-options-grid">
-                  <div class="option-control-card">
-                    <div class="checkbox-row">
-                      <input type="checkbox" id="auditHasVisualAsset" aria-describedby="visualCheckHelper" />
-                      <div>
-                        <label for="auditHasVisualAsset" style="font-size: 13.5px; font-weight: 600; cursor: pointer;">Include visual asset checks</label>
-                        <div class="form-helper" id="visualCheckHelper">Check if an image, banner, or logo token is attached to this document.</div>
-                      </div>
+              <div class="audit-options-grid" style="margin-bottom: 14px;">
+                <div class="option-control-card" style="grid-column: span 2;">
+                  <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
+                    <div>
+                      <div style="font-size: 13.5px; font-weight: 600;" id="processingModeTitle">Processing mode</div>
+                      <div class="form-helper" id="localModeHelper">Detecting server operating mode...</div>
                     </div>
+                    <span class="status-badge badge-neutral" id="processingModeBadge">Detecting</span>
                   </div>
-
-                  <div class="option-control-card">
-                    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
-                      <div>
-                        <div style="font-size: 13.5px; font-weight: 600;" id="processingModeTitle">Processing mode</div>
-                        <div class="form-helper" id="localModeHelper">Detecting server operating mode...</div>
-                      </div>
-                      <span class="status-badge badge-neutral" id="processingModeBadge">Detecting</span>
-                    </div>
-                    <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary);" id="cloudProcessingNote">
-                      <strong>Verification engines:</strong> Audits execute via deterministic rules and embedded NLP on the LoomShield backend. No third-party AI APIs are used.
-                    </div>
+                  <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary);" id="cloudProcessingNote">
+                    <strong>Verification engines:</strong> Audits execute via deterministic rules and embedded NLP on the LoomShield backend. No third-party AI APIs are used.
                   </div>
                 </div>
-              </fieldset>
+              </div>
 
+              <!-- Collapsed Advanced Section for Visual and Color Options -->
               <details class="collapsible-details" id="visualMetadataDetails">
-                <summary>Optional colour contrast &amp; image alt-text metadata</summary>
-                <div class="collapsible-details-body">
+                <summary style="font-weight: 600; cursor: pointer; color: var(--primary-ink);">Advanced: Visual asset &amp; accessibility checks (Optional)</summary>
+                <div class="collapsible-details-body" style="padding-top: 14px;">
+                  <div class="checkbox-row" style="margin-bottom: 12px;">
+                    <input type="checkbox" id="auditHasVisualAsset" aria-describedby="visualCheckHelper" />
+                    <div>
+                      <label for="auditHasVisualAsset" style="font-size: 13.5px; font-weight: 600; cursor: pointer;">Include visual asset checks</label>
+                      <div class="form-helper" id="visualCheckHelper">Check if an image, banner, or logo token is attached to this document.</div>
+                    </div>
+                  </div>
                   <div class="input-form-grid" style="margin-bottom: 0;">
                     <div class="form-group">
                       <label for="auditFgColor">Foreground hex colour</label>
@@ -459,15 +467,15 @@
                 <div style="font-size: 12.5px; color: var(--text-secondary);">Audit verifies tone, prohibited terminology, promotional claim facts, and visual contrast.</div>
               </div>
               <div style="display: flex; align-items: center; gap: 10px;">
-                <button type="button" class="btn" id="clearAuditFormBtn">Clear form</button>
-                <button type="button" class="btn btn-accent" id="runAuditBtn">
+                <button type="button" class="btn btn-ghost" id="clearAuditFormBtn">Clear form</button>
+                <button type="button" class="btn btn-accent" id="runAuditBtn" disabled title="Add document content or upload a file to run audit">
                   <span>Run audit</span>
                 </button>
               </div>
             </div>
           </div>
 
-          <!-- STAGE B: AUDIT RESULTS THREE-PANEL WORKSPACE -->
+          <!-- STAGE B: AUDIT RESULTS SPLIT WORKSPACE (SIGNATURE SCREEN) -->
           <div id="auditResultsStage" style="display: none;">
             <div class="page-header">
               <div>
@@ -482,19 +490,29 @@
               </div>
             </div>
 
+            <!-- Keyboard Shortcuts Helper Bar -->
+            <div class="keyboard-shortcuts-bar" aria-label="Keyboard navigation shortcuts">
+              <span style="font-weight: 600; color: var(--primary-ink);">Shortcuts:</span>
+              <span><kbd class="keyboard-shortcut-key">J</kbd> Next finding</span>
+              <span><kbd class="keyboard-shortcut-key">K</kbd> Prev finding</span>
+              <span><kbd class="keyboard-shortcut-key">A</kbd> Accept fix</span>
+              <span><kbd class="keyboard-shortcut-key">D</kbd> Dismiss</span>
+              <span style="margin-left: auto; color: var(--slate-700);"><kbd class="keyboard-shortcut-key">Ctrl</kbd>+<kbd class="keyboard-shortcut-key">K</kbd> Command palette</span>
+            </div>
+
             <!-- Six Audit Pillars Status Bar -->
             <div class="pillars-bar" id="sixPillarsBar"></div>
 
             <!-- Mobile/Tablet Panel Switcher -->
             <div class="mobile-panel-tabs" id="mobilePanelTabs">
               <button type="button" class="btn btn-sm active" data-mob-panel="source">Source content</button>
-              <button type="button" class="btn btn-sm" data-mob-panel="findings">Findings &amp; evidence</button>
-              <button type="button" class="btn btn-sm" data-mob-panel="correction">Correction</button>
+              <button type="button" class="btn btn-sm" data-mob-panel="findings">Findings rail</button>
+              <button type="button" class="btn btn-sm" data-mob-panel="correction" style="display: none;">Correction</button>
             </div>
 
-            <!-- Three-Panel Workspace (32% / 38% / 30%) -->
-            <div class="three-panel-workspace">
-              <!-- PANEL 1: SOURCE CONTENT -->
+            <!-- Split Layout Workspace (Document on Left, Finding Rail on Right) -->
+            <div class="results-split-layout three-panel-workspace">
+              <!-- PANEL 1: SOURCE CONTENT (LEFT) -->
               <div class="workspace-panel" id="panelSource">
                 <div class="panel-header">
                   <div class="panel-title">
@@ -518,13 +536,14 @@
                 </div>
               </div>
 
-              <!-- PANEL 2: FINDINGS & EVIDENCE -->
-              <div class="workspace-panel" id="panelFindings">
+              <!-- PANEL 2: FINDINGS RAIL (RIGHT) -->
+              <div class="workspace-panel finding-rail" id="panelFindings">
                 <div class="panel-header">
                   <div class="panel-title">
-                    <span>FINDINGS &amp; EVIDENCE</span>
+                    <span>FINDINGS RAIL</span>
                     <span class="status-badge badge-neutral" id="findingsCountBadge">0 findings</span>
                   </div>
+                  <span id="activeWorkflowStateBadge"></span>
                 </div>
                 <div class="panel-body">
                   <!-- Filters close to the findings header -->
@@ -555,25 +574,15 @@
                     </select>
                     <input type="search" id="findingSearchInput" class="form-control" style="padding: 5px 8px; font-size: 12.5px;" placeholder="Search findings..." aria-label="Search findings" />
                   </div>
-                  <div id="findingsListContainer"></div>
-                </div>
-              </div>
 
-              <!-- PANEL 3: CORRECTION -->
-              <div class="workspace-panel" id="panelCorrection">
-                <div class="panel-header">
-                  <div class="panel-title">
-                    <span>CORRECTION</span>
-                  </div>
-                  <span id="activeWorkflowStateBadge"></span>
-                </div>
-                <div class="panel-body">
                   <!-- Finding Decision Inline Error Banner -->
                   <div id="findingDecisionErrorBanner" style="display: none; margin-bottom: 12px;"></div>
-                  <div id="correctionPanelBody"></div>
+
+                  <!-- Rail Cards Container -->
+                  <div id="findingsListContainer"></div>
 
                   <!-- Document-Level Review & Approval Controls -->
-                  <div id="workflowTransitionBox" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color); display: none;">
+                  <div id="workflowTransitionBox" style="margin-top: 20px; padding: 16px; border: 1px solid var(--border-color); border-radius: var(--radius-card); background: var(--slate-50); display: none;">
                     <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">Document review &amp; approval</h3>
                     <!-- Workflow Inline Error Banner -->
                     <div id="workflowErrorBanner" style="display: none; margin-bottom: 12px;"></div>
@@ -596,7 +605,13 @@
                   </div>
                 </div>
               </div>
+
+              <!-- PANEL 3: HIDDEN BACKWARD COMPATIBLE CONTAINER FOR CORRECTION -->
+              <div class="workspace-panel" id="panelCorrection" style="display: none;">
+                <div id="correctionPanelBody"></div>
+              </div>
             </div>
+          </div>
           </div>
         </section>
 
@@ -754,7 +769,7 @@
             <div class="card" style="padding: 24px; border-left: 4px solid var(--status-success);">
               <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <h2 class="card-title">Verified System Capabilities (Verified in Code &amp; Tests)</h2>
-                <span class="status-badge badge-passed">112 / 112 Tests Passed</span>
+                <span class="status-badge badge-passed">All Automated Tests Passing</span>
               </div>
               <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px;">Every item below is backed by running automated tests in the repository test suite:</p>
               <ul style="padding-left: 20px; font-size: 13.5px; color: var(--primary-ink); line-height: 1.7;">
@@ -791,9 +806,24 @@
             </div>
           </div>
         </section>
-          </div>
-        </section>
       </main>
+    </div>
+  </div>
+
+  <!-- Command Palette Modal (Ctrl/Cmd+K) -->
+  <div id="commandPaletteModal" class="command-palette-backdrop" style="display: none;" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="command-palette-card">
+      <div class="command-palette-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="color: var(--slate-400); flex-shrink: 0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" id="commandPaletteInput" class="command-palette-input" placeholder="Type a command or search (e.g., 'new audit', 'switch brand', 'settings')..." aria-label="Search commands and actions" autocomplete="off" />
+        <span class="command-palette-badge">ESC to close</span>
+      </div>
+      <div class="command-palette-results" id="commandPaletteResults" role="listbox"></div>
+      <div class="command-palette-footer">
+        <span><kbd>↑</kbd> <kbd>↓</kbd> to navigate</span>
+        <span><kbd>↵</kbd> to select</span>
+        <span><kbd>ESC</kbd> to dismiss</span>
+      </div>
     </div>
   </div>
 

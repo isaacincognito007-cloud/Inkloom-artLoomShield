@@ -774,6 +774,13 @@ ALL_SIX_PILLARS = [
 ]
 
 
+# Maximum characters scanned by regex pattern evaluations to bound polynomial backtracking.
+# Follow-up architectural note: If external dependencies are permitted in a future release,
+# Python's third-party `regex` library (pip install regex) could be used with native timeouts
+# (e.g. `regex.search(pattern, text, timeout=0.1)`).
+MAX_PATTERN_EVAL_LENGTH = 100_000
+
+
 def run_six_pillar_audit(
     content: str,
     brand: Dict[str, Any],
@@ -859,6 +866,8 @@ def run_six_pillar_audit(
         }
 
     active_rules = [r for r in rules if int(r.get("active", 1)) == 1]
+    # Bound content length seen by regex pattern evaluations to mitigate polynomial backtracking
+    eval_content = content[:MAX_PATTERN_EVAL_LENGTH] if content else ""
     rules_by_pillar: Dict[str, List[Dict[str, Any]]] = {p: [] for p in ALL_SIX_PILLARS}
     rules_by_id: Dict[str, Dict[str, Any]] = {}
     for r in active_rules:
@@ -884,7 +893,7 @@ def run_six_pillar_audit(
             patterns = cfg.get("patterns", [])
             replacements_map = cfg.get("suggested_replacements", {})
             for pat in patterns:
-                for m in re.finditer(pat, content, re.IGNORECASE):
+                for m in re.finditer(pat, eval_content, re.IGNORECASE):
                     matched_str = m.group(0)
                     suggestion = replacements_map.get(
                         matched_str,
@@ -923,9 +932,10 @@ def run_six_pillar_audit(
             preferred = term["preferred_term"]
             replacement = term.get("replacement_term") or preferred
             case_sens = bool(term.get("case_sensitive", 0))
+            # User-supplied prohibited terms and 'never_use_words' are strictly escaped via re.escape()
             pat = re.compile(r"(?<!\w)" + re.escape(prohibited) + r"(?!\w)", re.IGNORECASE)
 
-            for m in pat.finditer(content):
+            for m in pat.finditer(eval_content):
                 matched_text = m.group(0)
                 if case_sens and matched_text == preferred:
                     continue
@@ -969,7 +979,7 @@ def run_six_pillar_audit(
             except Exception:
                 cfg = {}
             for pat in cfg.get("prohibited_patterns", []):
-                for m in re.finditer(pat, content, re.IGNORECASE):
+                for m in re.finditer(pat, eval_content, re.IGNORECASE):
                     findings.append({
                         "id": next_finding_id(),
                         "pillar": "Messaging",
@@ -1028,7 +1038,7 @@ def run_six_pillar_audit(
         )
     ]
     for pat_str, issue_label in superlative_patterns:
-        for m in re.finditer(pat_str, content, re.IGNORECASE):
+        for m in re.finditer(pat_str, eval_content, re.IGNORECASE):
             if overlaps_existing_claim(m.start(), m.end()):
                 continue
             phrase = m.group(0)
@@ -1095,7 +1105,7 @@ def run_six_pillar_audit(
 
     # 4B. Clause/Sentence-Level Numerical & Percentage Claim Verification (Section 8 & 10 Pipeline)
     sentence_pattern = re.compile(r"[^.!?\n;<>]+[.!?;]?", re.MULTILINE)
-    for sent_match in sentence_pattern.finditer(content):
+    for sent_match in sentence_pattern.finditer(eval_content):
         raw_sent = sent_match.group(0)
         sentence = raw_sent.strip()
         if not sentence:

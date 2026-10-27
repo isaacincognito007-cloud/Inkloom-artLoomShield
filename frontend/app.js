@@ -280,6 +280,19 @@ function renderStateBadge(state) {
  * Safe Formatted Document Renderer (Strips raw HTML/Markdown syntax into clean semantic blocks
  * while preserving exact character-offset highlight spans!)
  */
+
+function updateRunAuditBtnState() {
+  const runBtn = document.getElementById('runAuditBtn');
+  const textArea = document.getElementById('auditContentText');
+  const fileInput = document.getElementById('auditFileUpload');
+  if (!runBtn) return;
+  const hasText = Boolean(textArea && textArea.value.trim().length > 0);
+  const hasFile = Boolean(fileInput && fileInput.files && fileInput.files.length > 0);
+  const isValid = AppState.inputMethod === 'upload' ? hasFile : hasText;
+  runBtn.disabled = !isValid;
+  runBtn.title = isValid ? 'Run compliance audit' : 'Add document content or upload a file to run audit';
+}
+
 function renderSafeDocumentHtml(rawText, highlightFindings, selectedFindingId, formatMode) {
   const text = String(rawText || '');
   const validFindings = (highlightFindings || [])
@@ -890,7 +903,50 @@ function bindNavigationEvents() {
     }
   });
 
-  const runSelfTestBtn = document.getElementById('runEngineSelftestHeaderBtn');
+  // Clickable metric cards (Task 4)
+  const cardDocs = document.getElementById('metricCardDocs');
+  if (cardDocs) cardDocs.addEventListener('click', () => setOverviewFilter('ALL'));
+  const cardFindings = document.getElementById('metricCardFindings');
+  if (cardFindings) cardFindings.addEventListener('click', () => setOverviewFilter('In Review'));
+  const cardApproved = document.getElementById('metricCardApproved');
+  if (cardApproved) cardApproved.addEventListener('click', () => setOverviewFilter('Approved'));
+  const cardRules = document.getElementById('metricCardRules');
+  if (cardRules) cardRules.addEventListener('click', () => switchView('brand-vault'));
+
+  // Mobile drawer close on nav item click
+  document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      document.getElementById('appSidebar')?.classList.remove('mobile-open');
+    });
+  });
+
+  // Global copy-to-clipboard chip handler (Task 3)
+  document.addEventListener('click', (e) => {
+    const chip = e.target.closest('.copy-id-chip');
+    if (chip) {
+      e.stopPropagation();
+      const text = chip.getAttribute('data-copy-text');
+      if (text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => {
+            showToast(`Copied ${text} to clipboard`);
+          }).catch(() => {
+            showToast(`Copied: ${text}`);
+          });
+        } else {
+          showToast(`Copied: ${text}`);
+        }
+      }
+    }
+  });
+
+  // Global keyboard shortcuts for Results screen (Task 6)
+  window.addEventListener('keydown', handleResultsKeyNavigation);
+
+  // Initialize command palette (Task 7)
+  initCommandPalette();
+
+    const runSelfTestBtn = document.getElementById('runEngineSelftestHeaderBtn');
   if (runSelfTestBtn) {
     runSelfTestBtn.addEventListener('click', async () => {
       await triggerEngineSelftest();
@@ -918,6 +974,7 @@ async function switchView(viewName) {
       : (VIEW_TITLES[viewName] || viewName);
 
   if (viewName === 'overview') await refreshOverview();
+  if (viewName === 'new-audit') updateRunAuditBtnState();
   if (viewName === 'new-audit') renderAuditWorkspace();
   if (viewName === 'brand-vault') await refreshBrandVault();
   if (viewName === 'review-queue') await renderReviewQueueView();
@@ -1068,6 +1125,18 @@ async function refreshOverview() {
   }
 }
 
+function setOverviewFilter(filterName) {
+  AppState.overviewStatusFilter = filterName;
+  document.querySelectorAll('#overviewStatusFilters .filter-pill').forEach((p) => {
+    p.classList.toggle('active', p.getAttribute('data-ov-filter') === filterName);
+  });
+  renderRecentAuditsTable();
+  const table = document.getElementById('recentAuditsContainer');
+  if (table) {
+    table.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
 function renderRecentAuditsTable() {
   const container = document.getElementById('recentAuditsContainer');
   if (!container || !AppState.overviewData) return;
@@ -1122,31 +1191,58 @@ function renderRecentAuditsTable() {
             <th>Last updated</th>
             <th>Status</th>
             <th>Open findings</th>
-            <th>Action</th>
+            <th>Next action</th>
           </tr>
         </thead>
         <tbody>
-          ${filtered.map((a) => `
+          ${filtered.map((a) => {
+            const isDemoAudit = Boolean(
+              a.id.startsWith('AUD-100') ||
+              (a.document_name && a.document_name.includes('(Demo)')) ||
+              (AppState.overviewData && AppState.overviewData.is_demo)
+            );
+            const sourceBadge = isDemoAudit
+              ? `<span class="status-badge badge-neutral" style="font-size: 11px;">Demo</span>`
+              : `<span class="status-badge badge-info" style="font-size: 11px;">Custom</span>`;
+
+            let actionLabel = 'Open review';
+            let actionClass = 'btn btn-sm open-audit-btn';
+            if (a.overall_status === 'Approved') {
+              actionLabel = 'View report';
+              actionClass = 'btn btn-sm btn-ghost open-audit-btn';
+            } else if (a.overall_status === 'In Review' || a.open_findings > 0) {
+              actionLabel = 'Review findings';
+              actionClass = 'btn btn-sm btn-accent open-audit-btn';
+            } else if (a.overall_status === 'Draft') {
+              actionLabel = 'Resume draft';
+              actionClass = 'btn btn-sm open-audit-btn';
+            }
+
+            return `
             <tr>
-              <td>
-                <strong>${escapeHtml(a.document_name)}</strong>
+              <td data-label="Document">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong>${escapeHtml(a.document_name)}</strong>
+                  ${sourceBadge}
+                </div>
                 <div style="margin-top: 3px; display: flex; gap: 6px; align-items: center;">
-                  <span class="mono-id">${escapeHtml(a.id)}</span>
+                  <button type="button" class="id-chip copy-id-chip" data-copy-text="${escapeHtml(a.id)}" title="Copy audit ID">${escapeHtml(a.id)}</button>
                   <span class="mono-id">${escapeHtml(a.input_format)}</span>
                 </div>
               </td>
-              <td class="nowrap-col" style="font-size: 12.5px; color: var(--text-secondary);" title="${escapeHtml(a.updated_at)}">${escapeHtml(formatTimestamp(a.updated_at))}</td>
-              <td class="nowrap-col">${renderStateBadge(a.overall_status)}</td>
-              <td class="nowrap-col">
+              <td data-label="Last updated" class="nowrap-col" style="font-size: 12.5px; color: var(--text-secondary);" title="${escapeHtml(a.updated_at)}">${escapeHtml(formatTimestamp(a.updated_at))}</td>
+              <td data-label="Status" class="nowrap-col">${renderStateBadge(a.overall_status)}</td>
+              <td data-label="Open findings" class="nowrap-col">
                 ${a.open_findings > 0
                   ? `<span class="status-badge badge-error">${a.open_findings} open</span>`
                   : `<span class="status-badge badge-passed">0 open (${a.total_findings} resolved)</span>`}
               </td>
-              <td class="nowrap-col">
-                <button type="button" class="btn btn-sm open-audit-btn" data-audit-id="${escapeHtml(a.id)}">Open review</button>
+              <td data-label="Next action" class="nowrap-col">
+                <button type="button" class="${actionClass}" data-audit-id="${escapeHtml(a.id)}">${actionLabel}</button>
               </td>
             </tr>
-          `).join('')}
+            `;
+          }).join('')}
         </tbody>
       </table>
     </div>
@@ -1241,6 +1337,14 @@ function bindAuditWorkspaceEvents() {
     });
   }
 
+  // Wire run button validation state (Task 5)
+  const auditContentEl = document.getElementById('auditContentText');
+  if (auditContentEl) {
+    ['input', 'change', 'paste', 'keyup'].forEach((evt) => {
+      auditContentEl.addEventListener(evt, updateRunAuditBtnState);
+    });
+  }
+
   // Ingestion method toggle: Paste content vs Upload file
   const pasteBtn = document.getElementById('inputMethodPasteBtn');
   const uploadBtn = document.getElementById('inputMethodUploadBtn');
@@ -1250,6 +1354,7 @@ function bindAuditWorkspaceEvents() {
   if (pasteBtn && uploadBtn) {
     pasteBtn.addEventListener('click', () => {
       AppState.inputMethod = 'paste';
+    updateRunAuditBtnState();
       pasteBtn.classList.add('active');
       pasteBtn.setAttribute('aria-selected', 'true');
       uploadBtn.classList.remove('active');
@@ -1260,6 +1365,7 @@ function bindAuditWorkspaceEvents() {
 
     uploadBtn.addEventListener('click', () => {
       AppState.inputMethod = 'upload';
+    updateRunAuditBtnState();
       uploadBtn.classList.add('active');
       uploadBtn.setAttribute('aria-selected', 'true');
       pasteBtn.classList.remove('active');
@@ -1308,6 +1414,7 @@ function bindAuditWorkspaceEvents() {
     removeFileBtn.addEventListener('click', () => {
       fileInput.value = '';
       if (fileCard) fileCard.style.display = 'none';
+      updateRunAuditBtnState();
       if (previewBar) previewBar.style.display = 'none';
       syncVisualCheckControlState();
     });
@@ -1317,6 +1424,7 @@ function bindAuditWorkspaceEvents() {
     if (!fileInput.files || fileInput.files.length === 0) {
       if (previewBar) previewBar.style.display = 'none';
       if (fileCard) fileCard.style.display = 'none';
+      updateRunAuditBtnState();
       syncVisualCheckControlState();
       return;
     }
@@ -1330,6 +1438,7 @@ function bindAuditWorkspaceEvents() {
       fileInput.value = '';
       if (previewBar) previewBar.style.display = 'none';
       if (fileCard) fileCard.style.display = 'none';
+      updateRunAuditBtnState();
       syncVisualCheckControlState();
       return;
     }
@@ -1338,6 +1447,7 @@ function bindAuditWorkspaceEvents() {
       fileInput.value = '';
       if (previewBar) previewBar.style.display = 'none';
       if (fileCard) fileCard.style.display = 'none';
+      updateRunAuditBtnState();
       syncVisualCheckControlState();
       return;
     }
@@ -1387,11 +1497,13 @@ function bindAuditWorkspaceEvents() {
           fileInput.value = '';
           previewBar.style.display = 'none';
           if (fileCard) fileCard.style.display = 'none';
+      updateRunAuditBtnState();
           syncVisualCheckControlState();
         });
       }
     }
     syncVisualCheckControlState();
+    updateRunAuditBtnState();
   });
 
   document.getElementById('auditFgColor').addEventListener('input', syncVisualCheckControlState);
@@ -1411,8 +1523,10 @@ function bindAuditWorkspaceEvents() {
       document.getElementById('auditFgColor').value = '';
       document.getElementById('auditBgColor').value = '';
       document.getElementById('auditAltText').value = '';
+      updateRunAuditBtnState();
       if (fileInput) fileInput.value = '';
       if (fileCard) fileCard.style.display = 'none';
+      updateRunAuditBtnState();
       if (previewBar) previewBar.style.display = 'none';
       document.getElementById('auditHasVisualAsset').checked = false;
       syncVisualCheckControlState();
@@ -1631,10 +1745,14 @@ function loadSamplePreset(presetNum) {
 }
 
 async function executeTextAudit() {
-  const docName = document.getElementById('auditDocName').value.trim();
+  let docName = document.getElementById('auditDocName').value.trim();
   const content = document.getElementById('auditContentText').value;
-  if (!docName || !content.trim()) {
-    showToast('Please enter both a document title and content to audit.');
+  if (!docName) {
+    docName = 'Draft Marketing Document';
+    document.getElementById('auditDocName').value = docName;
+  }
+  if (!content.trim()) {
+    showToast('Please enter content to audit.');
     return;
   }
 
@@ -1830,7 +1948,7 @@ async function renderWizard() {
           <button type="button" class="wizard-tile ${AppState.wizardAnswers.content_type === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.content_type === opt.id}">
             <div class="wizard-tile-header">
               <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
-              <span class="wizard-tile-check">✓</span>
+              <span class="wizard-tile-check"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>
             </div>
             <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
           </button>
@@ -1885,7 +2003,7 @@ async function renderWizard() {
           <button type="button" class="wizard-tile ${AppState.wizardAnswers.industry === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.industry === opt.id}">
             <div class="wizard-tile-header">
               <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
-              <span class="wizard-tile-check">✓</span>
+              <span class="wizard-tile-check"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>
             </div>
             <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
           </button>
@@ -1942,7 +2060,7 @@ async function renderWizard() {
           <button type="button" class="wizard-tile ${AppState.wizardAnswers.occasion === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.occasion === opt.id}">
             <div class="wizard-tile-header">
               <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
-              <span class="wizard-tile-check">✓</span>
+              <span class="wizard-tile-check"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>
             </div>
             <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
           </button>
@@ -1999,7 +2117,7 @@ async function renderWizard() {
           <button type="button" class="wizard-tile ${AppState.wizardAnswers.locale === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.locale === opt.id}">
             <div class="wizard-tile-header">
               <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
-              <span class="wizard-tile-check">✓</span>
+              <span class="wizard-tile-check"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>
             </div>
             <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
           </button>
@@ -2054,7 +2172,7 @@ async function renderWizard() {
           <button type="button" class="wizard-tile ${AppState.wizardAnswers.tone === opt.id ? 'selected' : ''}" data-opt-id="${opt.id}" role="radio" aria-checked="${AppState.wizardAnswers.tone === opt.id}">
             <div class="wizard-tile-header">
               <span class="wizard-tile-title">${escapeHtml(opt.label)}</span>
-              <span class="wizard-tile-check">✓</span>
+              <span class="wizard-tile-check"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>
             </div>
             <p class="wizard-tile-desc">${escapeHtml(opt.description)}</p>
           </button>
@@ -2152,7 +2270,7 @@ async function renderWizard() {
       container.innerHTML = `
         <div style="margin-top: 8px; margin-bottom: 20px;">
           <div style="display: inline-flex; align-items: center; gap: 8px; background: #EEF2F6; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; color: #1E293B;">
-            <span>🛡️</span>
+            <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--primary-action);"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
             <span>${escapeHtml(preview.profile_label)}</span>
           </div>
         </div>
@@ -2164,7 +2282,7 @@ async function renderWizard() {
           <div class="wizard-review-list">
             ${(preview.summary || []).map(bullet => `
               <div class="wizard-bullet-item">
-                <span class="wizard-bullet-icon">✓</span>
+                <span class="wizard-bullet-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>
                 <span>${escapeHtml(bullet)}</span>
               </div>
             `).join('')}
@@ -2225,7 +2343,7 @@ async function renderWizard() {
             <input type="text" id="wizAuditDocTitle" class="form-control" style="width: 320px; max-width: 100%;" value="${escapeHtml(defaultDocTitle)}" />
           </div>
           <button type="button" class="btn btn-sm btn-ghost" id="wizTryExampleBtn" style="color: var(--primary-action); border-color: var(--primary-action);">
-            ✨ Try an example with a few mistakes
+            Try an example with a few mistakes
           </button>
         </div>
 
@@ -2382,6 +2500,7 @@ async function renderWizard() {
         activeUploadedFile = null;
         if (fileInput) fileInput.value = '';
         if (fileCard) fileCard.style.display = 'none';
+      updateRunAuditBtnState();
         if (dropzone) dropzone.style.display = 'block';
       });
     }
@@ -2613,8 +2732,85 @@ function renderSourceContentPanel() {
       renderSourceContentPanel();
       renderFindingsCenterPanel();
       renderCorrectionRightPanel();
+      scrollRailToSelectedFinding();
     });
   });
+}
+
+function scrollSourceToSelectedFinding() {
+  const viewer = document.getElementById('sourceContentViewer');
+  if (!viewer || !AppState.selectedFindingId) return;
+  const activeMark = viewer.querySelector(`.source-highlight.selected-span, .source-highlight[data-finding-id="${AppState.selectedFindingId}"]`);
+  if (activeMark) {
+    activeMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    activeMark.focus?.();
+  }
+}
+
+function scrollRailToSelectedFinding() {
+  const container = document.getElementById('findingsListContainer');
+  if (!container || !AppState.selectedFindingId) return;
+  const activeCard = container.querySelector(`.finding-rail-card[data-finding-id="${AppState.selectedFindingId}"]`);
+  if (activeCard) {
+    activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+function selectFindingByIndex(index) {
+  if (!AppState.currentAudit || !AppState.currentAudit.findings) return;
+  const list = AppState.currentAudit.findings;
+  if (index < 0 || index >= list.length) return;
+  AppState.selectedFindingId = list[index].id;
+  renderSourceContentPanel();
+  renderFindingsCenterPanel();
+  renderCorrectionRightPanel();
+  scrollSourceToSelectedFinding();
+  scrollRailToSelectedFinding();
+}
+
+function handleResultsKeyNavigation(e) {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) {
+    return;
+  }
+  const modal = document.getElementById('commandPaletteModal');
+  if (modal && modal.style.display !== 'none') {
+    return;
+  }
+  if (AppState.activeView !== 'new-audit' || AppState.auditStage !== 'results' || !AppState.currentAudit) {
+    return;
+  }
+
+  const findings = (AppState.currentAudit.findings || []);
+  if (findings.length === 0) return;
+
+  const key = e.key.toLowerCase();
+  const currentIndex = findings.findIndex((f) => f.id === AppState.selectedFindingId);
+
+  if (key === 'j' || key === 'arrowdown') {
+    e.preventDefault();
+    const nextIdx = (currentIndex >= 0 && currentIndex < findings.length - 1) ? currentIndex + 1 : 0;
+    selectFindingByIndex(nextIdx);
+  } else if (key === 'k' || key === 'arrowup') {
+    e.preventDefault();
+    const prevIdx = (currentIndex > 0) ? currentIndex - 1 : findings.length - 1;
+    selectFindingByIndex(prevIdx);
+  } else if (key === 'a') {
+    e.preventDefault();
+    const curr = findings[currentIndex >= 0 ? currentIndex : 0];
+    if (curr && curr.suggested_correction && !['accepted', 'modified', 'dismissed'].includes(curr.review_state)) {
+      submitFindingDecision(curr.id, { decision: 'accept', reviewer_role: AppState.activeRole });
+    }
+  } else if (key === 'd') {
+    e.preventDefault();
+    const curr = findings[currentIndex >= 0 ? currentIndex : 0];
+    if (curr && !['accepted', 'modified', 'dismissed'].includes(curr.review_state)) {
+      const box = document.getElementById(`dismissBox_${curr.id}`);
+      if (box) {
+        box.style.display = 'block';
+        document.getElementById(`dismissInput_${curr.id}`)?.focus();
+      }
+    }
+  }
 }
 
 function renderFindingsCenterPanel() {
@@ -2657,51 +2853,229 @@ function renderFindingsCenterPanel() {
     const spanText = f.start_index >= 0
       ? `Paragraph ${escapeHtml(f.paragraph_ref.replace(/^P/, ''))}, characters ${f.start_index}–${f.end_index}`
       : `${escapeHtml(f.paragraph_ref)}`;
-    const simHtml = f.similarity_score !== null && f.similarity_score !== undefined
-      ? `<div><strong>Lexical overlap score:</strong> <span class="mono-id">${Number(f.similarity_score).toFixed(2)}</span> (topical retrieval similarity, not factual truth probability)</div>`
+    
+    // Label similarity strictly as "retrieval similarity (cosine, 0-1)" (never probability/confidence)
+    const simHtml = (f.similarity_score !== null && f.similarity_score !== undefined)
+      ? `<div style="margin-top: 4px;"><strong>retrieval similarity (cosine, 0-1):</strong> <span class="mono-id">${Number(f.similarity_score).toFixed(2)}</span> <span style="font-size: 11.5px; color: var(--slate-700);">(topical retrieval similarity, not factual truth probability)</span></div>`
       : '';
 
+    const hasSuggested = Boolean(f.suggested_correction && f.suggested_correction.trim());
+    const isResolved = ['accepted', 'modified', 'dismissed'].includes(f.review_state);
+
     return `
-      <div class="finding-card ${isSelected ? 'selected' : ''}" data-finding-id="${escapeHtml(f.id)}">
-        <div class="finding-card-top">
+      <div class="finding-rail-card ${isSelected ? 'selected' : ''}" data-finding-id="${escapeHtml(f.id)}" tabindex="0" role="region" aria-label="Finding ${escapeHtml(f.id)}: ${escapeHtml(f.issue_type)}">
+        <div class="finding-card-top" style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
           <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-            <span class="mono-id">${escapeHtml(f.pillar)}</span>
+            <span class="mono-id" style="font-weight: 600;">${escapeHtml(f.pillar)}</span>
             ${renderStateBadge(f.severity)}
           </div>
-          ${renderStateBadge(f.review_state)}
+          <div style="display: flex; align-items: center; gap: 6px;">
+            ${renderStateBadge(f.review_state)}
+            <button type="button" class="id-chip copy-id-chip" data-copy-text="${escapeHtml(f.id)}" title="Copy finding ID">${escapeHtml(f.id)}</button>
+          </div>
         </div>
 
-        <div class="finding-issue-title">${escapeHtml(f.issue_type)}</div>
-        <div class="finding-excerpt">"${escapeHtml(f.flagged_text)}"</div>
-        <div class="finding-explanation">${escapeHtml(f.explanation)}</div>
-
-        <div class="evidence-box">
-          <div><strong>Cited rule or fact:</strong> <span class="mono-id">${escapeHtml(f.rule_or_fact_id)}</span></div>
-          <div style="margin-top: 4px;"><strong>Evidence:</strong> ${escapeHtml(f.source_evidence)}</div>
+        <div class="finding-issue-title" style="font-size: 14px; font-weight: 700; color: var(--primary-ink); margin-top: 2px;">
+          ${escapeHtml(f.issue_type)}
         </div>
 
-        <!-- Section 01 & 04: Technical method moved into collapsible "How this was detected" detail -->
-        <details class="collapsible-details">
-          <summary>How this was detected</summary>
-          <div class="collapsible-details-body">
-            <div><strong>Finding ID:</strong> <span class="mono-id">${escapeHtml(f.id)}</span></div>
-            <div style="margin-top: 4px;"><strong>Source location:</strong> ${spanText}</div>
-            <div style="margin-top: 4px;"><strong>Detection method:</strong> ${escapeHtml(f.detection_method)}</div>
-            <div style="margin-top: 4px;"><strong>Engine tier:</strong> ${escapeHtml(f.engine_source)}</div>
+        <div class="finding-excerpt-box">
+          "${escapeHtml(f.flagged_text)}"
+        </div>
+
+        <div class="finding-explanation-text">
+          ${escapeHtml(f.explanation)}
+        </div>
+
+        <div class="evidence-box" style="background: var(--slate-50); border: 1px solid var(--border-color); border-radius: var(--radius-control); padding: 10px 12px; font-size: 12.5px;">
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+            <strong>Cited rule/fact:</strong>
+            <button type="button" class="id-chip copy-id-chip" data-copy-text="${escapeHtml(f.rule_or_fact_id)}" title="Copy rule/fact ID">${escapeHtml(f.rule_or_fact_id)}</button>
+          </div>
+          <div><strong>Evidence / source:</strong> ${escapeHtml(f.source_evidence)}</div>
+        </div>
+
+        <!-- Technical detection details -->
+        <details class="collapsible-details" style="font-size: 12px;">
+          <summary style="cursor: pointer; color: var(--slate-600); font-weight: 500;">Technical detection details</summary>
+          <div class="collapsible-details-body" style="padding-top: 8px; color: var(--slate-700); line-height: 1.5;">
+            <div><strong>Location:</strong> ${spanText}</div>
+            <div style="margin-top: 2px;"><strong>Detection method:</strong> ${escapeHtml(f.detection_method)}</div>
+            <div style="margin-top: 2px;"><strong>Engine tier:</strong> ${escapeHtml(f.engine_source)}</div>
             ${simHtml}
           </div>
         </details>
+
+        <!-- What the system does NOT know (Honest disclosure boundary) -->
+        <div class="honest-boundary-notice">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <div>
+            <strong>What the system does not know:</strong>
+            Deterministic &amp; lexical checks verify text against active guidelines. The engine cannot infer external trademark licenses, context parody, or signed contractual agreements superseding standard guidelines.
+          </div>
+        </div>
+
+        <!-- Suggested fix preview -->
+        ${hasSuggested ? `
+          <div style="font-size: 12.5px; padding: 8px 10px; background: var(--status-success-bg); border: 1px solid var(--status-success-border); border-radius: var(--radius-control); color: var(--slate-800);">
+            <strong>Suggested fix:</strong> "${escapeHtml(f.suggested_correction)}"
+          </div>
+        ` : ''}
+
+        <!-- Direct Actions on finding card -->
+        <div class="finding-card-actions-row">
+          <button type="button" class="btn btn-sm btn-accent direct-accept-btn" data-finding-id="${escapeHtml(f.id)}" ${(!hasSuggested || isResolved) ? 'disabled' : ''} title="${!hasSuggested ? 'No automated suggestion available; click Edit fix' : 'Accept verified correction'}">
+            Accept fix
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost direct-edit-toggle-btn" data-finding-id="${escapeHtml(f.id)}" style="border: 1px solid var(--border-color);" ${isResolved ? 'disabled' : ''}>
+            Edit fix
+          </button>
+          <button type="button" class="btn btn-sm btn-danger-outline direct-dismiss-toggle-btn" data-finding-id="${escapeHtml(f.id)}" ${isResolved ? 'disabled' : ''}>
+            Dismiss
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost direct-review-btn" data-finding-id="${escapeHtml(f.id)}" style="color: var(--slate-600);" ${f.review_state === 'needs_review' ? 'disabled' : ''}>
+            Mark for human review
+          </button>
+        </div>
+
+        <!-- Expandable Edit Form -->
+        <div class="inline-edit-box" id="editBox_${escapeHtml(f.id)}" style="display: none; padding-top: 10px; border-top: 1px dashed var(--border-color);">
+          <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">Custom replacement text:</label>
+          <textarea class="form-control inline-edit-textarea" id="editTextarea_${escapeHtml(f.id)}" rows="2" style="font-size: 13px; margin-bottom: 8px;">${escapeHtml(f.suggested_correction || f.flagged_text)}</textarea>
+          <div style="display: flex; gap: 6px;">
+            <button type="button" class="btn btn-sm btn-accent save-custom-edit-btn" data-finding-id="${escapeHtml(f.id)}">Apply edit</button>
+            <button type="button" class="btn btn-sm btn-ghost cancel-custom-edit-btn" data-finding-id="${escapeHtml(f.id)}">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Expandable Dismiss Form -->
+        <div class="inline-dismiss-box" id="dismissBox_${escapeHtml(f.id)}" style="display: none; padding-top: 10px; border-top: 1px dashed var(--border-color);">
+          <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">Reason for dismissal (required):</label>
+          <input type="text" class="form-control inline-dismiss-input" id="dismissInput_${escapeHtml(f.id)}" placeholder="e.g., Campaign disclaimer approved by legal counsel" value="${escapeHtml(f.decision_note || '')}" style="font-size: 13px; margin-bottom: 8px;" />
+          <div style="display: flex; gap: 6px;">
+            <button type="button" class="btn btn-sm btn-danger-outline confirm-dismiss-btn" data-finding-id="${escapeHtml(f.id)}">Confirm dismissal</button>
+            <button type="button" class="btn btn-sm btn-ghost cancel-dismiss-btn" data-finding-id="${escapeHtml(f.id)}">Cancel</button>
+          </div>
+        </div>
       </div>
     `;
   }).join('');
 
-  container.querySelectorAll('.finding-card').forEach((card) => {
+  // Wire card click selection
+  container.querySelectorAll('.finding-rail-card').forEach((card) => {
     card.addEventListener('click', (e) => {
-      if (e.target.closest('details')) return;
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('textarea') || e.target.closest('details')) {
+        return;
+      }
       AppState.selectedFindingId = card.getAttribute('data-finding-id');
       renderSourceContentPanel();
       renderFindingsCenterPanel();
       renderCorrectionRightPanel();
+      scrollSourceToSelectedFinding();
+    });
+  });
+
+  // Wire direct action buttons
+  container.querySelectorAll('.direct-accept-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const findingId = btn.getAttribute('data-finding-id');
+      await submitFindingDecision(findingId, {
+        decision: 'accept',
+        reviewer_role: AppState.activeRole,
+      });
+    });
+  });
+
+  container.querySelectorAll('.direct-edit-toggle-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const findingId = btn.getAttribute('data-finding-id');
+      const box = document.getElementById(`editBox_${findingId}`);
+      if (box) {
+        box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        if (box.style.display === 'block') {
+          document.getElementById(`editTextarea_${findingId}`)?.focus();
+        }
+      }
+    });
+  });
+
+  container.querySelectorAll('.save-custom-edit-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const findingId = btn.getAttribute('data-finding-id');
+      const customText = document.getElementById(`editTextarea_${findingId}`).value.trim();
+      if (!customText) {
+        showToast('Enter replacement text before applying an edited suggestion.');
+        return;
+      }
+      await submitFindingDecision(findingId, {
+        decision: 'modify',
+        modified_replacement: customText,
+        reviewer_role: AppState.activeRole,
+      });
+    });
+  });
+
+  container.querySelectorAll('.cancel-custom-edit-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const findingId = btn.getAttribute('data-finding-id');
+      const box = document.getElementById(`editBox_${findingId}`);
+      if (box) box.style.display = 'none';
+    });
+  });
+
+  container.querySelectorAll('.direct-dismiss-toggle-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const findingId = btn.getAttribute('data-finding-id');
+      const box = document.getElementById(`dismissBox_${findingId}`);
+      if (box) {
+        box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        if (box.style.display === 'block') {
+          document.getElementById(`dismissInput_${findingId}`)?.focus();
+        }
+      }
+    });
+  });
+
+  container.querySelectorAll('.confirm-dismiss-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const findingId = btn.getAttribute('data-finding-id');
+      const reason = document.getElementById(`dismissInput_${findingId}`).value.trim();
+      if (!reason) {
+        showToast('A written reason is required to dismiss a finding.');
+        return;
+      }
+      await submitFindingDecision(findingId, {
+        decision: 'dismiss',
+        reason: reason,
+        reviewer_role: AppState.activeRole,
+      });
+    });
+  });
+
+  container.querySelectorAll('.cancel-dismiss-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const findingId = btn.getAttribute('data-finding-id');
+      const box = document.getElementById(`dismissBox_${findingId}`);
+      if (box) box.style.display = 'none';
+    });
+  });
+
+  container.querySelectorAll('.direct-review-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const findingId = btn.getAttribute('data-finding-id');
+      await submitFindingDecision(findingId, {
+        decision: 'needs_review',
+        reason: 'Marked for human review by team',
+        reviewer_role: AppState.activeRole,
+      });
     });
   });
 }
@@ -4842,4 +5216,169 @@ async function renderEngineStatusView() {
       if (retryBtn) retryBtn.addEventListener('click', () => renderEngineStatusView());
     }
   }
+}
+
+
+function initCommandPalette() {
+  const modal = document.getElementById('commandPaletteModal');
+  const input = document.getElementById('commandPaletteInput');
+  const resultsContainer = document.getElementById('commandPaletteResults');
+  if (!modal || !input || !resultsContainer) return;
+
+  let activeIndex = 0;
+  let currentItems = [];
+
+  function getCommands() {
+    const list = [
+      { type: 'Action', label: 'New audit', detail: 'Start auditing new document copy or files', run: () => { AppState.auditStage = 'input'; switchView('new-audit'); } },
+      { type: 'Navigation', label: 'Go to Overview', detail: 'Workspace dashboard and recent audits', run: () => switchView('overview') },
+      { type: 'Navigation', label: 'Go to Brand guidelines', detail: 'Tone, preferred words, facts, colours, accessibility', run: () => switchView('brand-vault') },
+      { type: 'Navigation', label: 'Go to Review queue', detail: 'Track audits awaiting sign-off and approval', run: () => switchView('review-queue') },
+      { type: 'Navigation', label: 'Go to Guideline insights', detail: 'Ambiguity radar and recurring override patterns', run: () => switchView('ambiguity-radar') },
+      { type: 'Navigation', label: 'Go to Audit history', detail: 'Audited versions, word diffs, and approval audit logs', run: () => switchView('audit-history') },
+      { type: 'Navigation', label: 'Go to Settings', detail: 'Role selector and workspace preferences', run: () => switchView('settings') },
+      { type: 'Navigation', label: 'Go to Privacy and processing', detail: 'Engine self-tests and honest processing status', run: () => switchView('engine-status') },
+      { type: 'Navigation', label: 'Go to About & roadmap', detail: 'Architecture and verified system capabilities', run: () => switchView('about-roadmap') },
+      { type: 'Action', label: 'Run engine self-test', detail: 'Execute deterministic engine verification diagnostics', run: () => triggerEngineSelftest() },
+    ];
+
+    if (AppState.demoMode) {
+      list.push({
+        type: 'Action',
+        label: 'Reset demo workspace',
+        detail: 'Restore seeded demo guidelines and sample documents',
+        run: () => document.getElementById('resetDemoBtn')?.click(),
+      });
+    }
+
+    // Brands
+    (AppState.brands || []).forEach((b) => {
+      list.push({
+        type: 'Brand',
+        label: `Switch brand: ${b.name}`,
+        detail: `Brand ID: ${b.id} · v${b.version || 1}`,
+        run: async () => {
+          const sel = document.getElementById('brandSelector');
+          if (sel) {
+            sel.value = b.id;
+            sel.dispatchEvent(new Event('change'));
+          }
+        },
+      });
+    });
+
+    // Recent audits
+    if (AppState.overviewData && AppState.overviewData.recent_audits) {
+      AppState.overviewData.recent_audits.slice(0, 8).forEach((a) => {
+        list.push({
+          type: 'Audit',
+          label: `Open recent audit: ${a.document_name}`,
+          detail: `${a.id} · ${a.overall_status} · ${a.open_findings} open`,
+          run: () => openAuditById(a.id),
+        });
+      });
+    }
+
+    return list;
+  }
+
+  function renderPaletteList(q) {
+    const all = getCommands();
+    const query = (q || '').trim().toLowerCase();
+    currentItems = query
+      ? all.filter((item) => `${item.label} ${item.type} ${item.detail}`.toLowerCase().includes(query))
+      : all;
+
+    if (currentItems.length === 0) {
+      resultsContainer.innerHTML = '<div style="padding: 16px; font-size: 13px; color: var(--slate-700); text-align: center;">No matching commands found</div>';
+      return;
+    }
+
+    activeIndex = 0;
+    resultsContainer.innerHTML = currentItems.map((item, idx) => `
+      <div class="command-palette-item ${idx === 0 ? 'active' : ''}" data-idx="${idx}" role="option">
+        <div style="flex: 1;">
+          <div style="font-weight: 600; color: var(--primary-ink);">${escapeHtml(item.label)}</div>
+          <div style="font-size: 11.5px; color: var(--slate-700); margin-top: 2px;">${escapeHtml(item.detail)}</div>
+        </div>
+        <span class="status-badge badge-neutral" style="font-size: 10px;">${escapeHtml(item.type)}</span>
+      </div>
+    `).join('');
+
+    resultsContainer.querySelectorAll('.command-palette-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const idx = parseInt(el.getAttribute('data-idx'), 10);
+        executeItem(idx);
+      });
+    });
+  }
+
+  function executeItem(idx) {
+    if (currentItems[idx]) {
+      closePalette();
+      currentItems[idx].run();
+    }
+  }
+
+  function openPalette() {
+    modal.style.display = 'flex';
+    input.value = '';
+    renderPaletteList('');
+    setTimeout(() => input.focus(), 50);
+  }
+
+  function closePalette() {
+    modal.style.display = 'none';
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      if (modal.style.display === 'none' || !modal.style.display) {
+        openPalette();
+      } else {
+        closePalette();
+      }
+    } else if (e.key === 'Escape' && modal.style.display !== 'none') {
+      closePalette();
+    }
+  });
+
+  input.addEventListener('input', (e) => {
+    renderPaletteList(e.target.value);
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (currentItems.length > 0) {
+        activeIndex = (activeIndex + 1) % currentItems.length;
+        updateActiveItem();
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (currentItems.length > 0) {
+        activeIndex = (activeIndex - 1 + currentItems.length) % currentItems.length;
+        updateActiveItem();
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      executeItem(activeIndex);
+    }
+  });
+
+  function updateActiveItem() {
+    resultsContainer.querySelectorAll('.command-palette-item').forEach((el, idx) => {
+      el.classList.toggle('active', idx === activeIndex);
+      if (idx === activeIndex) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      closePalette();
+    }
+  });
 }

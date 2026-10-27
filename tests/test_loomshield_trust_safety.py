@@ -714,3 +714,98 @@ def test_fact_proposal_vs_verification_permissions(monkeypatch):
     )
     assert res_verify_ok.status_code == 200
 
+
+def test_approved_audit_immutable_to_decisions_and_rerun():
+    """Approved audits reject decisions and reruns with 409 Conflict."""
+    aud = client.post(
+        "/api/audits",
+        json={"brand_id": "novapay", "document_name": "Immutable Test", "content": "NovaPay Core compliant content."}
+    ).json()
+    aid = aud["id"]
+    client.post(f"/api/audits/{aid}/workflow", json={"new_state": "In Review"})
+    client.post(f"/api/audits/{aid}/workflow", json={"new_state": "Approved", "comment": "Approved"})
+
+    # Finding decision on approved audit returns 409
+    res_dec = client.post(f"/api/audits/{aid}/findings/FIND-FAKE/decision", json={"decision": "dismiss", "reason": "reason"})
+    assert res_dec.status_code == 409
+    assert "approved" in res_dec.json()["detail"].lower()
+
+    # Rerun on approved audit returns 409
+    res_rerun = client.post(f"/api/audits/{aid}/rerun")
+    assert res_rerun.status_code == 409
+    assert "approved" in res_rerun.json()["detail"].lower()
+
+
+def test_rerun_parser_failed_audit_stays_check_failed():
+    """Rerun on a parser-failed audit preserves Check Failed state and does not pass clean."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO audits (
+            id, brand_id, brand_version, document_name, input_format,
+            original_content, current_content, overall_status, pillar_states_json, created_at, updated_at
+        ) VALUES (
+            'AUD-TEST-RERUN-FAIL', 'novapay', 1, 'Scanned Doc', 'pdf',
+            '[Unparseable file: Corrupted PDF]', '[Unparseable file: Corrupted PDF]', 'Draft',
+            '{"Tone and Voice": "Check Failed", "Visual and Logo Consistency": "Check Failed"}',
+            '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z'
+        )
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO findings (
+            id, audit_id, pillar, issue_type, severity, flagged_text,
+            paragraph_ref, start_index, end_index, rule_or_fact_id,
+            source_evidence, explanation, suggested_correction, detection_method,
+            engine_source, review_state, decision_note, updated_at
+        ) VALUES (
+            'FIND-FAIL-01', 'AUD-TEST-RERUN-FAIL', 'Visual and Logo Consistency', 'Parser Failure', 'critical',
+            'Corrupted PDF', 'DOC', -1, -1, 'RULE-FAIL',
+            'pypdf', 'Scanned or unreadable document', 'OCR required', 'error',
+            'pypdf', 'open', '', '2026-10-24T00:00:00Z'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    res = client.post("/api/audits/AUD-TEST-RERUN-FAIL/rerun")
+    assert res.status_code == 200
+    rerun_data = res.json()
+    assert rerun_data["pillar_states"]["Visual and Logo Consistency"] == "Check Failed"
+    assert rerun_data["open_findings_count"] >= 1
+
+
+def test_demo_reset_forbidden_in_production(monkeypatch):
+    """POST /api/demo/reset returns 403 Forbidden when workspace mode is production."""
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "production")
+    res = client.post("/api/demo/reset")
+    assert res.status_code == 403
+    assert "demo workspace mode" in res.json()["detail"].lower()
+
+
+def test_audits_pagination():
+    """GET /api/audits supports total, limit, and offset query parameters."""
+    res = client.get("/api/audits?limit=2&offset=0")
+    assert res.status_code == 200
+    data = res.json()
+    assert "total" in data
+    assert "limit" in data
+    assert "offset" in data
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+    assert isinstance(data["audits"], list)
+    assert len(data["audits"]) <= 2
+
+
+def test_cors_origins_env_parsing(monkeypatch):
+    """CORS origins parse comma-separated lists and exclude obsolete domains."""
+    from backend.main import parse_cors_origins
+    origins = parse_cors_origins("https://app1.example.com, https://app2.example.com")
+    assert "https://app1.example.com" in origins
+    assert "https://app2.example.com" in origins
+    assert "https://inkloom-art-loom-shield.vercel.app" not in origins
+
+

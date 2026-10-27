@@ -15,6 +15,25 @@
 }
 
 :root {
+  /* Spacing Scale: 4, 8, 12, 16, 24, 32, 48 */
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+
+  /* Corner Radii: 8 (controls) and 12 (cards) */
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+
+  /* 1px neutral borders */
+  --border-color: #E2E8F0;
+  --border-neutral: 1px solid #E2E8F0;
+
   /* Slate neutral palette */
   --slate-50: #F8FAFC;
   --slate-100: #F1F5F9;
@@ -27,31 +46,35 @@
   --slate-800: #1E293B;
   --slate-900: #0F172A;
 
-  /* Primary brand & action colour (WCAG AA compliant contrast > 4.5:1) */
+  /* Navy sidebar */
+  --sidebar-bg: #0F172A;
+  --primary-ink: #0F172A;
+  --primary-charcoal: #1E293B;
+
+  /* Primary orange (WCAG AA compliant contrast > 4.5:1) */
   --primary-action: #C84624;
   --primary-action-hover: #AF381A;
   --primary-action-active: #962E14;
-  --primary-ink: #0F172A;
-  --primary-charcoal: #1E293B;
-  --bg-main: #F8FAFC;
-  --bg-card: #FFFFFF;
-
   --brand-accent: #C84624;
   --brand-accent-soft: #FEF3F0;
   --primary-accent: #C84624;
   --primary-accent-hover: #AF381A;
 
-  /* Semantic status tokens (WCAG AA verified) */
+  /* Surfaces & backgrounds (flat, no glass or gradients) */
+  --bg-main: #F8FAFC;
+  --bg-card: #FFFFFF;
+  --surface-subtle: #F1F5F9;
+
+  /* Semantic status tokens (WCAG AA compliant, contrast >= 4.5:1) */
   --status-success: #0F766E;
   --status-success-bg: #ECFDF5;
   --status-success-border: #A7F3D0;
 
-  --warning-accent: #D97706;
-  --status-warning: #8A4B08;
+  --status-warning: #B45309;
   --status-warning-bg: #FFFBEB;
   --status-warning-border: #FDE68A;
 
-  --status-error: #B42318;
+  --status-error: #B91C1C;
   --status-error-bg: #FEF2F2;
   --status-error-border: #FECACA;
 
@@ -64,39 +87,28 @@
   --status-neutral-border: #CBD5E1;
 
   --text-primary: #0F172A;
-  --text-secondary: #64748B;
-  --border-color: #E2E8F0;
-  --surface-subtle: #F1F5F9;
+  --text-secondary: #475569;
 
-  /* Spacing Scale (4, 8, 12, 16, 24, 32) */
-  --space-4: 4px;
-  --space-8: 8px;
-  --space-12: 12px;
-  --space-16: 16px;
-  --space-24: 24px;
-  --space-32: 32px;
+  /* Shadows ONLY on popovers and modals; cards and buttons have none */
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-card: none;
+  --shadow-subtle: none;
+  --shadow-popover: 0 4px 6px -1px rgba(15, 23, 42, 0.1), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
+  --shadow-modal: 0 20px 25px -5px rgba(15, 23, 42, 0.15), 0 8px 10px -6px rgba(15, 23, 42, 0.1);
 
-  /* Corner Radii (8px and 12px) */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-card: 12px;
-
-  /* Two Shadow Levels */
-  --shadow-sm: 0 1px 2px 0 rgba(16, 24, 40, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(16, 24, 40, 0.08), 0 2px 4px -2px rgba(16, 24, 40, 0.04);
-  --shadow-subtle: var(--shadow-sm);
-
-  /* Typography Scale (12, 14, 16, 20, 24, 32) */
+  /* Typography Scale */
   --text-xs: 12px;
   --text-sm: 14px;
-  --text-base: 16px;
-  --text-lg: 20px;
-  --text-xl: 24px;
-  --text-2xl: 32px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
 
-  --font-heading: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-body: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Inter for UI, JetBrains Mono only for IDs/hashes/versions */
+  --font-heading: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   --sidebar-width: 240px;
 }
@@ -311,7 +323,7 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-control);
   background-color: rgba(255, 255, 255, 0.12);
   color: #E4E7EC;
   white-space: nowrap;
@@ -599,7 +611,7 @@ h2.section-heading {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-card);
   padding: 20px;
-  box-shadow: var(--shadow-subtle);
+  box-shadow: none;
 }
 
 .card-header {
@@ -619,7 +631,7 @@ h2.section-heading {
   color: var(--primary-ink);
 }
 
-/* Semantic Status Badges (Always Icon + Explicit Text, High Contrast) */
+/* Semantic Status Badges (Always Icon + Explicit Text, High Contrast, 8px radius) */
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -627,7 +639,7 @@ h2.section-heading {
   font-size: 12px;
   font-weight: 600;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-control);
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -691,10 +703,16 @@ h2.section-heading {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-card);
   padding: 20px;
-  box-shadow: var(--shadow-subtle);
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.metric-card:hover {
+  border-color: var(--slate-400);
 }
 
 .metric-label {
@@ -1939,7 +1957,8 @@ ins.diff-ins {
 }
 
 .wizard-tile.selected .wizard-tile-title {
-  color: var(--primary-action);
+  color: #962E14;
+  font-weight: 700;
 }
 
 .wizard-tile-desc {
@@ -2015,5 +2034,386 @@ ins.diff-ins {
   .wizard-tiles-grid {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+}
+
+/* ============================================================================
+   ROUND 3 DAY 1: DESIGN SYSTEM, TABULAR NUMERALS, SPLIT RESULTS, PALETTE
+   ============================================================================ */
+
+/* Tabular Numerals in Tables */
+table, th, td, .tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-card);
+  background: var(--bg-card);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.data-table th {
+  background: var(--slate-50);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.data-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13.5px;
+  vertical-align: middle;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr:hover {
+  background-color: var(--slate-50);
+}
+
+/* ID Chips with JetBrains Mono and Click-to-Copy */
+.id-chip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--slate-800);
+  background: var(--slate-100);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
+  padding: 2px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.id-chip:hover {
+  background-color: var(--slate-200);
+  border-color: var(--slate-300);
+}
+
+.id-chip svg {
+  color: var(--slate-500);
+  flex-shrink: 0;
+}
+
+/* Skeleton Loaders */
+.skeleton {
+  background: linear-gradient(90deg, #F1F5F9 25%, #E2E8F0 50%, #F1F5F9 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  border-radius: var(--radius-control);
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Alerts (role=alert) */
+.alert {
+  padding: 12px 16px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-color);
+  background-color: var(--surface-subtle);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.alert-info { background: var(--status-info-bg); border-color: var(--status-info-border); color: var(--status-info); }
+.alert-success { background: var(--status-success-bg); border-color: var(--status-success-border); color: var(--status-success); }
+.alert-warning { background: var(--status-warning-bg); border-color: var(--status-warning-border); color: var(--status-warning); }
+.alert-danger, .alert-error { background: var(--status-error-bg); border-color: var(--status-error-border); color: var(--status-error); }
+
+/* Results Signature Split Layout & Finding Rail (Task 6) */
+.results-split-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(380px, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.finding-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.finding-rail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.finding-rail-card {
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-card);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  transition: border-color 0.15s ease;
+}
+
+.finding-rail-card:hover {
+  border-color: var(--slate-400);
+}
+
+.finding-rail-card.selected {
+  border-color: var(--primary-action);
+  background-color: #FFFDFD;
+}
+
+.finding-rail-card.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background-color: var(--primary-action);
+}
+
+.finding-excerpt-box {
+  background-color: var(--slate-50);
+  border-left: 3px solid var(--slate-300);
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  font-style: italic;
+}
+
+.finding-explanation-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.honest-boundary-notice {
+  background-color: var(--slate-50);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--slate-600);
+  line-height: 1.45;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.honest-boundary-notice svg {
+  color: var(--slate-500);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.finding-card-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--slate-100);
+  margin-top: 4px;
+}
+
+.keyboard-shortcuts-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  background: var(--slate-100);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.keyboard-shortcut-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--primary-ink);
+}
+
+/* Command Palette (Task 7) */
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.45);
+  z-index: 2000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+}
+
+.command-palette {
+  background-color: #FFFFFF;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-card);
+  width: 100%;
+  max-width: 580px;
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.command-palette-input-wrap {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+  gap: 12px;
+}
+
+.command-palette-input {
+  border: none;
+  outline: none;
+  font-size: 15px;
+  width: 100%;
+  color: var(--text-primary);
+  background: transparent;
+  font-family: var(--font-body);
+}
+
+.command-palette-list {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.command-palette-item {
+  padding: 10px 14px;
+  border-radius: var(--radius-control);
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.command-palette-item:hover, .command-palette-item.selected {
+  background-color: var(--slate-100);
+  color: var(--primary-action);
+}
+
+.command-palette-item-shortcut {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--slate-200);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Responsive Table Card Stacking & 44px Touch Targets (Task 8) */
+@media (max-width: 768px) {
+  .results-split-layout {
+    grid-template-columns: 1fr;
+  }
+  .data-table, table.data-table {
+    display: block;
+    width: 100%;
+    border: none;
+  }
+  .data-table thead {
+    display: none;
+  }
+  .data-table tbody {
+    display: block;
+    width: 100%;
+  }
+  .data-table tr {
+    display: block;
+    background: #FFFFFF;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-card);
+    margin-bottom: 12px;
+    padding: 14px 16px;
+  }
+  .data-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border: none;
+    border-bottom: 1px solid var(--slate-100);
+    font-size: 13.5px;
+  }
+  .data-table td:last-child {
+    border-bottom: none;
+    padding-top: 10px;
+    justify-content: flex-end;
+  }
+  .data-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--slate-500);
+    margin-right: 12px;
+  }
+  .btn, button, select, input[type="text"], input[type="search"], .nav-item, .segmented-btn, .filter-pill {
+    min-height: 44px;
+  }
+  .mobile-menu-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 375px) {
+  body, .app-shell, .main-wrapper, .page-container {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
+  .page-container {
+    padding: 12px 8px;
+  }
+  .card, .finding-rail-card {
+    padding: 14px 12px;
+  }
+  .metrics-grid {
+    gap: 8px;
+  }
+  .metric-card {
+    padding: 14px 12px;
   }
 }

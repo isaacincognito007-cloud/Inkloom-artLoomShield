@@ -19,7 +19,7 @@
 4. **Atomic Finding Corrections & Lock:** Concurrency-protected finding decisions with compare-and-swap; approved audits are permanently locked against drift.
 5. **Robust Rate Limiting & DoS Protection:** Per-IP sliding window rate limiting with reverse proxy hop resolution (`x-vercel-forwarded-for` / multi-hop XFF), global request ceilings, and bounded memory tracking.
 6. **Multi-Format Ingestion Suite:** Audits `.pdf`, `.docx`, `.md`, `.html`, `.txt`, `.svg`, `.png`, and `.jpg` with local extraction and page/paragraph mapping.
-7. **112/112 Automated Test Pass Rate:** 100% automated test pass rate verified across trust & safety, wizard generation, PDF extraction, concurrency, and security regression suites.
+7. **Automated Test Pass Rate:** 100% automated test pass rate verified across trust & safety, wizard generation, PDF extraction, concurrency, and security regression suites.
 
 ### Round 3 Implementation Plan (Three Major Improvements)
 1. **Guideline Clarity Rewriter:** Interactive rewriter analyzing baseline override feedback to resolve ambiguous rules into deterministic checks.
@@ -34,7 +34,7 @@ LOOMSHIELD_WORKSPACE_MODE=demo
 LOOMSHIELD_DEPLOYMENT=hosted
 LOOMSHIELD_USER_ROLE=Brand Administrator
 LOOMSHIELD_USER_NAME=Sample workspace user
-CORS_ORIGINS=https://inkloom-artloomshield-frontend.vercel.app,https://inkloom-artloomshield.vercel.app,http://localhost:3000
+LOOMSHIELD_CORS_ORIGINS=https://inkloom-artloomshield-frontend.vercel.app,http://localhost:3000
 ```
 
 ---
@@ -110,7 +110,7 @@ python run_loomshield.py --demo
 - **Interactive OpenAPI Documentation:** `http://127.0.0.1:8000/docs`
 - **Engine Status & Privacy Disclosure:** `http://127.0.0.1:8000/api/engine-status`
 
-### Run the Automated Test Suite (112/112 Automated Tests Passing)
+### Run the Automated Test Suite (100% Automated Tests Passing)
 ```bash
 # Run all unit, cycle, API, PDF, and wizard tests
 python -m pytest -q
@@ -128,6 +128,7 @@ python -m pytest -q
 | `LOOMSHIELD_USER_ROLE` | `Brand Administrator`, `Reviewer`, `Content Creator` | `Content Creator` (hosted) / `Brand Administrator` (local) | Server-enforced role. Client headers cannot escalate role in production. |
 | `LOOMSHIELD_USER_NAME` | String | `Workspace owner` | Display name stored in audit history and event log. |
 | `LOOMSHIELD_DB_PATH` | File Path | `loomshield.db` | Explicit path to SQLite file (mount to persistent disk on Render). |
+| `LOOMSHIELD_CORS_ORIGINS` | Comma-separated URLs | Default localhost + Vercel origins | Allowed origins for browser CORS access. |
 | `LOOMSHIELD_MAX_UPLOAD_MB` | Integer (1-10) | `5` | File upload safety limit (5 MB). |
 | `LOOMSHIELD_MAX_PDF_PAGES` | Integer (1-500) | `100` | PDF page processing quota. |
 | `LOOMSHIELD_CORS_ORIGINS` | Comma-separated URLs | Configured list | Inbound CORS origin allowlist. Configured for production frontend domain. |
