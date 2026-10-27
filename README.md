@@ -131,4 +131,22 @@ python -m pytest -q
 | `LOOMSHIELD_CORS_ORIGINS` | Comma-separated URLs | Default localhost + Vercel origins | Allowed origins for browser CORS access. |
 | `LOOMSHIELD_MAX_UPLOAD_MB` | Integer (1-10) | `5` | File upload safety limit (5 MB). |
 | `LOOMSHIELD_MAX_PDF_PAGES` | Integer (1-500) | `100` | PDF page processing quota. |
-| `LOOMSHIELD_CORS_ORIGINS` | Comma-separated URLs | Configured list | Inbound CORS origin allowlist. Configured for production frontend domain. |
+| `LOOMSHIELD_SIGNING_KEY` | Base64 32-byte Ed25519 seed | Ephemeral per-process key | Signs compliance certificates (`alg: "Ed25519"`). Never logged. |
+| `LOOMSHIELD_SESSION_SECRET` | Secret string | Random 32-byte secret per process | Signs 8-hour HMAC-SHA256 demo identity tokens (`POST /api/demo/login`). |
+
+---
+
+## 7. Signed Compliance Certificate Threat Model & Separation of Duties
+
+### Signed Compliance Certificate Threat Model (5-Line Summary)
+1. **Cryptographic Issuer Proof:** Each certificate envelope (`{payload, alg: "Ed25519", kid, signature_b64}`) is signed with Ed25519 over canonical UTF-8 JSON (`sort_keys=True, separators=(",", ":"), ensure_ascii=False`), proving which signing key (`kid`, first 16 hex chars of `SHA-256(public_key)`) issued the record.
+2. **Tamper Evidence:** Any alteration to the certified payload (`content_sha256`, `original_content_sha256`, `brand_version`, `pillar_states`, `findings_summary`, `dismissals`, `approval`, or `issued_at`) invalidates the Ed25519 signature both in the online `/api/certificates/verify` endpoint and offline via `python scripts/verify_certificate.py cert.json --public-key <b64>`.
+3. **Server Content-Hash Drift Detection:** When verified on the issuing server, `/api/certificates/verify` additionally checks whether the stored audit record's current content SHA-256 still matches the certified `content_sha256`.
+4. **Non-Legal Scope:** A certificate proves who issued it and that the LoomShield review workflow was not altered after issuance; it **does not prove that the content is legally or regulatorily compliant** and is not legal advice.
+5. **Ephemeral Demo Key Caveat:** When `LOOMSHIELD_SIGNING_KEY` is not set, the server generates an ephemeral Ed25519 key at startup and explicitly labels every certificate and verification response `"ephemeral demo key: valid only until the server restarts"`.
+
+### Demo Identities & Separation of Duties
+- **Seeded Demo Users:** `Priya Nair` (`usr_priya`, `Content Creator`), `Marcus Lee` (`usr_marcus`, `Reviewer`), and `Ava Chen` (`usr_ava`, `Brand Administrator`).
+- **Signed Bearer Tokens:** `POST /api/demo/login` returns an 8-hour HMAC-SHA256 token (`Authorization: Bearer <token>`). Server role and actor identity come from the verified token, never from an unverified header.
+- **Separation of Duties Rule:** In demo mode, the user who submitted an audit for review (`audits.submitted_by_user_id`) cannot approve that same audit (`403 PERMISSION_DENIED`); a different Reviewer or Brand Administrator must approve it.
+- **Production Limitation:** Demo sign-in demonstrates separation of duties without requiring external accounts; anyone using the demo link can switch between demo users. Production mode (`LOOMSHIELD_WORKSPACE_MODE=production`) keeps its existing server-configured role behavior unless integrated with an enterprise identity provider.

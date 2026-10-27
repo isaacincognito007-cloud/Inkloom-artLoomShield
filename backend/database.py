@@ -100,6 +100,22 @@ def allocate_color_id(cur: sqlite3.Cursor, brand_id: str = "") -> str:
     return f"CLR-CUSTOM-{next_num:03d}"
 
 
+def allocate_certificate_id(cur: sqlite3.Cursor) -> str:
+    """Allocate next monotonic CERT-XXXX ID sequentially inside the transaction."""
+    cur.execute("SELECT MAX(CAST(SUBSTR(id, 6) AS INTEGER)) AS max_id FROM certificates WHERE id LIKE 'CERT-%'")
+    row = cur.fetchone()
+    next_num = (row["max_id"] or 1000) + 1 if row else 1001
+    return f"CERT-{next_num}"
+
+
+def _ensure_column(cur: sqlite3.Cursor, table: str, column: str, col_def: str) -> None:
+    """Idempotent migration helper: add column to table if it does not already exist."""
+    cur.execute(f"PRAGMA table_info({table})")
+    existing = {row["name"] for row in cur.fetchall()}
+    if column not in existing:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+
+
 
 def init_db() -> None:
     conn = get_connection()
@@ -287,14 +303,55 @@ def init_db() -> None:
             event_type TEXT NOT NULL,
             actor_name TEXT NOT NULL,
             actor_role TEXT NOT NULL,
+            actor_user_id TEXT DEFAULT '',
             summary TEXT NOT NULL,
             detail_json TEXT NOT NULL DEFAULT '{}',
             version_number INTEGER DEFAULT NULL,
             created_at TEXT NOT NULL,
             FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS certificates (
+            id TEXT PRIMARY KEY,
+            audit_id TEXT NOT NULL UNIQUE,
+            payload_json TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            kid TEXT NOT NULL,
+            issued_at TEXT NOT NULL,
+            issued_by TEXT NOT NULL,
+            FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS demo_users (
+            user_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            initials TEXT NOT NULL,
+            role TEXT NOT NULL,
+            title TEXT NOT NULL
+        );
         """
     )
+
+    # Idempotent schema migrations for existing SQLite files
+    _ensure_column(cur, "audits", "submitted_by_user_id", "TEXT DEFAULT ''")
+    _ensure_column(cur, "audits", "submitted_by_name", "TEXT DEFAULT ''")
+    _ensure_column(cur, "approvals", "approver_user_id", "TEXT DEFAULT ''")
+    _ensure_column(cur, "approvals", "approver_name", "TEXT DEFAULT ''")
+    _ensure_column(cur, "audit_events", "actor_user_id", "TEXT DEFAULT ''")
+
+    # Ensure demo_users are seeded when in demo or test workspace
+    if _should_seed_workspace():
+        cur.executemany(
+            """
+            INSERT OR REPLACE INTO demo_users (user_id, name, initials, role, title)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                ("usr_priya", "Priya Nair", "PN", "Content Creator", "Product Marketing Writer"),
+                ("usr_marcus", "Marcus Lee", "ML", "Reviewer", "Editorial & Brand Reviewer"),
+                ("usr_ava", "Ava Chen", "AC", "Brand Administrator", "Head of Brand Governance"),
+            ],
+        )
 
     # Only the isolated sample workspace or test runs are pre-populated. Production starts empty.
     cur.execute("SELECT COUNT(*) AS cnt FROM brands")
@@ -315,18 +372,20 @@ def record_audit_event(
     detail: dict = None,
     version_number: int = None,
     created_at: str = None,
+    actor_user_id: str = "",
 ) -> None:
     cur.execute(
         """
         INSERT INTO audit_events
-        (audit_id, event_type, actor_name, actor_role, summary, detail_json, version_number, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (audit_id, event_type, actor_name, actor_role, actor_user_id, summary, detail_json, version_number, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             audit_id,
             event_type,
             actor_name,
             actor_role,
+            actor_user_id or "",
             summary,
             json.dumps(detail or {}),
             version_number,
@@ -992,13 +1051,16 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
         seeded_revisions,
     )
 
+    cur.execute(
+        "UPDATE audits SET submitted_by_user_id = 'usr_priya', submitted_by_name = 'Priya Nair' WHERE id IN ('AUD-1001', 'AUD-1002')"
+    )
     aud2_sha = hashlib.sha256(aud2_rev.encode("utf-8")).hexdigest()
     cur.execute(
         """
         INSERT INTO approvals
-        (audit_id, previous_state, new_state, approver_role, version_reviewed,
+        (audit_id, previous_state, new_state, approver_role, approver_user_id, approver_name, version_reviewed,
          unresolved_findings_count, override_acknowledged, comment, content_sha256, created_at)
-        VALUES (?, 'Revised', 'Approved', 'Reviewer', 2, 0, 0, 'All findings resolved and verified against Fact Sheet FACT-101.', ?, ?)
+        VALUES (?, 'Revised', 'Approved', 'Reviewer', 'usr_marcus', 'Marcus Lee', 2, 0, 0, 'All findings resolved and verified against Fact Sheet FACT-101.', ?, ?)
         """,
         ("AUD-1002", aud2_sha, now),
     )
@@ -1006,9 +1068,9 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
     cur.execute(
         """
         INSERT INTO approvals
-        (audit_id, previous_state, new_state, approver_role, version_reviewed,
+        (audit_id, previous_state, new_state, approver_role, approver_user_id, approver_name, version_reviewed,
          unresolved_findings_count, override_acknowledged, comment, content_sha256, created_at)
-        VALUES (?, 'Draft', 'In Review', 'Content Creator', 2, 1, 0, 'Submitted for review.', ?, ?)
+        VALUES (?, 'Draft', 'In Review', 'Content Creator', 'usr_priya', 'Priya Nair', 2, 1, 0, 'Submitted for review.', ?, ?)
         """,
         ("AUD-1001", aud1_sha, now),
     )
@@ -1091,6 +1153,7 @@ def reset_demo_workspace() -> None:
     cur = conn.cursor()
     cur.executescript(
         """
+        DELETE FROM certificates;
         DELETE FROM audit_events;
         DELETE FROM guideline_feedback;
         DELETE FROM approvals;
