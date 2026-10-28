@@ -33,35 +33,43 @@ AXE_PATH = E2E_DIR / "axe.min.js"
 @pytest.fixture(scope="module")
 def live_server_url():
     """Start an ephemeral uvicorn server on a free local port for E2E tests."""
+    import urllib.request
     import uvicorn
     from backend.main import app
     from backend.database import init_db
 
-    os.environ["LOOMSHIELD_WORKSPACE_MODE"] = "demo"
-    init_db()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
+        init_db()
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    _, port = sock.getsockname()
-    sock.close()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        _, port = sock.getsockname()
+        sock.close()
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
+        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
 
-    base_url = f"http://127.0.0.1:{port}"
-    ready_event = threading.Event()
-    import urllib.request
-    for _ in range(80):
+        base_url = f"http://127.0.0.1:{port}"
+        ready_event = threading.Event()
+        server_ready = False
+        for _ in range(80):
+            try:
+                with urllib.request.urlopen(f"{base_url}/api/session", timeout=0.5) as resp:
+                    if resp.status == 200:
+                        server_ready = True
+                        break
+            except Exception:
+                ready_event.wait(0.05)
+        if not server_ready:
+            server.should_exit = True
+            pytest.fail(f"Ephemeral E2E server at {base_url} did not become ready within timeout.")
         try:
-            with urllib.request.urlopen(f"{base_url}/api/session", timeout=0.5) as resp:
-                if resp.status == 200:
-                    break
-        except Exception:
-            ready_event.wait(0.05)
-    yield base_url
-    server.should_exit = True
+            yield base_url
+        finally:
+            server.should_exit = True
 
 
 def _launch_browser(p):
@@ -368,5 +376,34 @@ def test_loomshield_ui_viewports_soft_glass_and_e2e_flow(live_server_url):
         page.wait_for_function("() => AppState.demoToken === '' && AppState.userId === ''")
         expect(page.locator("#toastContainer")).to_contain_text("Your demo session expired. Sign in again.")
         expect(page.locator("#accountRoleBtn")).to_contain_text("Sample workspace user")
+
+        # 9. B6 & C4: Guideline Clarity Rewriter UI + Heatmap Inspector UI (and axe 0 violations)
+        page.evaluate("AppState.activeBrandId = 'novapay'")
+        page.click(".sidebar-nav .nav-item[data-view='ambiguity-radar']")
+        page.wait_for_selector(".clarity-rewriter-box", state="visible", timeout=5000)
+        expect(page.locator("#ambiguityRadarContainer")).to_contain_text("suggestion for human sign-off")
+        expect(page.locator(".vague-span-highlight").first).to_be_visible()
+        if axe_js:
+            assert len(_run_axe(page, axe_js)) == 0
+
+        # Upload a synthetic SVG with a logo and text element to open the Heatmap Inspector in the workspace
+        page.evaluate("""async () => {
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160"><title>Heatmap E2E Asset</title><rect x="0" y="0" width="240" height="160" fill="#FFFFFF"/><rect id="logo" data-loomshield-logo="true" x="24" y="24" width="60" height="30" fill="#17191C"/><text x="24" y="100" fill="#17191C" font-size="16">Compliant SVG Text</text></svg>';
+            const fd = new FormData();
+            fd.append('brand_id', 'novapay');
+            fd.append('document_name', 'E2E Heatmap SVG');
+            fd.append('grid_size', '2');
+            fd.append('image_alt_text', 'NovaPay vector card with logo and headline text');
+            fd.append('file', new Blob([svg], { type: 'image/svg+xml' }), 'e2e_heatmap.svg');
+            const r = await fetch('/api/audits/upload', { method: 'POST', body: fd });
+            const aud = await r.json();
+            await openAuditById(aud.id);
+        }""")
+        page.wait_for_selector("#heatmapInspectorPanel", state="visible", timeout=5000)
+        expect(page.locator("#heatmapOverlayCanvas")).to_be_visible()
+        expect(page.locator("#heatmapCellsTable")).to_be_visible()
+        expect(page.locator("#heatmapInspectorPanel")).to_contain_text("Contrast measured for 1 text elements; text inside raster images is not detected.")
+        if axe_js:
+            assert len(_run_axe(page, axe_js)) == 0
 
         browser.close()

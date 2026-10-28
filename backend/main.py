@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import base64
 import hashlib
 import json
 import logging
@@ -44,6 +45,7 @@ from .config import (
 from .database import (
     allocate_audit_id,
     allocate_certificate_id,
+    allocate_guideline_revision_id,
     allocate_color_id,
     allocate_fact_id,
     allocate_rule_id,
@@ -64,6 +66,14 @@ from .engine import (
     run_engine_selftest,
     run_six_pillar_audit,
 )
+from .clarity_rewriter import (
+    correlate_ambiguity_and_overrides,
+    extract_numeric_tokens,
+    generate_candidate_rewrite,
+    load_vague_lexicon,
+    score_rule_ambiguity,
+)
+from .heatmap import inspect_visual_heatmap, sanitize_svg_markup
 from .rate_limiter import SimpleIpRateLimiter, get_client_ip
 from .wizard import (
     WIZARD_OPTIONS,
@@ -433,6 +443,7 @@ def persist_audit_record(
     actor_role: str = "Content Creator",
     actor_name: str = "",
     actor_user_id: str = "",
+    visual_asset_b64: str = "",
 ) -> str:
     now = datetime.now(timezone.utc).isoformat()
     vault = get_brand_vault_bundle(brand_id)
@@ -476,6 +487,8 @@ def persist_audit_record(
         )
 
         finding_rows = []
+        if visual_asset_b64:
+            cur.execute("UPDATE audits SET visual_asset_b64 = ? WHERE id = ?", (visual_asset_b64, audit_id))
         for idx, f in enumerate(audit_output["findings"], start=1):
             finding_pk = f"{audit_id}-F{idx:02d}"
             finding_rows.append(
@@ -551,6 +564,21 @@ def health_check():
         "status": "healthy",
         "service": "LoomShield Brand Governance Workspace",
         "engine": get_engine_status(),
+    }
+
+
+@app.get("/api/_diag/client-ip", include_in_schema=False)
+def diag_client_ip(request: Request):
+    if os.environ.get("LOOMSHIELD_DEBUG_HEADERS", "").strip() != "1":
+        raise HTTPException(status_code=404, detail="Not found")
+    socket_host = getattr(getattr(request, "client", None), "host", None)
+    return {
+        "x-forwarded-for": request.headers.get("x-forwarded-for"),
+        "cf-connecting-ip": request.headers.get("cf-connecting-ip"),
+        "true-client-ip": request.headers.get("true-client-ip"),
+        "x-real-ip": request.headers.get("x-real-ip"),
+        "socket_host": socket_host,
+        "computed_ip": get_client_ip(request),
     }
 
 
@@ -1374,6 +1402,10 @@ async def create_audit_from_upload(
     bg_color: str = Form(""),
     image_alt_text: str = Form(""),
     confidential_mode: bool = Form(True),
+    grid_size: int = Form(4),
+    logo_only: bool = Form(False),
+    logo_rect: str = Form(""),
+    text_regions: str = Form(""),
     file: UploadFile = File(...),
     role: str = Depends(current_role),
 ):
@@ -1392,7 +1424,41 @@ async def create_audit_from_upload(
     vault = get_brand_vault_bundle(brand_id)
 
     if ext in (".png", ".jpg", ".jpeg"):
-        vis_info = inspect_raster_image(raw_bytes, vault["colors"])
+        parsed_logo_rect = None
+        if logo_rect and logo_rect.strip():
+            try:
+                parsed_logo_rect = json.loads(logo_rect)
+            except Exception:
+                parsed_logo_rect = None
+        parsed_text_regions = None
+        if text_regions and text_regions.strip():
+            try:
+                parsed_text_regions = json.loads(text_regions)
+            except Exception:
+                parsed_text_regions = None
+        legacy_vis = inspect_raster_image(raw_bytes, vault["colors"])
+        vis_info = inspect_visual_heatmap(
+            raw_bytes,
+            vault["colors"],
+            brand=vault["brand"],
+            filename=fname,
+            grid_size=grid_size,
+            logo_only=logo_only,
+            logo_rect=parsed_logo_rect,
+            text_regions=parsed_text_regions,
+        )
+        if vis_info.get("inspect_ok"):
+            vis_info["swatches"] = legacy_vis.get("swatches", [])
+            vis_info["off_palette_swatches"] = legacy_vis.get("off_palette_swatches", [])
+            vis_info["has_transparency"] = legacy_vis.get("has_transparency", False)
+            vis_info["all_transparent"] = legacy_vis.get("all_transparent", False)
+            vis_info["limitation_note"] = legacy_vis.get("limitation_note", "")
+        mime_str = "image/png" if ext == ".png" else "image/jpeg"
+        raster_b64 = (
+            f"data:{mime_str};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
+            if vis_info.get("inspect_ok")
+            else ""
+        )
         audit_output = run_six_pillar_audit(
             content=f"[Visual Asset Audit: {fname}]",
             brand=vault["brand"],
@@ -1416,6 +1482,7 @@ async def create_audit_from_upload(
             image_alt_text=image_alt_text,
             has_visual_asset=True,
             visual_metadata=vis_info,
+            visual_asset_b64=raster_b64,
             confidential_mode=confidential_mode,
             audit_output=audit_output,
             actor_role=role,
@@ -1423,6 +1490,34 @@ async def create_audit_from_upload(
         return get_audit_detail(audit_id)
 
     parsed = parse_uploaded_file(fname, raw_bytes)
+    svg_heatmap_vis = None
+    svg_asset_b64 = ""
+    if parsed["input_format"] == "svg" and parsed["parse_ok"]:
+        parsed_logo_rect = None
+        if logo_rect and logo_rect.strip():
+            try:
+                parsed_logo_rect = json.loads(logo_rect)
+            except Exception:
+                parsed_logo_rect = None
+        parsed_text_regions = None
+        if text_regions and text_regions.strip():
+            try:
+                parsed_text_regions = json.loads(text_regions)
+            except Exception:
+                parsed_text_regions = None
+        svg_heatmap_vis = inspect_visual_heatmap(
+            raw_bytes,
+            vault["colors"],
+            brand=vault["brand"],
+            filename=fname,
+            grid_size=grid_size,
+            logo_only=logo_only,
+            logo_rect=parsed_logo_rect,
+            text_regions=parsed_text_regions,
+        )
+        clean_svg_str = (svg_heatmap_vis or {}).get("sanitized_svg") or ""
+        if clean_svg_str:
+            svg_asset_b64 = f"data:image/svg+xml;base64,{base64.b64encode(clean_svg_str.encode('utf-8')).decode('ascii')}"
     audit_output = run_six_pillar_audit(
         content=parsed["extracted_text"],
         brand=vault["brand"],
@@ -1438,6 +1533,7 @@ async def create_audit_from_upload(
         parser_failed=not parsed["parse_ok"],
         parser_error_msg=parsed["error"] or "",
         page_spans=parsed.get("page_spans"),
+        visual_inspection=svg_heatmap_vis,
     )
     pdf_meta = {
         "format": "pdf",
@@ -1453,7 +1549,8 @@ async def create_audit_from_upload(
         bg_color=bg_color,
         image_alt_text=image_alt_text,
         has_visual_asset=(parsed["input_format"] == "svg"),
-        visual_metadata=pdf_meta,
+        visual_metadata=svg_heatmap_vis if svg_heatmap_vis else pdf_meta,
+        visual_asset_b64=svg_asset_b64,
         confidential_mode=confidential_mode,
         audit_output=audit_output,
         actor_role=role,
@@ -2450,8 +2547,672 @@ def rerun_existing_audit(
 # GUIDELINE AMBIGUITY RADAR (BASELINE TELEMETRY & RECOMMENDATIONS)
 # ============================================================================
 
+class ProposeGuidelineRevisionRequest(BaseModel):
+    new_text: Optional[str] = None
+    do_examples: Optional[List[Dict[str, Any]]] = None
+    dont_examples: Optional[List[Dict[str, Any]]] = None
+
+
+class RejectGuidelineRevisionRequest(BaseModel):
+    reason: str = "Rejected during Brand Administrator review."
+
+
+class HeatmapInspectUpdateRequest(BaseModel):
+    grid_size: int = 4
+    logo_only: bool = False
+    logo_rect: Optional[Dict[str, Any]] = None
+    text_regions: Optional[List[Dict[str, Any]]] = None
+
+
+def _compute_rule_loop_closure(
+    cur,
+    brand_id: str,
+    rule_id: str,
+    latest_approved: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """B5: Loop closure computed ONLY from audits created after the revision's decided_at timestamp."""
+    if not latest_approved:
+        return None
+    decided_at = str(latest_approved.get("decided_at") or "").strip()
+    if not decided_at:
+        return None
+    rev_date = decided_at[:10]
+
+    cur.execute(
+        "SELECT id FROM audits WHERE brand_id = ? AND created_at > ? ORDER BY created_at ASC",
+        (brand_id, decided_at),
+    )
+    post_audits = [str(r["id"]) for r in cur.fetchall()]
+    post_audits_cnt = len(post_audits)
+
+    if post_audits_cnt == 0:
+        return {
+            "revision_id": latest_approved["id"],
+            "revised_at": decided_at,
+            "revised_date": rev_date,
+            "post_revision_audits_count": 0,
+            "post_revision_violations": 0,
+            "post_revision_overrides": 0,
+            "override_rate_since_revision": None,
+            "display": f"Revised {rev_date}; override rate since revision: — (no audits since revision)",
+        }
+
+    placeholders = ",".join("?" for _ in post_audits)
+    cur.execute(
+        f"SELECT COUNT(*) AS cnt FROM findings WHERE audit_id IN ({placeholders}) AND rule_or_fact_id LIKE ?",
+        (*post_audits, f"%{rule_id}%"),
+    )
+    post_v = int(cur.fetchone()["cnt"] or 0)
+
+    cur.execute(
+        f"SELECT COUNT(*) AS cnt FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? AND audit_id IN ({placeholders}) AND created_at > ?",
+        (brand_id, rule_id, *post_audits, decided_at),
+    )
+    post_o = int(cur.fetchone()["cnt"] or 0)
+
+    if post_v == 0 and post_o == 0:
+        rate_val = 0.0
+        disp = f"Revised {rev_date}; override rate since revision: 0.0% across {post_audits_cnt} audit(s)"
+    else:
+        denom = max(post_v, post_o, 1)
+        rate_val = round((float(post_o) / float(denom)) * 100.0, 1)
+        disp = f"Revised {rev_date}; override rate since revision: {rate_val}% ({post_o}/{denom} findings across {post_audits_cnt} audit(s))"
+
+    return {
+        "revision_id": latest_approved["id"],
+        "revised_at": decided_at,
+        "revised_date": rev_date,
+        "post_revision_audits_count": post_audits_cnt,
+        "post_revision_violations": post_v,
+        "post_revision_overrides": post_o,
+        "override_rate_since_revision": rate_val,
+        "display": disp,
+    }
+
+
+def _hydrate_revision_row(row_dict: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(row_dict)
+    for k in ("do_examples", "dont_examples"):
+        raw = out.get(k)
+        if isinstance(raw, str):
+            try:
+                out[k] = json.loads(raw)
+            except Exception:
+                out[k] = []
+        elif not isinstance(raw, list):
+            out[k] = []
+    return out
+
+
 @app.get("/api/ambiguity-radar/{brand_id}")
-def get_ambiguity_radar(brand_id: str):
+def get_ambiguity_radar(brand_id: str, min_sample: Optional[int] = None):
+    vault = get_brand_vault_bundle(brand_id)
+    effective_min_sample = (
+        int(min_sample)
+        if min_sample is not None
+        else int(os.environ.get("LOOMSHIELD_AMBIGUITY_MIN_SAMPLE", "5"))
+    )
+    effective_min_sample = max(1, effective_min_sample)
+
+    lexicon = load_vague_lexicon()
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ?", (brand_id,))
+    total_brand_audits = int(cur.fetchone()["cnt"] or 0)
+
+    radar_rows = []
+    for r in vault["rules"]:
+        cur.execute(
+            """
+            SELECT f.* FROM findings f
+            JOIN audits a ON f.audit_id = a.id
+            WHERE a.brand_id = ? AND f.rule_or_fact_id LIKE ?
+            ORDER BY f.updated_at DESC, f.id DESC
+            """,
+            (brand_id, f"%{r['id']}%"),
+        )
+        rule_findings = [dict(x) for x in cur.fetchall()]
+        v_cnt = len(rule_findings)
+
+        cur.execute(
+            "SELECT * FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? ORDER BY id DESC",
+            (brand_id, r["id"]),
+        )
+        fb_rows = [dict(x) for x in cur.fetchall()]
+        o_cnt = len(fb_rows)
+
+        # B1: Deterministic ambiguity scorer (0-100) using editable lexicon + structural checks
+        amb = score_rule_ambiguity(
+            rule_text=str(r.get("description") or ""),
+            do_example=str(r.get("do_example") or ""),
+            dont_example=str(r.get("dont_example") or ""),
+            lexicon=lexicon,
+        )
+
+        # B2: Correlation with override rate above minimum sample
+        corr = correlate_ambiguity_and_overrides(
+            ambiguity_score=amb["score"],
+            is_vague=amb["is_vague"],
+            audits_sample_count=total_brand_audits,
+            violations_count=v_cnt,
+            overrides_count=o_cnt,
+            min_sample=effective_min_sample,
+        )
+
+        # B3: Candidate rewrite without ever inventing numbers
+        candidate = generate_candidate_rewrite(
+            rule=r,
+            verified_facts=vault["verified_facts"],
+            past_findings=rule_findings,
+            lexicon=lexicon,
+        )
+
+        # B4 & B5: Revision history and loop closure after approval
+        cur.execute(
+            "SELECT * FROM guideline_revisions WHERE brand_id = ? AND rule_id = ? ORDER BY id DESC",
+            (brand_id, r["id"]),
+        )
+        revisions = [_hydrate_revision_row(dict(x)) for x in cur.fetchall()]
+        latest_approved = next((rv for rv in revisions if rv.get("status") == "approved"), None)
+        loop_closure = _compute_rule_loop_closure(cur, brand_id, r["id"], latest_approved)
+
+        vague_matches = [sp["phrase"] for sp in amb["matched_spans"]]
+        potential_causes = list(amb["reasons"])
+        for fb in fb_rows[:3]:
+            if fb["suspected_cause"] not in potential_causes:
+                potential_causes.append(fb["suspected_cause"])
+
+        recommendation_status = (
+            "Recommended for Review"
+            if (o_cnt >= 2 or amb["is_vague"])
+            else ("Monitor" if o_cnt == 1 else "No Action Needed")
+        )
+
+        likely_signal = (
+            "Subjective qualifier & recurring overrides"
+            if (o_cnt >= 2 and len(vague_matches) > 0)
+            else (
+                "Recurring reviewer overrides"
+                if o_cnt >= 2
+                else (
+                    "Channel-length exception logged"
+                    if o_cnt == 1
+                    else ("Subjective qualifier detected" if amb["is_vague"] else "Consistent enforcement")
+                )
+            )
+        )
+        next_action = (
+            "Review wording in Brand Vault"
+            if recommendation_status == "Recommended for Review"
+            else ("Monitor channel exceptions" if recommendation_status == "Monitor" else "Keep current rule")
+        )
+
+        suggested_clarification = (
+            candidate["new_text"]
+            if candidate.get("improved")
+            else ""
+        )
+
+        radar_rows.append({
+            "rule_id": r["id"],
+            "pillar": r["pillar"],
+            "title": r["title"],
+            "description": r["description"],
+            "do_example": r.get("do_example", ""),
+            "dont_example": r.get("dont_example", ""),
+            "version": r["version"],
+            "violations_recorded": v_cnt,
+            "overrides_recorded": o_cnt,
+            "likely_signal": likely_signal,
+            "next_action": next_action,
+            "potential_causes": potential_causes or ["No recurring override pattern observed yet"],
+            "recorded_feedback": fb_rows,
+            "recommendation_status": recommendation_status,
+            "suggested_clarification": suggested_clarification,
+            # B1 fields
+            "ambiguity_score": amb["score"],
+            "ambiguity_reasons": amb["reasons"],
+            "matched_spans": amb["matched_spans"],
+            "ambiguity_formula": amb["formula"],
+            "ambiguity_breakdown": amb["breakdown"],
+            "is_vague": amb["is_vague"],
+            # B2 fields
+            "priority": corr["priority"],
+            "priority_rank": corr["priority_rank"],
+            "classification_label": corr["classification_label"],
+            "override_rate": corr["override_rate"],
+            "override_rate_display": corr["override_rate_display"],
+            "sufficient_sample": corr["sufficient_sample"],
+            "sample_audits_count": corr["sample_audits_count"],
+            "min_sample_required": corr["min_sample_required"],
+            # B3 fields
+            "candidate_rewrite": candidate,
+            # B4 & B5 fields
+            "revisions": revisions,
+            "latest_approved_revision": latest_approved,
+            "loop_closure": loop_closure,
+        })
+
+    # B6: Sort rules by priority (High -> Medium -> Low), then descending ambiguity_score, then overrides
+    radar_rows.sort(
+        key=lambda item: (
+            -int(item.get("priority_rank", 1)),
+            -int(item.get("ambiguity_score", 0)),
+            -int(item.get("overrides_recorded", 0)),
+            str(item.get("rule_id", "")),
+        )
+    )
+
+    conn.close()
+    return {
+        "brand_id": brand_id,
+        "brand_version": int(vault["brand"].get("version", 1)),
+        "min_sample_required": effective_min_sample,
+        "sample_audits_count": total_brand_audits,
+        "sufficient_sample": total_brand_audits >= effective_min_sample,
+        "concise_info_note": "Frequent overrides are a signal to review a rule, not proof it is incorrect.",
+        "honest_scope_note": (
+            "Frequent overrides do not automatically prove a rule is defective; potential causes include "
+            "missing channel context, legitimate exceptions, or overly broad detection patterns. "
+            "All rule revisions are a suggestion for human sign-off and require explicit Brand Administrator inspection."
+        ),
+        "rules_analysis": radar_rows,
+    }
+
+
+@app.post("/api/ambiguity-radar/{brand_id}/rules/{rule_id}/propose")
+def propose_guideline_revision(
+    brand_id: str,
+    rule_id: str,
+    req: Optional[ProposeGuidelineRevisionRequest] = None,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    require_permission(actor["role"], "edit_brand_vault", "Your role is not authorized to propose guideline revisions")
+    vault = get_brand_vault_bundle(brand_id)
+    rule = next((r for r in vault["rules"] if r["id"] == rule_id), None)
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Rule '{rule_id}' not found in brand '{brand_id}'.")
+
+    lexicon = load_vague_lexicon()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT f.* FROM findings f
+        JOIN audits a ON f.audit_id = a.id
+        WHERE a.brand_id = ? AND f.rule_or_fact_id LIKE ?
+        ORDER BY f.updated_at DESC
+        """,
+        (brand_id, f"%{rule_id}%"),
+    )
+    rule_findings = [dict(x) for x in cur.fetchall()]
+    conn.close()
+
+    candidate = generate_candidate_rewrite(
+        rule=rule,
+        verified_facts=vault["verified_facts"],
+        past_findings=rule_findings,
+        lexicon=lexicon,
+    )
+
+    old_text = str(rule.get("description") or "").strip()
+    before_eval = score_rule_ambiguity(
+        old_text,
+        str(rule.get("do_example") or ""),
+        str(rule.get("dont_example") or ""),
+        lexicon=lexicon,
+    )
+
+    custom_new = (req.new_text.strip() if (req and req.new_text and req.new_text.strip()) else None)
+    new_text = custom_new or candidate["new_text"]
+    do_ex = (req.do_examples if (req and req.do_examples is not None) else candidate["do_examples"])
+    dont_ex = (req.dont_examples if (req and req.dont_examples is not None) else candidate["dont_examples"])
+
+    primary_do = do_ex[0]["text"] if (do_ex and isinstance(do_ex[0], dict)) else (str(do_ex[0]) if do_ex else "")
+    primary_dont = dont_ex[0]["text"] if (dont_ex and isinstance(dont_ex[0], dict)) else (str(dont_ex[0]) if dont_ex else "")
+    after_eval = score_rule_ambiguity(new_text, primary_do, primary_dont, lexicon=lexicon)
+
+    if after_eval["score"] >= before_eval["score"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"no improvement found: candidate ambiguity score ({after_eval['score']}) is not strictly lower than original ({before_eval['score']}).",
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    brand_ver_before = int(vault["brand"].get("version", 1))
+    creator_str = actor.get("user_name") or configured_user_name()
+
+    with db_session() as s_conn:
+        s_cur = s_conn.cursor()
+        rev_id = allocate_guideline_revision_id(s_cur)
+        s_cur.execute(
+            """
+            INSERT INTO guideline_revisions (
+                id, brand_id, rule_id, old_text, new_text, do_examples, dont_examples,
+                ambiguity_before, ambiguity_after, status, rejection_reason,
+                created_by, created_at, decided_by, decided_at,
+                brand_version_before, brand_version_after
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', '', ?, ?, '', '', ?, NULL)
+            """,
+            (
+                rev_id,
+                brand_id,
+                rule_id,
+                old_text,
+                new_text,
+                json.dumps(do_ex),
+                json.dumps(dont_ex),
+                int(before_eval["score"]),
+                int(after_eval["score"]),
+                creator_str,
+                now,
+                brand_ver_before,
+            ),
+        )
+        s_cur.execute("SELECT * FROM guideline_revisions WHERE id = ?", (rev_id,))
+        created_row = _hydrate_revision_row(dict(s_cur.fetchone()))
+
+    return created_row
+
+
+def _execute_approve_revision(
+    brand_id: str,
+    revision_id: str,
+    actor: Dict[str, str],
+) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    decider_name = actor.get("user_name") or configured_user_name()
+    decider_role = actor["role"]
+    decider_uid = actor.get("user_id") or ""
+
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM guideline_revisions WHERE id = ? AND (brand_id = ? OR brand_id = '')",
+            (revision_id, brand_id),
+        )
+        rev_row = cur.fetchone()
+        if not rev_row:
+            raise HTTPException(status_code=404, detail=f"Guideline revision '{revision_id}' not found.")
+        rev = _hydrate_revision_row(dict(rev_row))
+        if rev["status"] != "proposed":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Guideline revision '{revision_id}' is already '{rev['status']}' and cannot be approved again.",
+            )
+
+        rule_id = rev["rule_id"]
+        cur.execute("SELECT * FROM rules WHERE id = ? AND brand_id = ?", (rule_id, brand_id))
+        r_row = cur.fetchone()
+        if not r_row:
+            raise HTTPException(status_code=404, detail=f"Rule '{rule_id}' not found in brand '{brand_id}'.")
+
+        cur.execute("SELECT version FROM brands WHERE id = ?", (brand_id,))
+        b_row = cur.fetchone()
+        old_brand_ver = int(b_row["version"]) if b_row else 1
+
+        do_list = rev.get("do_examples") or []
+        dont_list = rev.get("dont_examples") or []
+        primary_do = do_list[0].get("text", "") if (do_list and isinstance(do_list[0], dict)) else (str(do_list[0]) if do_list else str(r_row["do_example"] or ""))
+        primary_dont = dont_list[0].get("text", "") if (dont_list and isinstance(dont_list[0], dict)) else (str(dont_list[0]) if dont_list else str(r_row["dont_example"] or ""))
+
+        cur.execute(
+            """
+            UPDATE rules
+            SET description = ?, do_example = ?, dont_example = ?, version = version + 1, updated_at = ?
+            WHERE id = ? AND brand_id = ?
+            """,
+            (rev["new_text"], primary_do, primary_dont, now, rule_id, brand_id),
+        )
+        new_brand_ver = bump_brand_version(cur, brand_id)
+
+        cur.execute(
+            """
+            UPDATE guideline_revisions
+            SET brand_id = ?, status = 'approved', decided_by = ?, decided_at = ?,
+                brand_version_before = ?, brand_version_after = ?
+            WHERE id = ?
+            """,
+            (brand_id, decider_name, now, old_brand_ver, new_brand_ver, revision_id),
+        )
+
+        cur.execute(
+            """
+            UPDATE guideline_feedback
+            SET admin_review_state = 'Resolved via Rule Revision'
+            WHERE brand_id = ? AND rule_id = ?
+            """,
+            (brand_id, rule_id),
+        )
+
+        # Locate an audit for this brand to attach the audit_event to (ensures FK integrity on existing DBs)
+        cur.execute(
+            "SELECT audit_id FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? ORDER BY id DESC LIMIT 1",
+            (brand_id, rule_id),
+        )
+        fb_aud = cur.fetchone()
+        target_audit_id = str(fb_aud["audit_id"]) if fb_aud else ""
+        if not target_audit_id:
+            cur.execute("SELECT id FROM audits WHERE brand_id = ? ORDER BY created_at DESC LIMIT 1", (brand_id,))
+            any_aud = cur.fetchone()
+            target_audit_id = str(any_aud["id"]) if any_aud else ""
+
+        event_summary = (
+            f"Approved guideline revision {revision_id} for {rule_id}: "
+            f"ambiguity reduced from {rev['ambiguity_before']} to {rev['ambiguity_after']} "
+            f"(Brand Vault v{old_brand_ver} -> v{new_brand_ver})."
+        )
+        event_detail = {
+            "revision_id": revision_id,
+            "brand_id": brand_id,
+            "rule_id": rule_id,
+            "old_text": rev["old_text"],
+            "new_text": rev["new_text"],
+            "ambiguity_before": rev["ambiguity_before"],
+            "ambiguity_after": rev["ambiguity_after"],
+            "brand_version_before": old_brand_ver,
+            "brand_version_after": new_brand_ver,
+        }
+        if target_audit_id:
+            record_audit_event(
+                cur,
+                target_audit_id,
+                "guideline_revision_approved",
+                decider_name,
+                decider_role,
+                event_summary,
+                event_detail,
+                new_brand_ver,
+                now,
+                actor_user_id=decider_uid,
+            )
+
+        cur.execute("SELECT * FROM guideline_revisions WHERE id = ?", (revision_id,))
+        updated_rev = _hydrate_revision_row(dict(cur.fetchone()))
+
+    return {
+        "status": "approved",
+        "revision": updated_rev,
+        "brand_version_before": old_brand_ver,
+        "brand_version_after": new_brand_ver,
+        "audit_event": {
+            "audit_id": target_audit_id or f"VAULT-{brand_id}",
+            "event_type": "guideline_revision_approved",
+            "actor_name": decider_name,
+            "actor_role": decider_role,
+            "summary": event_summary,
+            "detail": event_detail,
+            "created_at": now,
+        },
+    }
+
+
+@app.post("/api/ambiguity-radar/{brand_id}/revisions/{revision_id}/approve")
+def approve_guideline_revision(
+    brand_id: str,
+    revision_id: str,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    require_permission(actor["role"], "edit_brand_vault", "Your role is not authorized to approve guideline revisions")
+    return _execute_approve_revision(brand_id, revision_id, actor)
+
+
+@app.post("/api/ambiguity-radar/{brand_id}/rules/{rule_id}/approve")
+def propose_and_approve_guideline_revision(
+    brand_id: str,
+    rule_id: str,
+    req: Optional[ProposeGuidelineRevisionRequest] = None,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    require_permission(actor["role"], "edit_brand_vault", "Your role is not authorized to approve guideline revisions")
+    proposed = propose_guideline_revision(brand_id=brand_id, rule_id=rule_id, req=req, actor=actor)
+    return _execute_approve_revision(brand_id, proposed["id"], actor)
+
+
+@app.post("/api/ambiguity-radar/{brand_id}/revisions/{revision_id}/reject")
+def reject_guideline_revision(
+    brand_id: str,
+    revision_id: str,
+    req: Optional[RejectGuidelineRevisionRequest] = None,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    require_permission(actor["role"], "edit_brand_vault", "Your role is not authorized to reject guideline revisions")
+    reason_str = (req.reason.strip() if (req and req.reason and req.reason.strip()) else "Rejected during Brand Administrator review.")
+    now = datetime.now(timezone.utc).isoformat()
+    decider_name = actor.get("user_name") or configured_user_name()
+
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM guideline_revisions WHERE id = ? AND (brand_id = ? OR brand_id = '')",
+            (revision_id, brand_id),
+        )
+        rev_row = cur.fetchone()
+        if not rev_row:
+            raise HTTPException(status_code=404, detail=f"Guideline revision '{revision_id}' not found.")
+        rev = _hydrate_revision_row(dict(rev_row))
+        if rev["status"] != "proposed":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Guideline revision '{revision_id}' is already '{rev['status']}'.",
+            )
+
+        cur.execute("SELECT version FROM brands WHERE id = ?", (brand_id,))
+        b_row = cur.fetchone()
+        curr_brand_ver = int(b_row["version"]) if b_row else int(rev.get("brand_version_before") or 1)
+
+        cur.execute(
+            """
+            UPDATE guideline_revisions
+            SET brand_id = ?, status = 'rejected', rejection_reason = ?, decided_by = ?, decided_at = ?,
+                brand_version_after = ?
+            WHERE id = ?
+            """,
+            (brand_id, reason_str, decider_name, now, curr_brand_ver, revision_id),
+        )
+        cur.execute("SELECT * FROM guideline_revisions WHERE id = ?", (revision_id,))
+        updated_rev = _hydrate_revision_row(dict(cur.fetchone()))
+
+    return {
+        "status": "rejected",
+        "revision": updated_rev,
+        "brand_version_before": curr_brand_ver,
+        "brand_version_after": curr_brand_ver,
+        "rejection_reason": reason_str,
+    }
+
+
+@app.post("/api/audits/{audit_id}/heatmap")
+def update_audit_heatmap_inspector(
+    audit_id: str,
+    req: HeatmapInspectUpdateRequest,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    detail = get_audit_detail(audit_id)
+    vault = get_brand_vault_bundle(detail["brand_id"])
+
+    asset_b64 = str(detail.get("visual_asset_b64") or "")
+    raw_bytes = b""
+    fname = detail.get("document_name") or f"asset.{detail.get('input_format', 'png')}"
+
+    if asset_b64 and "," in asset_b64:
+        try:
+            raw_bytes = base64.b64decode(asset_b64.split(",", 1)[1])
+        except Exception:
+            raw_bytes = b""
+    elif detail.get("input_format") == "svg" and detail.get("visual_metadata", {}).get("sanitized_svg"):
+        raw_bytes = str(detail["visual_metadata"]["sanitized_svg"]).encode("utf-8")
+
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="No visual raster or SVG asset is stored on this audit for heatmap inspection.")
+
+    hm_vis = inspect_visual_heatmap(
+        raw_bytes=raw_bytes,
+        brand_colors=vault["colors"],
+        brand=vault["brand"],
+        filename=fname,
+        grid_size=req.grid_size,
+        logo_only=req.logo_only,
+        logo_rect=req.logo_rect,
+        text_regions=req.text_regions,
+    )
+    old_meta = detail.get("visual_metadata") or {}
+    for k in ("swatches", "off_palette_swatches", "has_transparency", "all_transparent", "limitation_note"):
+        if k in old_meta and k not in hm_vis:
+            hm_vis[k] = old_meta[k]
+
+    now = datetime.now(timezone.utc).isoformat()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE audits SET visual_metadata_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(hm_vis), now, audit_id),
+        )
+
+    return {
+        "audit_id": audit_id,
+        "heatmap": hm_vis,
+        "audit": get_audit_detail(audit_id),
+    }
+
+
+@app.post("/api/heatmap/inspect")
+async def standalone_heatmap_inspect(
+    brand_id: str = Form("novapay"),
+    grid_size: int = Form(4),
+    logo_only: bool = Form(False),
+    logo_rect: str = Form(""),
+    text_regions: str = Form(""),
+    file: UploadFile = File(...),
+):
+    raw_bytes = await file.read()
+    if len(raw_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size exceeds the 5 MB safety limit.")
+    vault = get_brand_vault_bundle(brand_id)
+    parsed_logo_rect = None
+    if logo_rect and logo_rect.strip():
+        try:
+            parsed_logo_rect = json.loads(logo_rect)
+        except Exception:
+            parsed_logo_rect = None
+    parsed_text_regions = None
+    if text_regions and text_regions.strip():
+        try:
+            parsed_text_regions = json.loads(text_regions)
+        except Exception:
+            parsed_text_regions = None
+    return inspect_visual_heatmap(
+        raw_bytes=raw_bytes,
+        brand_colors=vault["colors"],
+        brand=vault["brand"],
+        filename=file.filename or "asset.png",
+        grid_size=grid_size,
+        logo_only=logo_only,
+        logo_rect=parsed_logo_rect,
+        text_regions=parsed_text_regions,
+    )
+def _legacy_get_ambiguity_radar_unused(brand_id: str):
     vault = get_brand_vault_bundle(brand_id)
     conn = get_connection()
     cur = conn.cursor()

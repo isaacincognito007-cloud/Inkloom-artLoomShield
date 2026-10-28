@@ -1433,7 +1433,7 @@ def run_six_pillar_audit(
                 })
                 vis_findings_count += 1
 
-        if visual_inspection and visual_inspection.get("off_palette_swatches"):
+        if visual_inspection and visual_inspection.get("off_palette_swatches") and not isinstance(visual_inspection.get("cells"), list):
             for sw in visual_inspection["off_palette_swatches"]:
                 findings.append({
                     "id": next_finding_id(),
@@ -1455,6 +1455,65 @@ def run_six_pillar_audit(
                     ),
                     "suggested_correction": sw["closest_brand_hex"],
                     "detection_method": "Pillow + NumPy Dominant Swatch Extraction & CIE Delta-E",
+                    "engine_source": "Tier 1: Deterministic Engine",
+                    "similarity_score": None,
+                    "review_state": "open",
+                })
+                vis_findings_count += 1
+
+        if visual_inspection and isinstance(visual_inspection.get("cells"), list):
+            for cell in visual_inspection["cells"]:
+                if cell.get("flagged"):
+                    cid = cell.get("cell_id", "R1C1")
+                    findings.append({
+                        "id": next_finding_id(),
+                        "pillar": "Visual and Logo Consistency",
+                        "issue_type": "Off-Palette Grid Cell Dominant Colour",
+                        "severity": "medium",
+                        "flagged_text": f"Cell {cid} ({cell.get('dominant_hex')}, Delta-E {cell.get('delta_e')})",
+                        "paragraph_ref": f"Cell {cid}",
+                        "start_index": -1,
+                        "end_index": -1,
+                        "rule_or_fact_id": vis_rule_id,
+                        "source_evidence": (
+                            f"Cell {cid} (row {cell.get('row')}, col {cell.get('col')}): "
+                            f"Nearest Brand Colour {cell.get('closest_brand_color')} ({cell.get('closest_brand_hex')}) | "
+                            f"Measured CIE Delta-E: {cell.get('delta_e')} (max allowed {cell.get('max_delta_e')})."
+                        ),
+                        "explanation": (
+                            f"Cell {cid} dominant colour {cell.get('dominant_hex')} deviates from "
+                            f"{cell.get('closest_brand_color')} ({cell.get('closest_brand_hex')}) by CIE Delta-E = {cell.get('delta_e')}, "
+                            f"exceeding tolerance {cell.get('max_delta_e')}."
+                        ),
+                        "suggested_correction": cell.get("closest_brand_hex") or "#17191C",
+                        "detection_method": "N×N Grid Dominant Swatch & CIE LAB Delta-E",
+                        "engine_source": "Tier 1: Deterministic Engine",
+                        "similarity_score": None,
+                        "review_state": "open",
+                    })
+                    vis_findings_count += 1
+
+        if visual_inspection and isinstance(visual_inspection.get("clear_space"), dict):
+            cs = visual_inspection["clear_space"]
+            if cs.get("state") == "Findings":
+                cell_ref = cs.get("logo_cell_ref") or "Cell R1C1"
+                findings.append({
+                    "id": next_finding_id(),
+                    "pillar": "Visual and Logo Consistency",
+                    "issue_type": "Insufficient Logo Clear Space",
+                    "severity": "medium",
+                    "flagged_text": f"Logo in {cell_ref} clear space {cs.get('min_clear_space_px')}px ({cs.get('measured_ratio')}x height)",
+                    "paragraph_ref": cell_ref,
+                    "start_index": -1,
+                    "end_index": -1,
+                    "rule_or_fact_id": vis_rule_id,
+                    "source_evidence": (
+                        f"Required clear space: >= {cs.get('required_min_px')}px and >= {cs.get('required_ratio')}x logo height. "
+                        f"Nearest boundary/obstacle: {cs.get('nearest_obstacle')} ({cs.get('min_clear_space_px')}px)."
+                    ),
+                    "explanation": cs.get("reason") or "Logo clear space is below the Brand Vault minimum requirement.",
+                    "suggested_correction": f"Provide at least {cs.get('required_min_px')}px ({cs.get('required_ratio')}x logo height) clear space around the logo.",
+                    "detection_method": "Logo Bounding Box Clear-Space Measurement",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": None,
                     "review_state": "open",
@@ -1572,6 +1631,37 @@ def run_six_pillar_audit(
                 "review_state": "open",
             })
             a11y_findings_count += 1
+
+        if visual_inspection and isinstance(visual_inspection.get("text_contrast"), dict):
+            tc_block = visual_inspection["text_contrast"]
+            for tc_el in (tc_block.get("elements") or []):
+                if tc_el.get("passed") is False:
+                    c_ref = tc_el.get("cell_id") or tc_el.get("element_id") or "Cell R1C1"
+                    findings.append({
+                        "id": next_finding_id(),
+                        "pillar": "Accessibility",
+                        "issue_type": "Insufficient SVG/Visual Text Contrast Ratio",
+                        "severity": "high",
+                        "flagged_text": f"'{tc_el.get('text', 'Text')}' ({tc_el.get('fg_hex')} on {tc_el.get('bg_hex')}, {tc_el.get('contrast_ratio')}:1)",
+                        "paragraph_ref": f"Cell {c_ref}" if not str(c_ref).startswith("Cell") else str(c_ref),
+                        "start_index": -1,
+                        "end_index": -1,
+                        "rule_or_fact_id": a11y_rule_id,
+                        "source_evidence": (
+                            f"WCAG 2.1 Success Criterion 1.4.3 (Contrast Minimum): requires >= {tc_el.get('required_ratio', 4.5)}:1 "
+                            f"(measured {tc_el.get('contrast_ratio')}:1 in {c_ref})."
+                        ),
+                        "explanation": (
+                            f"Text element '{tc_el.get('text', '')}' ({tc_el.get('fg_hex')} on {tc_el.get('bg_hex')} in {c_ref}) "
+                            f"produces a relative luminance contrast ratio of {tc_el.get('contrast_ratio')}:1, below the required minimum of {tc_el.get('required_ratio', 4.5)}:1."
+                        ),
+                        "suggested_correction": "#17191C",
+                        "detection_method": "SVG/Region WCAG 2.1 Relative Luminance Contrast",
+                        "engine_source": "Tier 1: Deterministic Engine",
+                        "similarity_score": None,
+                        "review_state": "open",
+                    })
+                    a11y_findings_count += 1
 
         pillar_states["Accessibility"] = "Findings" if a11y_findings_count > 0 else "Passed"
 

@@ -157,3 +157,33 @@ python -m pytest -q
 - **Signed Bearer Tokens:** `POST /api/demo/login` returns an 8-hour HMAC-SHA256 token (`Authorization: Bearer <token>`). Server role and actor identity come from the verified token, never from an unverified header.
 - **Separation of Duties Rule:** In demo mode, the user who submitted an audit for review (`audits.submitted_by_user_id`) cannot approve that same audit (`403 PERMISSION_DENIED`); a different Reviewer or Brand Administrator must approve it.
 - **Production Limitation:** Demo sign-in demonstrates separation of duties without requiring external accounts; anyone using the demo link can switch between demo users. Production mode (`LOOMSHIELD_WORKSPACE_MODE=production`) keeps its existing server-configured role behavior unless integrated with an enterprise identity provider.
+
+
+---
+
+## 8. Round 3 Traceability Table, Certificate Format v1, and Heatmap Limits
+
+### Round 3 Feature Traceability Table
+
+| Promised Feature | Where in the UI | Automated Test Names | Status |
+| :--- | :--- | :--- | :--- |
+| **1. Guideline Clarity Rewriter** (deterministic 0–100 ambiguity scorer, lexicon spans, min-sample override correlation, zero-invented-number candidate rewrites, human sign-off, loop closure) | **Guideline insights** (`#view-ambiguity-radar` / `.clarity-rewriter-box`) | `test_b1_scorer_determinism_with_golden_fixtures`, `test_b2_minimum_sample_rule_and_priority_correlation`, `test_b3_property_no_candidate_contains_invented_number_and_placeholder_when_no_fact`, `test_b3_no_improvement_found_when_already_optimal`, `test_b4_b5_permissions_approve_bumps_version_logs_event_and_reject_leaves_vault_unchanged`, `test_b7_idempotent_migration_and_ui_escaping` | **Completed & Verified** |
+| **2. $N \times N$ Clear-Space & Contrast Heatmap Inspector** (palette CIE $\Delta E$ grid, SVG/region WCAG contrast, logo clear-space measurement in `px` & height ratio, `<canvas>` overlay, keyboard-focusable cells, accessible `<table>`) | **New audit -> Audit results** (`#heatmapInspectorPanel`, `#heatmapOverlayCanvas`, `#heatmapCellsTable` when inspecting uploaded `.png`, `.jpg`, or `.svg`) | `test_c5_on_palette_tile_all_cells_pass`, `test_c5_one_off_palette_quadrant_flags_exact_cell_and_cites_coordinates`, `test_c5_svg_with_low_contrast_text_flagged_with_measured_ratio`, `test_c5_svg_logo_too_close_to_edge_fails_with_measured_px_and_no_logo_not_checked`, `test_c5_oversized_image_downscaled_and_svg_script_sanitised_and_shape_stable` | **Completed & Verified** |
+| **3. Cryptographically Signed Compliance Certificate & Demo Separation of Duties** (Ed25519 signed envelope, online/offline verification, 3 demo identities, separation-of-duties guard) | **Audit results -> Certificate** modal (`#resultsCertificateBtn`), **Verify Certificate** view (`#view-verify-certificate` / `#verify`), Topbar **Sign in as** menu (`#accountRoleBtn`) | `test_certificate_lifecycle_draft_409_approved_200_and_verify_valid`, `test_certificate_tampering_each_field_flips_verify_to_false`, `test_offline_cli_verify_certificate_exit_codes_0_and_1`, `test_self_approval_blocked_and_different_reviewer_succeeds`, `test_h1_separation_of_duties_history_and_token_requirements`, `test_h2_verify_certificate_cross_check_only_when_signature_valid` | **Completed & Verified** |
+| **4. 100 MB Streaming Uploads** | Not in UI (uploads enforce the 5 MB safety limit) | Covered by 5 MB safety limit test (`test_cycle6_privacy_and_security_tests_1_to_7`) | **Not Done** (deferred; synchronous 5 MB cap retained for memory safety on free-tier hosting) |
+| **5. Non-Destructive Preset Application to Existing Brands with Rollback** | Guided setup creates isolated `wiz-*` brand profiles (`#wizardStage`) | `test_wizard_profile_endpoint_creates_isolated_brand` | **Not Done** (deferred; guided setup creates isolated profiles rather than mutating existing custom brands) |
+
+### Certificate Format v1 Note
+- **Format Version:** `version: 1` (`Certificate format v1`).
+- **Canonical Serialization:** UTF-8 JSON with `json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")`.
+- **Signature Algorithm:** `Ed25519` (`alg: "Ed25519"`), keyed by `kid = sha256(raw_public_key_bytes).hexdigest()[:16]`.
+- **Offline Verification:** Run `python scripts/verify_certificate.py <path-to-certificate.json> --public-key <base64-ed25519-public-key>` (exits `0` when valid, `1` when tampered or invalid).
+
+### Heatmap Inspector Scope & Limits
+1. **No OCR on Raster Images:** Text contrast is measured **only** for known text elements — specifically SVG `<text>` elements (comparing resolved `fill` against the underlying rect/canvas background) or user-marked regions. The UI and API state plainly: `"Contrast measured for N text elements; text inside raster images is not detected."`
+2. **How the Logo is Located for Clear Space:** Logo bounding coordinates are obtained from:
+   - An SVG element marked with `data-loomshield-logo` (or `id="logo"` / `class="logo"`),
+   - A user-drawn logo rectangle in the Heatmap Inspector UI (saved with the audit via `POST /api/audits/{id}/heatmap`), or
+   - The non-transparent alpha bounding box (`alpha >= 32`) of a PNG explicitly marked as `"Logo-only PNG"`.
+   - When none of these three logo markers is present, clear space is reported honestly as `"Not Checked"` with an explanatory reason rather than guessing logo coordinates.
+3. **Oversized Asset Downscaling:** Uploaded raster images exceeding `1024 px` on their longest edge are downscaled proportionally (Lanczos resampling) to at most `1024 px` before $N \times N$ grid analysis.
