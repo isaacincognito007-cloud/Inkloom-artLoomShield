@@ -2821,6 +2821,16 @@ function renderSourceContentPanel() {
   );
 
   viewer.classList.toggle('raw-source-mode', AppState.sourceFormatView === 'source');
+  if (audit.visual_metadata && Array.isArray(audit.visual_metadata.cells)) {
+    const docHtml = renderSafeDocumentHtml(
+      text,
+      activeFindings,
+      AppState.selectedFindingId,
+      AppState.sourceFormatView
+    );
+    renderVisualHeatmapInspector(viewer, audit, docHtml);
+    return;
+  }
   viewer.innerHTML = renderSafeDocumentHtml(
     text,
     activeFindings,
@@ -4763,7 +4773,742 @@ async function renderReviewQueueView() {
 // VIEW 5: GUIDELINE INSIGHTS / AMBIGUITY (SECTION 07 — COMPACT + EXPANDABLE)
 // ============================================================================
 
+function hasFrontendPermission(perm) {
+  if (AppState.permissions && typeof AppState.permissions[perm] === 'boolean') {
+    return AppState.permissions[perm];
+  }
+  if (perm === 'edit_brand_vault') {
+    return AppState.activeRole === 'Brand Administrator';
+  }
+  if (perm === 'approve_audit' || perm === 'dismiss_finding') {
+    return AppState.activeRole === 'Reviewer' || AppState.activeRole === 'Brand Administrator';
+  }
+  return true;
+}
+
+function renderRuleTextWithVagueSpans(rawText, matchedSpans) {
+  const text = String(rawText || '');
+  if (!Array.isArray(matchedSpans) || matchedSpans.length === 0) {
+    return escapeHtml(text);
+  }
+  const sorted = [...matchedSpans]
+    .filter((s) => s && typeof s.start === 'number' && typeof s.end === 'number' && s.end > s.start)
+    .sort((a, b) => a.start - b.start);
+
+  let out = '';
+  let cursor = 0;
+  for (const sp of sorted) {
+    const start = Math.max(cursor, Math.min(text.length, sp.start));
+    const end = Math.max(start, Math.min(text.length, sp.end));
+    if (start > cursor) {
+      out += escapeHtml(text.slice(cursor, start));
+    }
+    if (end > start) {
+      const qual = escapeHtml(sp.qualifier || sp.phrase || 'vague qualifier');
+      out += `<mark class="vague-span-highlight" title="Vague qualifier: ${qual}">${escapeHtml(text.slice(start, end))}</mark>`;
+      cursor = end;
+    }
+  }
+  if (cursor < text.length) {
+    out += escapeHtml(text.slice(cursor));
+  }
+  return out;
+}
+
+function drawHeatmapCanvasOverlay(canvas, hm, activeLayers, focusedCellId, baseImage) {
+  if (!canvas || !hm) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // Draw base image or neutral checkerboard background
+  ctx.fillStyle = '#F8FAFC';
+  ctx.fillRect(0, 0, w, h);
+  if (baseImage && baseImage.complete && baseImage.naturalWidth > 0) {
+    try {
+      ctx.drawImage(baseImage, 0, 0, w, h);
+    } catch (_e) {
+      // Fallback if SVG/image taint or decode issue
+    }
+  } else {
+    const cells = hm.cells || [];
+    const n = hm.grid_size || 4;
+    const cw = w / n;
+    const ch = h / n;
+    cells.forEach((c) => {
+      ctx.fillStyle = c.dominant_hex || '#E2E8F0';
+      ctx.fillRect(c.col * cw, c.row * ch, cw, ch);
+    });
+  }
+
+  const n = hm.grid_size || 4;
+  const cellW = w / n;
+  const cellH = h / n;
+  const scaleX = w / Math.max(1, hm.analyzed_width || hm.original_width || w);
+  const scaleY = h / Math.max(1, hm.analyzed_height || hm.original_height || h);
+
+  // Layer 1: Delta-E Palette Grid
+  if (activeLayers.delta_e) {
+    (hm.cells || []).forEach((c) => {
+      const x = c.col * cellW;
+      const y = c.row * cellH;
+      const isFocused = focusedCellId === c.cell_id;
+
+      if (c.flagged) {
+        ctx.fillStyle = 'rgba(180, 35, 24, 0.22)';
+        ctx.fillRect(x, y, cellW, cellH);
+
+        // Diagonal hatch pattern so cell status is communicated with pattern, not colour alone
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, cellW, cellH);
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(180, 35, 24, 0.65)';
+        ctx.lineWidth = 1.5;
+        const step = 12;
+        for (let d = -cellH; d < cellW + cellH; d += step) {
+          ctx.beginPath();
+          ctx.moveTo(x + d, y);
+          ctx.lineTo(x + d + cellH, y + cellH);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      ctx.strokeStyle = isFocused ? '#C84624' : (c.flagged ? '#B42318' : 'rgba(15, 23, 42, 0.32)');
+      ctx.lineWidth = isFocused ? 3 : (c.flagged ? 2 : 1);
+      ctx.strokeRect(x + 0.5, y + 0.5, cellW - 1, cellH - 1);
+    });
+  }
+
+  // Layer 2: Known-Text Contrast Regions
+  if (activeLayers.contrast && hm.text_contrast && Array.isArray(hm.text_contrast.elements)) {
+    const svgScaleX = w / Math.max(1, hm.original_width || hm.analyzed_width || w);
+    const svgScaleY = h / Math.max(1, hm.original_height || hm.analyzed_height || h);
+    hm.text_contrast.elements.forEach((el) => {
+      const sx = el.source === 'svg_text' ? svgScaleX : scaleX;
+      const sy = el.source === 'svg_text' ? svgScaleY : scaleY;
+      const rx = (el.x || 0) * sx;
+      const ry = (el.y || 0) * sy;
+      const rw = Math.max(24, (el.width || 40) * sx);
+      const rh = Math.max(16, (el.height || 18) * sy);
+
+      ctx.save();
+      ctx.strokeStyle = el.passed ? '#067647' : '#B42318';
+      ctx.lineWidth = 2;
+      ctx.setLineDash(el.passed ? [] : [4, 3]);
+      ctx.strokeRect(rx, ry, rw, rh);
+      ctx.fillStyle = el.passed ? 'rgba(6, 118, 71, 0.88)' : 'rgba(180, 35, 24, 0.92)';
+      ctx.fillRect(rx, Math.max(0, ry - 16), Math.min(w - rx, 98), 16);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '600 10px Inter, sans-serif';
+      ctx.fillText(`${el.passed ? 'PASS' : 'FAIL'} ${el.contrast_ratio}:1`, rx + 4, Math.max(11, ry - 4));
+      ctx.restore();
+    });
+  }
+
+  // Layer 3: Logo Clear Space
+  if (activeLayers.clear_space && hm.clear_space && hm.clear_space.checked && hm.clear_space.logo_box) {
+    const lb = hm.clear_space.logo_box;
+    const isSvgBox = lb.source && lb.source !== 'user_drawn_rect' && lb.source !== 'png_alpha_bbox';
+    const sx = isSvgBox ? (w / Math.max(1, hm.original_width || w)) : scaleX;
+    const sy = isSvgBox ? (h / Math.max(1, hm.original_height || h)) : scaleY;
+    const lx = lb.x * sx;
+    const ly = lb.y * sy;
+    const lw = lb.width * sx;
+    const lh = lb.height * sy;
+    const reqPx = (hm.clear_space.required_px || 16) * sx;
+
+    ctx.save();
+    ctx.strokeStyle = hm.clear_space.passed ? '#067647' : '#B42318';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(lx, ly, lw, lh);
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(
+      Math.max(1, lx - reqPx),
+      Math.max(1, ly - reqPx),
+      Math.min(w - 2, lw + reqPx * 2),
+      Math.min(h - 2, lh + reqPx * 2)
+    );
+    ctx.fillStyle = hm.clear_space.passed ? 'rgba(6, 118, 71, 0.9)' : 'rgba(180, 35, 24, 0.92)';
+    ctx.fillRect(lx, Math.max(0, ly - 18), Math.min(w - lx, 145), 18);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '600 10px Inter, sans-serif';
+    ctx.fillText(
+      `LOGO ${hm.clear_space.passed ? 'CLEAR' : 'CROWDED'}: ${hm.clear_space.min_distance_px}px (${hm.clear_space.measured_ratio}x)`,
+      lx + 4,
+      Math.max(12, ly - 5)
+    );
+    ctx.restore();
+  }
+}
+
+function renderVisualHeatmapInspector(viewer, audit, docHtml) {
+  const hm = audit.visual_metadata || {};
+  const cells = hm.cells || [];
+  const n = hm.grid_size || 4;
+  const tc = hm.text_contrast || {};
+  const cs = hm.clear_space || {};
+
+  if (!AppState.heatmapLayers) {
+    AppState.heatmapLayers = { delta_e: true, contrast: true, clear_space: true };
+  }
+  const layers = AppState.heatmapLayers;
+  const focusedCellId = AppState.focusedHeatmapCellId || (cells[0] && cells[0].cell_id) || 'R1C1';
+
+  viewer.innerHTML = `
+    <div class="heatmap-inspector-panel" id="heatmapInspectorPanel" role="region" aria-label="Visual Asset Heatmap Inspector">
+      <div class="heatmap-toolbar">
+        <div class="heatmap-layers-group" role="group" aria-label="Heatmap overlay layers">
+          <span style="font-size: 12px; font-weight: 600; color: var(--slate-700);">Layers:</span>
+          <button type="button" class="btn btn-sm heatmap-layer-toggle ${layers.delta_e ? 'active' : ''}" data-hm-layer="delta_e" aria-pressed="${layers.delta_e ? 'true' : 'false'}">
+            Delta-E Palette (${hm.flagged_cells_count || 0} flagged)
+          </button>
+          <button type="button" class="btn btn-sm heatmap-layer-toggle ${layers.contrast ? 'active' : ''}" data-hm-layer="contrast" aria-pressed="${layers.contrast ? 'true' : 'false'}">
+            Text Contrast (${tc.measured_count || 0})
+          </button>
+          <button type="button" class="btn btn-sm heatmap-layer-toggle ${layers.clear_space ? 'active' : ''}" data-hm-layer="clear_space" aria-pressed="${layers.clear_space ? 'true' : 'false'}">
+            Clear Space (${escapeHtml(cs.state || 'Not Checked')})
+          </button>
+        </div>
+
+        <div class="heatmap-controls-group">
+          <label for="heatmapGridSizeSelect" style="font-size: 12px; font-weight: 600; color: var(--slate-700);">Grid:</label>
+          <select id="heatmapGridSizeSelect" class="form-control" style="width: 82px; height: 30px; padding: 2px 6px; font-size: 12px;">
+            ${[2, 3, 4, 6, 8].map((g) => `<option value="${g}" ${Number(n) === g ? 'selected' : ''}>${g}x${g}</option>`).join('')}
+          </select>
+          <label style="font-size: 12px; display: inline-flex; align-items: center; gap: 4px; color: var(--slate-700); cursor: pointer;">
+            <input type="checkbox" id="heatmapLogoOnlyCheckbox" ${cs.logo_box && cs.logo_box.source === 'png_alpha_bbox' ? 'checked' : ''} />
+            <span>Logo-only PNG</span>
+          </label>
+          <button type="button" class="btn btn-sm" id="heatmapDrawLogoBtn" aria-pressed="${AppState.drawingLogoRect ? 'true' : 'false'}">
+            ${AppState.drawingLogoRect ? 'Click-drag on canvas...' : 'Mark logo box'}
+          </button>
+        </div>
+      </div>
+
+      <div class="heatmap-stage-wrap" id="heatmapStageWrap">
+        <canvas id="heatmapOverlayCanvas" width="440" height="280" aria-label="Visual asset compliance heatmap canvas"></canvas>
+        <div class="heatmap-focus-grid" id="heatmapFocusableGrid" style="grid-template-columns: repeat(${n}, 1fr); grid-template-rows: repeat(${n}, 1fr);" role="group" aria-label="Interactive ${n} by ${n} heatmap cells">
+          ${cells.map((c) => {
+            const deVal = c.min_delta_e ?? c.delta_e ?? 0;
+            const statusText = c.flagged ? 'FAIL [Hatch]' : 'PASS [Solid]';
+            return `
+              <button
+                type="button"
+                class="heatmap-cell-btn ${c.flagged ? 'is-flagged' : 'is-passed'} ${focusedCellId === c.cell_id ? 'is-focused' : ''}"
+                data-cell-id="${escapeHtml(c.cell_id)}"
+                aria-label="Cell ${escapeHtml(c.cell_id)}: ${c.flagged ? 'FAIL' : 'PASS'}, dominant ${escapeHtml(c.dominant_hex || 'transparent')}, Delta-E ${deVal} to ${escapeHtml(c.closest_brand_color || 'palette')}"
+              >
+                <span class="heatmap-cell-coord">${escapeHtml(c.cell_id)}</span>
+                <span class="heatmap-cell-status-tag">${escapeHtml(statusText)}</span>
+                <span class="heatmap-cell-de">&Delta;E ${deVal}</span>
+              </button>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="heatmap-legend-bar" aria-label="Heatmap status legend">
+        <span><strong>Legend:</strong></span>
+        <span class="heatmap-legend-item"><span class="legend-swatch-pass" aria-hidden="true"></span> PASS: Solid border (&Delta;E within tolerance)</span>
+        <span class="heatmap-legend-item"><span class="legend-swatch-fail" aria-hidden="true">///</span> FAIL: Diagonal hatch + FAIL label (&Delta;E above threshold)</span>
+        <span class="heatmap-legend-item"><span class="legend-swatch-logo" aria-hidden="true">[ ]</span> Clear space: Dashed clearance boundary</span>
+      </div>
+
+      <div class="heatmap-disclosures-box">
+        <div style="font-size: 12.5px; color: var(--slate-800);">
+          <strong>Text contrast scope:</strong> ${escapeHtml(tc.disclosure || 'Contrast measured for 0 text elements; text inside raster images is not detected.')}
+        </div>
+        <div style="font-size: 12.5px; color: var(--slate-800); margin-top: 4px;">
+          <strong>Logo clear space (${escapeHtml(cs.state || 'Not Checked')}):</strong> ${escapeHtml(cs.reason || 'No logo location specified.')}
+        </div>
+      </div>
+
+      <div class="heatmap-table-wrap" style="margin-top: 10px;">
+        <table class="data-table" id="heatmapCellsTable" aria-label="Heatmap grid cell colour and Delta-E measurements">
+          <thead>
+            <tr>
+              <th scope="col">Cell</th>
+              <th scope="col">Dominant Colour</th>
+              <th scope="col">Nearest Vault Colour</th>
+              <th scope="col">Min CIE &Delta;E</th>
+              <th scope="col">Max Allowed &Delta;E</th>
+              <th scope="col">Status &amp; Pattern</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${cells.map((c) => {
+              const deVal = c.min_delta_e ?? c.delta_e ?? 0;
+              const maxDe = c.threshold_delta_e ?? c.max_delta_e ?? 14;
+              return `
+                <tr data-table-cell-id="${escapeHtml(c.cell_id)}" class="${c.flagged ? 'heatmap-row-flagged' : ''}">
+                  <td class="mono-id"><strong>${escapeHtml(c.cell_id)}</strong></td>
+                  <td>
+                    <span class="color-dot-inline" style="background:${escapeHtml(c.dominant_hex || '#FFFFFF')};" aria-hidden="true"></span>
+                    <span class="mono-id">${escapeHtml(c.dominant_hex || 'Transparent')}</span>
+                  </td>
+                  <td>
+                    <span class="color-dot-inline" style="background:${escapeHtml(c.closest_brand_hex || '#FFFFFF')};" aria-hidden="true"></span>
+                    <span>${escapeHtml(c.closest_brand_color || 'None')}</span>
+                    <span class="mono-id" style="font-size: 11px;">(${escapeHtml(c.closest_brand_hex || '—')})</span>
+                  </td>
+                  <td class="mono-id">${deVal}</td>
+                  <td class="mono-id">${maxDe}</td>
+                  <td>
+                    ${c.flagged
+                      ? '<span class="status-badge badge-error"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>FAIL · Diagonal Hatch</span></span>'
+                      : '<span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>PASS · Solid</span></span>'}
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+      ${docHtml}
+    </div>
+  `;
+
+  const canvas = document.getElementById('heatmapOverlayCanvas');
+  let baseImg = null;
+  if (audit.visual_asset_b64) {
+    baseImg = new Image();
+    baseImg.onload = () => {
+      drawHeatmapCanvasOverlay(canvas, hm, layers, AppState.focusedHeatmapCellId || focusedCellId, baseImg);
+    };
+    baseImg.src = audit.visual_asset_b64;
+  }
+  drawHeatmapCanvasOverlay(canvas, hm, layers, focusedCellId, baseImg);
+
+  viewer.querySelectorAll('.heatmap-layer-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const k = btn.getAttribute('data-hm-layer');
+      layers[k] = !layers[k];
+      btn.classList.toggle('active', layers[k]);
+      btn.setAttribute('aria-pressed', layers[k] ? 'true' : 'false');
+      drawHeatmapCanvasOverlay(canvas, hm, layers, AppState.focusedHeatmapCellId || focusedCellId, baseImg);
+    });
+  });
+
+  viewer.querySelectorAll('.heatmap-cell-btn').forEach((btn) => {
+    const onFocusOrClick = () => {
+      const cid = btn.getAttribute('data-cell-id');
+      AppState.focusedHeatmapCellId = cid;
+      viewer.querySelectorAll('.heatmap-cell-btn').forEach((b) => b.classList.toggle('is-focused', b.getAttribute('data-cell-id') === cid));
+      drawHeatmapCanvasOverlay(canvas, hm, layers, cid, baseImg);
+      // Also select matching finding in the center rail if one cites this cell
+      const matchingFinding = (audit.findings || []).find((f) => String(f.paragraph_ref || '').includes(cid) || String(f.flagged_text || '').includes(cid));
+      if (matchingFinding) {
+        AppState.selectedFindingId = matchingFinding.id;
+        renderFindingsCenterPanel();
+        renderCorrectionRightPanel();
+      }
+    };
+    btn.addEventListener('click', onFocusOrClick);
+    btn.addEventListener('focus', onFocusOrClick);
+  });
+
+  const gridSel = document.getElementById('heatmapGridSizeSelect');
+  const logoChk = document.getElementById('heatmapLogoOnlyCheckbox');
+  const triggerHeatmapReinspect = async (customRect) => {
+    try {
+      const res = await apiFetch(`/api/audits/${encodeURIComponent(audit.id)}/heatmap`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          grid_size: Number(gridSel?.value || n),
+          logo_only: Boolean(logoChk?.checked),
+          logo_rect: customRect !== undefined ? customRect : (cs.logo_box || null),
+        }),
+      });
+      if (res && res.audit) {
+        AppState.currentAudit = res.audit;
+        renderAuditWorkspace();
+      }
+    } catch (err) {
+      showToast(`Heatmap update failed: ${err.message}`);
+    }
+  };
+
+  if (gridSel) {
+    gridSel.addEventListener('change', () => triggerHeatmapReinspect());
+  }
+  if (logoChk) {
+    logoChk.addEventListener('change', () => triggerHeatmapReinspect(null));
+  }
+
+  const drawBtn = document.getElementById('heatmapDrawLogoBtn');
+  if (drawBtn && canvas) {
+    drawBtn.addEventListener('click', () => {
+      AppState.drawingLogoRect = !AppState.drawingLogoRect;
+      drawBtn.setAttribute('aria-pressed', AppState.drawingLogoRect ? 'true' : 'false');
+      drawBtn.textContent = AppState.drawingLogoRect ? 'Drag on image above...' : 'Mark logo box';
+      const gridOverlay = document.getElementById('heatmapFocusableGrid');
+      if (gridOverlay) {
+        gridOverlay.style.pointerEvents = AppState.drawingLogoRect ? 'none' : 'auto';
+      }
+    });
+
+    let dragStart = null;
+    canvas.addEventListener('mousedown', (e) => {
+      if (!AppState.drawingLogoRect) return;
+      const rect = canvas.getBoundingClientRect();
+      dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    });
+    canvas.addEventListener('mouseup', async (e) => {
+      if (!AppState.drawingLogoRect || !dragStart) return;
+      const rect = canvas.getBoundingClientRect();
+      const endX = e.clientX - rect.left;
+      const endY = e.clientY - rect.top;
+      AppState.drawingLogoRect = false;
+      const aw = hm.analyzed_width || hm.original_width || canvas.width;
+      const ah = hm.analyzed_height || hm.original_height || canvas.height;
+      const scaleX = aw / Math.max(1, rect.width);
+      const scaleY = ah / Math.max(1, rect.height);
+      const x = Math.max(0, Math.min(dragStart.x, endX) * scaleX);
+      const y = Math.max(0, Math.min(dragStart.y, endY) * scaleY);
+      const width = Math.max(8, Math.abs(endX - dragStart.x) * scaleX);
+      const height = Math.max(8, Math.abs(endY - dragStart.y) * scaleY);
+      dragStart = null;
+      await triggerHeatmapReinspect({ x, y, width, height });
+    });
+  }
+}
+
 async function renderAmbiguityRadarView() {
+  const container = document.getElementById('ambiguityRadarContainer');
+  if (container && !AppState.lastRefreshed.radar) {
+    container.innerHTML = `
+      <div style="padding: 32px; text-align: center; color: var(--text-secondary); font-size: 13px;">
+        Loading guideline insights...
+      </div>
+    `;
+  }
+  try {
+    const data = await apiFetch(`/api/ambiguity-radar/${encodeURIComponent(AppState.activeBrandId)}`);
+    AppState.lastRefreshed.radar = new Date().toISOString();
+    const rows = data.rules_analysis || [];
+    const conciseNote = data.concise_info_note || 'Frequent overrides are a signal to review a rule, not proof it is incorrect.';
+    const canEditVault = hasFrontendPermission('edit_brand_vault');
+    const minSampleReq = data.min_sample_required || 5;
+    const sampleAuditsCnt = data.sample_audits_count ?? 0;
+    const hasSufficientSample = Boolean(data.sufficient_sample);
+
+    if (rows.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state-box">
+          <h3>No guideline rules configured for this brand</h3>
+          <p>Add rules in the Brand Vault to evaluate ambiguity scores, reviewer override correlation, and candidate rewrites.</p>
+          <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last checked: ${escapeHtml(formatTimestamp(AppState.lastRefreshed.radar))}</div>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="card" style="margin-bottom: 16px; padding: 14px 18px; background-color: var(--bg-main);">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <div style="font-size: 13.5px; color: var(--text-primary); font-weight: 600;">
+              ${escapeHtml(conciseNote)}
+            </div>
+            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
+              Every candidate rewrite is a <strong>suggestion for human sign-off</strong> — nothing is applied automatically.
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span class="status-badge ${hasSufficientSample ? 'badge-passed' : 'badge-neutral'}" title="Minimum sample threshold for override rate correlation">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>
+              <span>Sample: ${sampleAuditsCnt} / ${minSampleReq} audits (${hasSufficientSample ? 'Sufficient sample' : 'Not enough data'})</span>
+            </span>
+            <span style="font-size: 11px; color: var(--text-secondary);">
+              Brand Vault v${data.brand_version || 1} &bull; Updated ${escapeHtml(formatTimestamp(AppState.lastRefreshed.radar))}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="insights-stack">
+        ${rows.map((r, idx) => {
+          const hasFeedback = (r.recorded_feedback || []).length > 0;
+          const ambScore = r.ambiguity_score ?? 0;
+          const formulaStr = r.ambiguity_formula || 'score = min(100, sum(qualifier_weights) + 20*no_numeric + 15*no_examples + 15*subjective_only)';
+          const reasonsList = r.ambiguity_reasons || [];
+          const cand = r.candidate_rewrite || {};
+          const doExamples = cand.do_examples || [];
+          const dontExamples = cand.dont_examples || [];
+          const loopClosure = r.loop_closure || null;
+          const latestProposed = (r.revisions || []).find((rv) => rv.status === 'proposed');
+          const priorityBadgeClass = r.priority === 'High' ? 'badge-error' : (r.priority === 'Medium' ? 'badge-warning' : 'badge-neutral');
+
+          return `
+            <details class="insight-card" data-rule-card="${escapeHtml(r.rule_id)}" ${idx === 0 || r.priority === 'High' || r.overrides_recorded > 0 ? 'open' : ''}>
+              <summary class="insight-card-summary">
+                <div class="insight-card-main">
+                  <span class="mono-id">${escapeHtml(r.rule_id)} · v${r.version}</span>
+                  <div class="insight-card-title">${escapeHtml(r.title)}</div>
+                  <span class="status-badge badge-neutral" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>${escapeHtml(r.pillar)}</span></span>
+                </div>
+                <div class="insight-card-meta">
+                  <span class="status-badge ${priorityBadgeClass}" title="Priority derived from ambiguity score and override rate">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>
+                    <span>Priority: ${escapeHtml(r.priority || 'Low')}</span>
+                  </span>
+                  <span class="status-badge ${ambScore >= 35 ? 'badge-warning' : 'badge-neutral'} ambiguity-score-badge" title="${escapeHtml(formulaStr)}" tabindex="0" aria-label="Ambiguity score ${ambScore} out of 100. Formula: ${escapeHtml(formulaStr)}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>
+                    <span>Ambiguity: ${ambScore}/100</span>
+                  </span>
+                  <span class="status-badge badge-neutral">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>
+                    <span>Override rate: ${escapeHtml(r.override_rate_display || 'Not enough data')}</span>
+                  </span>
+                  <span class="status-badge badge-neutral">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>
+                    <span>${escapeHtml(r.classification_label || 'Not enough data')}</span>
+                  </span>
+                  <span class="insight-card-chevron" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                  </span>
+                </div>
+              </summary>
+              <div class="insight-card-body">
+                ${loopClosure ? `
+                  <div class="loop-closure-banner" style="padding: 10px 12px; background: var(--status-success-bg); border: 1px solid var(--status-success-border); border-radius: var(--radius-control); font-size: 13px; color: var(--slate-800);">
+                    <strong>Loop closure:</strong> ${escapeHtml(loopClosure.display)}
+                  </div>
+                ` : ''}
+
+                <div class="insight-detail-row">
+                  <span class="insight-detail-label">Current guideline wording (vague spans highlighted)</span>
+                  <div class="insight-detail-value rule-highlighted-text">${renderRuleTextWithVagueSpans(r.description, r.matched_spans)}</div>
+                </div>
+
+                <div class="insight-detail-row">
+                  <span class="insight-detail-label">Deterministic ambiguity score &amp; formula</span>
+                  <div class="insight-detail-value" style="font-size: 13px;">
+                    <div><strong>Score:</strong> <span class="mono-id">${ambScore} / 100</span> &bull; <strong>Formula:</strong> <code class="mono-id" style="font-size: 11.5px;">${escapeHtml(formulaStr)}</code></div>
+                    ${reasonsList.length > 0 ? `
+                      <ul style="margin: 6px 0 0 18px; color: var(--slate-700);">
+                        ${reasonsList.map((rsn) => `<li>${escapeHtml(rsn)}</li>`).join('')}
+                      </ul>
+                    ` : `<div style="color: var(--slate-600); margin-top: 4px;">No vague qualifiers or structural ambiguity triggers detected.</div>`}
+                  </div>
+                </div>
+
+                <div class="insight-detail-row">
+                  <span class="insight-detail-label">Override correlation &amp; telemetry</span>
+                  <div class="insight-detail-value" style="font-size: 13px;">
+                    <strong>Status:</strong> ${escapeHtml(r.classification_label || 'Not enough data')} &bull;
+                    <strong>Override rate:</strong> ${escapeHtml(r.override_rate_display || 'Not enough data')}
+                    (${r.overrides_recorded} override(s) / ${r.violations_recorded} finding(s) across ${r.sample_audits_count ?? sampleAuditsCnt} brand audit(s); min sample = ${r.min_sample_required ?? minSampleReq})
+                  </div>
+                </div>
+
+                ${hasFeedback ? `
+                  <div class="insight-detail-row">
+                    <span class="insight-detail-label">Logged reviewer dismissals &amp; override justifications</span>
+                    <ul style="padding-left: 18px; margin-top: 4px; font-size: 13px; color: var(--text-primary);">
+                      ${r.recorded_feedback.map((fb) => `
+                        <li style="margin-bottom: 4px;">"${escapeHtml(fb.override_reason)}" &bull; <span class="mono-id">${escapeHtml(fb.audit_id)}</span></li>
+                      `).join('')}
+                    </ul>
+                  </div>
+                ` : ''}
+
+                <!-- B3 & B6: Side-by-Side Diff & Suggestion for Human Sign-Off -->
+                <div class="clarity-rewriter-box" style="background: var(--slate-50); border: 1px solid var(--border-color); border-radius: var(--radius-card); padding: 14px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;">
+                    <div>
+                      <span class="insight-detail-label" style="color: var(--primary-action);">Guideline Clarity Rewriter — Suggestion for human sign-off</span>
+                      <div style="font-size: 12px; color: var(--slate-600);">Quantified thresholds come strictly from the rule text or Verified Facts; otherwise an explicit placeholder is inserted.</div>
+                    </div>
+                    ${cand.improved ? `
+                      <span class="status-badge badge-passed">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                        <span>Ambiguity ${cand.ambiguity_before}/100 &rarr; ${cand.ambiguity_after}/100</span>
+                      </span>
+                    ` : `
+                      <span class="status-badge badge-neutral">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>
+                        <span>${escapeHtml(cand.message || 'no improvement found')}</span>
+                      </span>
+                    `}
+                  </div>
+
+                  <div class="clarity-diff-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;">
+                    <div class="clarity-diff-col" style="background: var(--surface-solid); border: 1px solid var(--border-color); border-radius: var(--radius-control); padding: 10px 12px;">
+                      <div style="font-size: 11.5px; font-weight: 700; color: var(--slate-600); text-transform: uppercase; margin-bottom: 4px;">
+                        Before (Ambiguity ${cand.ambiguity_before ?? ambScore}/100)
+                      </div>
+                      <div style="font-size: 13px; color: var(--text-primary);">${renderRuleTextWithVagueSpans(cand.old_text || r.description, r.matched_spans)}</div>
+                    </div>
+                    <div class="clarity-diff-col" style="background: var(--surface-solid); border: 1px solid ${cand.improved ? 'var(--status-success-border)' : 'var(--border-color)'}; border-radius: var(--radius-control); padding: 10px 12px;">
+                      <div style="font-size: 11.5px; font-weight: 700; color: var(--slate-700); text-transform: uppercase; margin-bottom: 4px;">
+                        After — Suggestion for human sign-off (Ambiguity ${cand.ambiguity_after ?? ambScore}/100)
+                      </div>
+                      ${cand.improved ? `
+                        <div style="font-size: 13px; color: var(--text-primary); font-weight: 500;">${escapeHtml(cand.new_text)}</div>
+                        <div style="margin-top: 6px; font-size: 11.5px; color: var(--slate-600);">
+                          <strong>Threshold source:</strong>
+                          ${cand.cited_fact_id
+                            ? `Verified Fact <span class="mono-id">${escapeHtml(cand.cited_fact_id)}</span>`
+                            : (cand.threshold_source === 'rule_text' ? 'Existing numeric token in rule text' : 'Explicit placeholder <span class="mono-id">[SET THRESHOLD: unit]</span>')}
+                        </div>
+                      ` : `
+                        <div style="font-size: 13px; color: var(--slate-600); font-style: italic;">no improvement found — current wording is already concise or requires manual authoring.</div>
+                      `}
+                    </div>
+                  </div>
+
+                  <!-- Do / Don't Examples with Provenance -->
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px;">
+                    <div style="background: var(--surface-solid); border: 1px solid var(--border-color); border-radius: var(--radius-control); padding: 10px 12px;">
+                      <div style="font-size: 11.5px; font-weight: 700; color: #067647; text-transform: uppercase; margin-bottom: 6px;">Do Example(s) &amp; Provenance</div>
+                      ${doExamples.map((ex) => `
+                        <div style="font-size: 12.5px; margin-bottom: 6px;">
+                          <div>"${escapeHtml(ex.text)}"</div>
+                          <div style="margin-top: 2px;"><span class="mono-id" style="font-size: 11px;">Provenance: ${escapeHtml(ex.provenance)}</span></div>
+                        </div>
+                      `).join('')}
+                    </div>
+                    <div style="background: var(--surface-solid); border: 1px solid var(--border-color); border-radius: var(--radius-control); padding: 10px 12px;">
+                      <div style="font-size: 11.5px; font-weight: 700; color: #B42318; text-transform: uppercase; margin-bottom: 6px;">Don't Example(s) &amp; Provenance</div>
+                      ${dontExamples.map((ex) => `
+                        <div style="font-size: 12.5px; margin-bottom: 6px;">
+                          <div>"${escapeHtml(ex.text)}"</div>
+                          <div style="margin-top: 2px;"><span class="mono-id" style="font-size: 11px;">Provenance: ${escapeHtml(ex.provenance)}</span></div>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
+
+                  <!-- Role-gated Approve / Reject Controls -->
+                  <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <div style="font-size: 12px; color: var(--slate-600);">
+                      ${canEditVault
+                        ? 'Brand Administrator sign-off: approving updates the rule, increments Brand Vault version, and logs an audit event.'
+                        : `Role "${escapeHtml(AppState.activeRole)}" is read-only here. Sign in as Brand Administrator to approve or reject guideline revisions.`}
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-accent clarity-approve-btn"
+                        data-rule-id="${escapeHtml(r.rule_id)}"
+                        data-proposed-id="${escapeHtml(latestProposed ? latestProposed.id : '')}"
+                        ${(!canEditVault || !cand.improved) ? 'disabled' : ''}
+                      >
+                        Approve rewrite
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-danger-outline clarity-reject-btn"
+                        data-rule-id="${escapeHtml(r.rule_id)}"
+                        data-proposed-id="${escapeHtml(latestProposed ? latestProposed.id : '')}"
+                        ${(!canEditVault || !cand.improved) ? 'disabled' : ''}
+                      >
+                        Reject
+                      </button>
+                      <button type="button" class="btn btn-sm inspect-rule-vault-btn" data-rule-id="${escapeHtml(r.rule_id)}">
+                        Open in Brand Vault &rarr;
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </details>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    container.querySelectorAll('.inspect-rule-vault-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        AppState.activeVaultTab = 'voice';
+        switchView('brand-vault');
+      });
+    });
+
+    container.querySelectorAll('.clarity-approve-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const ruleId = btn.getAttribute('data-rule-id');
+        const propId = btn.getAttribute('data-proposed-id');
+        btn.disabled = true;
+        try {
+          let res;
+          if (propId) {
+            res = await apiFetch(`/api/ambiguity-radar/${encodeURIComponent(AppState.activeBrandId)}/revisions/${encodeURIComponent(propId)}/approve`, {
+              method: 'POST',
+            });
+          } else {
+            res = await apiFetch(`/api/ambiguity-radar/${encodeURIComponent(AppState.activeBrandId)}/rules/${encodeURIComponent(ruleId)}/approve`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+          }
+          showToast(`Approved revision for ${ruleId} (Brand Vault bumped to v${res.brand_version_after}).`);
+          await renderAmbiguityRadarView();
+        } catch (err) {
+          btn.disabled = false;
+          showToast(`Cannot approve revision: ${err.message}`);
+        }
+      });
+    });
+
+    container.querySelectorAll('.clarity-reject-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const ruleId = btn.getAttribute('data-rule-id');
+        let propId = btn.getAttribute('data-proposed-id');
+        btn.disabled = true;
+        try {
+          if (!propId) {
+            const prop = await apiFetch(`/api/ambiguity-radar/${encodeURIComponent(AppState.activeBrandId)}/rules/${encodeURIComponent(ruleId)}/propose`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+            propId = prop.id;
+          }
+          await apiFetch(`/api/ambiguity-radar/${encodeURIComponent(AppState.activeBrandId)}/revisions/${encodeURIComponent(propId)}/reject`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'Rejected by Brand Administrator in Guideline Insights.' }),
+          });
+          showToast(`Rejected candidate rewrite for ${ruleId}. Brand Vault unchanged.`);
+          await renderAmbiguityRadarView();
+        } catch (err) {
+          btn.disabled = false;
+          showToast(`Cannot reject revision: ${err.message}`);
+        }
+      });
+    });
+  } catch (err) {
+    const action = getApiErrorAction(err);
+    const lastTime = AppState.lastRefreshed.radar ? formatTimestamp(AppState.lastRefreshed.radar) : 'Never';
+    if (container) {
+      container.innerHTML = `
+        <div class="empty-state-box" style="border: 1px solid #FECDCA; background: #FEF3F2;">
+          <h3 style="color: #B42318;">Could not retrieve guideline insights</h3>
+          <p style="color: #475467;">${escapeHtml(err.message)}</p>
+          ${action.helperText ? `<div style="font-size: 12.5px; color: #B42318; margin-top: 4px;">${escapeHtml(action.helperText)}</div>` : ''}
+          ${err.requestId ? `<div style="font-size: 11px; color: #98A2B3; margin-top: 4px; font-family: var(--font-mono);">Request ID: ${escapeHtml(err.requestId)}</div>` : ''}
+          <div style="font-size: 11px; color: #98A2B3; margin-top: 6px;">Last successful update: ${escapeHtml(lastTime)}</div>
+          ${action.canRetry ? `<button type="button" class="btn btn-sm btn-accent" id="retryRadarBtn" style="margin-top: 12px;">${escapeHtml(action.retryLabel || 'Retry')}</button>` : ''}
+        </div>
+      `;
+      const retryBtn = document.getElementById('retryRadarBtn');
+      if (retryBtn) retryBtn.addEventListener('click', () => renderAmbiguityRadarView());
+    }
+  }
+}
+
+async function _legacyRenderAmbiguityRadarViewUnused() {
   const container = document.getElementById('ambiguityRadarContainer');
   if (container && !AppState.lastRefreshed.radar) {
     container.innerHTML = `

@@ -108,6 +108,14 @@ def allocate_certificate_id(cur: sqlite3.Cursor) -> str:
     return f"CERT-{next_num}"
 
 
+def allocate_guideline_revision_id(cur: sqlite3.Cursor) -> str:
+    """Allocate next monotonic GREV-XXXX ID sequentially inside the transaction."""
+    cur.execute("SELECT MAX(CAST(SUBSTR(id, 6) AS INTEGER)) AS max_id FROM guideline_revisions WHERE id LIKE 'GREV-%'")
+    row = cur.fetchone()
+    next_num = (row["max_id"] or 1000) + 1 if row else 1001
+    return f"GREV-{next_num}"
+
+
 def _ensure_column(cur: sqlite3.Cursor, table: str, column: str, col_def: str) -> None:
     """Idempotent migration helper: add column to table if it does not already exist."""
     cur.execute(f"PRAGMA table_info({table})")
@@ -333,6 +341,32 @@ def init_db() -> None:
     )
 
     # Idempotent schema migrations for existing SQLite files
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS guideline_revisions (
+            id TEXT PRIMARY KEY,
+            brand_id TEXT NOT NULL DEFAULT '',
+            rule_id TEXT NOT NULL,
+            old_text TEXT NOT NULL,
+            new_text TEXT NOT NULL,
+            do_examples TEXT NOT NULL DEFAULT '[]',
+            dont_examples TEXT NOT NULL DEFAULT '[]',
+            ambiguity_before INTEGER NOT NULL DEFAULT 0,
+            ambiguity_after INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'proposed',
+            rejection_reason TEXT DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT '',
+            decided_by TEXT DEFAULT '',
+            decided_at TEXT DEFAULT '',
+            brand_version_before INTEGER DEFAULT 1,
+            brand_version_after INTEGER DEFAULT NULL
+        )
+        """
+    )
+    _ensure_column(cur, "brands", "min_clear_space_ratio", "REAL DEFAULT 0.25")
+    _ensure_column(cur, "brands", "min_clear_space_px", "INTEGER DEFAULT 16")
+    _ensure_column(cur, "audits", "visual_asset_b64", "TEXT DEFAULT ''")
     _ensure_column(cur, "audits", "submitted_by_user_id", "TEXT DEFAULT ''")
     _ensure_column(cur, "audits", "submitted_by_name", "TEXT DEFAULT ''")
     _ensure_column(cur, "approvals", "approver_user_id", "TEXT DEFAULT ''")
@@ -1153,6 +1187,7 @@ def reset_demo_workspace() -> None:
     cur = conn.cursor()
     cur.executescript(
         """
+        DELETE FROM guideline_revisions;
         DELETE FROM certificates;
         DELETE FROM audit_events;
         DELETE FROM guideline_feedback;

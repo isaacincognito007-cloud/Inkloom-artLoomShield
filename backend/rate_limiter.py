@@ -83,23 +83,43 @@ def is_valid_ip(candidate: str) -> bool:
         return False
 
 
-def get_client_ip(request) -> str:
-    """Extract client IP safely from forwarded headers behind Render's reverse proxy.
+def _socket_client_ip(request) -> str:
+    """Extract direct socket client IP if valid, otherwise default to 127.0.0.1."""
+    client = getattr(request, "client", None)
+    if client:
+        host = getattr(client, "host", None)
+        if host and is_valid_ip(host):
+            return host.strip()
+    return "127.0.0.1"
 
-    Prevents spoofing of leftmost X-Forwarded-For or x-vercel-forwarded-for headers:
-    1. x-vercel-forwarded-for: honoured ONLY when LOOMSHIELD_TRUST_VERCEL_HEADER=1 is explicitly set.
-    2. x-forwarded-for: Render's ingress proxy appends the connecting client IP as the rightmost hop.
-       Resolves hops[-trusted_hops] (default LOOMSHIELD_TRUSTED_PROXY_HOPS=1 -> hops[-1]), walking
-       right-to-left so client-prepended fake IPs are ignored while keeping each user in their own bucket.
-    3. x-real-ip: verified fallback.
-    4. request.client.host: direct socket connection fallback.
+
+def get_client_ip(request) -> str:
+    """Extract client IP safely with explicit proxy hop and header controls (Part A1).
+
+    Order of resolution:
+    1. LOOMSHIELD_CLIENT_IP_HEADER (e.g. cf-connecting-ip): used only when explicitly set and valid.
+    2. x-vercel-forwarded-for: trusted only when LOOMSHIELD_TRUST_VERCEL_HEADER=1 and valid.
+    3. x-real-ip: trusted only when LOOMSHIELD_TRUST_X_REAL_IP=1 and valid.
+    4. x-forwarded-for: LOOMSHIELD_TRUSTED_PROXY_HOPS = N (number of trusted proxy entries on the RIGHT,
+       default N=1). Selects hops[-(N+1)] if len(hops) > N and valid, else falls back to socket address.
+    5. Direct socket client address (or 127.0.0.1 fallback).
     """
     if not request:
         return "127.0.0.1"
 
-    headers = getattr(request, "headers", {})
+    headers = getattr(request, "headers", {}) or {}
+    socket_ip = _socket_client_ip(request)
 
-    # 1. Check x-vercel-forwarded-for ONLY when explicitly trusted via LOOMSHIELD_TRUST_VERCEL_HEADER=1
+    # 1. Optional explicit client IP header (e.g. cf-connecting-ip)
+    custom_hdr = os.environ.get("LOOMSHIELD_CLIENT_IP_HEADER", "").strip().lower()
+    if custom_hdr:
+        raw_custom = headers.get(custom_hdr)
+        if raw_custom:
+            candidate = raw_custom.split(",")[0].strip()
+            if is_valid_ip(candidate):
+                return candidate
+
+    # 2. x-vercel-forwarded-for behind explicit flag
     if os.environ.get("LOOMSHIELD_TRUST_VERCEL_HEADER", "").strip() == "1":
         x_vff = headers.get("x-vercel-forwarded-for")
         if x_vff:
@@ -107,33 +127,25 @@ def get_client_ip(request) -> str:
             if is_valid_ip(candidate):
                 return candidate
 
-    # 2. Check x-forwarded-for from the right (Render appends connecting client IP at hops[-1])
+    # 3. x-real-ip behind explicit flag
+    if os.environ.get("LOOMSHIELD_TRUST_X_REAL_IP", "").strip() == "1":
+        x_real_ip = headers.get("x-real-ip")
+        if x_real_ip and is_valid_ip(x_real_ip.strip()):
+            return x_real_ip.strip()
+
+    # 4. x-forwarded-for with N trusted proxy entries on the RIGHT (default N=1)
     xff = headers.get("x-forwarded-for")
     if xff:
+        raw_n = os.environ.get("LOOMSHIELD_TRUSTED_PROXY_HOPS", "1").strip()
         try:
-            trusted_hops = max(1, int(os.environ.get("LOOMSHIELD_TRUSTED_PROXY_HOPS", "1") or "1"))
+            n_hops = max(0, int(raw_n))
         except ValueError:
-            trusted_hops = 1
+            n_hops = 1
         hops = [h.strip() for h in xff.split(",") if h.strip()]
-        if hops:
-            start_idx = max(0, len(hops) - trusted_hops)
-            for idx in range(start_idx, -1, -1):
-                if is_valid_ip(hops[idx]):
-                    return hops[idx]
-            for idx in range(len(hops) - 1, start_idx, -1):
-                if is_valid_ip(hops[idx]):
-                    return hops[idx]
+        if len(hops) > n_hops:
+            candidate = hops[-(n_hops + 1)]
+            if is_valid_ip(candidate):
+                return candidate
+        return socket_ip
 
-    # 3. Check x-real-ip
-    x_real_ip = headers.get("x-real-ip")
-    if x_real_ip and is_valid_ip(x_real_ip.strip()):
-        return x_real_ip.strip()
-
-    # 4. Direct socket client
-    client = getattr(request, "client", None)
-    if client:
-        host = getattr(client, "host", None)
-        if host and is_valid_ip(host):
-            return host
-
-    return "127.0.0.1"
+    return socket_ip

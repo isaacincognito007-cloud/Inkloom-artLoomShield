@@ -717,32 +717,132 @@ def test_h6_signing_key_startup_warning_logs_without_leaking_key(monkeypatch, ca
 
 
 def test_h8_get_client_ip_render_proxy_anti_spoofing(monkeypatch):
-    """H8: get_client_ip ignores spoofed x-vercel-forwarded-for and leftmost X-Forwarded-For hops behind Render's proxy."""
+    """H8 & A1: get_client_ip resolves hops[-(N+1)] with N=0/1/2, header mode, invalid values, and /api/_diag/client-ip."""
     from types import SimpleNamespace
     from backend.rate_limiter import get_client_ip
 
+    monkeypatch.delenv("LOOMSHIELD_CLIENT_IP_HEADER", raising=False)
     monkeypatch.delenv("LOOMSHIELD_TRUST_VERCEL_HEADER", raising=False)
+    monkeypatch.delenv("LOOMSHIELD_TRUST_X_REAL_IP", raising=False)
     monkeypatch.delenv("LOOMSHIELD_TRUSTED_PROXY_HOPS", raising=False)
+    monkeypatch.delenv("LOOMSHIELD_DEBUG_HEADERS", raising=False)
 
-    # 1. Spoofed x-vercel-forwarded-for + spoofed leftmost X-Forwarded-For hop on Render
-    # Render appends the real client IP (198.51.100.42) as the rightmost hop in x-forwarded-for
-    req_spoof = SimpleNamespace(
+    # 1. Default N=1 (1 trusted proxy entry on the RIGHT, e.g. "client, cloudflare-edge-ip"):
+    # Forged prefix "8.8.8.8" before real client "198.51.100.42" and edge proxy "172.68.0.10" -> selects hops[-2] = 198.51.100.42
+    req_one_proxy = SimpleNamespace(
         headers={
             "x-vercel-forwarded-for": "1.1.1.1",
-            "x-forwarded-for": "8.8.8.8, 198.51.100.42",
+            "x-real-ip": "9.9.9.9",
+            "x-forwarded-for": "8.8.8.8, 198.51.100.42, 172.68.0.10",
         },
         client=SimpleNamespace(host="10.0.0.5"),
     )
-    assert get_client_ip(req_spoof) == "198.51.100.42"
+    assert get_client_ip(req_one_proxy) == "198.51.100.42"
 
-    # 2. Another real client (198.51.100.99) gets its own bucket (does not collapse users into one bucket)
+    # Another user through the same Cloudflare edge gets their own bucket (198.51.100.99)
     req_user2 = SimpleNamespace(
-        headers={"x-forwarded-for": "198.51.100.99"},
+        headers={"x-forwarded-for": "198.51.100.99, 172.68.0.10"},
         client=SimpleNamespace(host="10.0.0.5"),
     )
     assert get_client_ip(req_user2) == "198.51.100.99"
 
-    # 3. When LOOMSHIELD_TRUST_VERCEL_HEADER=1 is explicitly enabled, x-vercel-forwarded-for is honoured
+    # When len(hops) <= N (e.g. only 1 hop when N=1), falls back to socket address
+    req_too_short = SimpleNamespace(
+        headers={"x-forwarded-for": "198.51.100.99"},
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    assert get_client_ip(req_too_short) == "10.0.0.5"
+
+    # 2. N=2 (two trusted proxy entries on the RIGHT: "forged, client, proxy1, proxy2") -> selects hops[-3]
+    monkeypatch.setenv("LOOMSHIELD_TRUSTED_PROXY_HOPS", "2")
+    req_two_proxies = SimpleNamespace(
+        headers={"x-forwarded-for": "8.8.8.8, 198.51.100.77, 172.68.0.10, 10.10.0.2"},
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    assert get_client_ip(req_two_proxies) == "198.51.100.77"
+    # With N=2 and only 2 hops, len(hops) <= N -> falls back to socket address
+    assert get_client_ip(req_user2) == "10.0.0.5"
+
+    # 3. N=0 (zero trusted proxy entries on the RIGHT: selects hops[-1])
+    monkeypatch.setenv("LOOMSHIELD_TRUSTED_PROXY_HOPS", "0")
+    req_zero_proxies = SimpleNamespace(
+        headers={"x-forwarded-for": "8.8.8.8, 198.51.100.42"},
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    assert get_client_ip(req_zero_proxies) == "198.51.100.42"
+
+    # 4. Invalid IP values in XFF or custom header fall back safely to socket address
+    monkeypatch.setenv("LOOMSHIELD_TRUSTED_PROXY_HOPS", "1")
+    req_invalid_xff = SimpleNamespace(
+        headers={"x-forwarded-for": "not-an-ip, 172.68.0.10"},
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    assert get_client_ip(req_invalid_xff) == "10.0.0.5"
+
+    # 5. Header mode (LOOMSHIELD_CLIENT_IP_HEADER=cf-connecting-ip)
+    monkeypatch.setenv("LOOMSHIELD_CLIENT_IP_HEADER", "cf-connecting-ip")
+    req_cf = SimpleNamespace(
+        headers={
+            "cf-connecting-ip": "203.0.113.55",
+            "x-forwarded-for": "8.8.8.8, 198.51.100.42, 172.68.0.10",
+        },
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    assert get_client_ip(req_cf) == "203.0.113.55"
+
+    # Invalid value in LOOMSHIELD_CLIENT_IP_HEADER falls through to XFF resolution
+    req_cf_invalid = SimpleNamespace(
+        headers={
+            "cf-connecting-ip": "malformed_ip_value",
+            "x-forwarded-for": "8.8.8.8, 198.51.100.42, 172.68.0.10",
+        },
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    assert get_client_ip(req_cf_invalid) == "198.51.100.42"
+    monkeypatch.delenv("LOOMSHIELD_CLIENT_IP_HEADER", raising=False)
+
+    # 6. Explicit flags for x-real-ip and x-vercel-forwarded-for
+    monkeypatch.setenv("LOOMSHIELD_TRUST_X_REAL_IP", "1")
+    assert get_client_ip(req_one_proxy) == "9.9.9.9"
+    monkeypatch.delenv("LOOMSHIELD_TRUST_X_REAL_IP", raising=False)
+
     monkeypatch.setenv("LOOMSHIELD_TRUST_VERCEL_HEADER", "1")
-    assert get_client_ip(req_spoof) == "1.1.1.1"
+    assert get_client_ip(req_one_proxy) == "1.1.1.1"
+    monkeypatch.delenv("LOOMSHIELD_TRUST_VERCEL_HEADER", raising=False)
+
+    # 7. GET /api/_diag/client-ip returns 404 unless LOOMSHIELD_DEBUG_HEADERS=1
+    assert client.get("/api/_diag/client-ip").status_code == 404
+    monkeypatch.setenv("LOOMSHIELD_DEBUG_HEADERS", "1")
+    diag_res = client.get(
+        "/api/_diag/client-ip",
+        headers={
+            "x-forwarded-for": "198.51.100.88, 172.68.0.10",
+            "cf-connecting-ip": "198.51.100.88",
+        },
+    )
+    assert diag_res.status_code == 200
+    diag_body = diag_res.json()
+    assert set(diag_body.keys()) == {
+        "x-forwarded-for",
+        "cf-connecting-ip",
+        "true-client-ip",
+        "x-real-ip",
+        "socket_host",
+        "computed_ip",
+    }
+    assert diag_body["computed_ip"] == "198.51.100.88"
+
+
+def test_a4_hosted_mode_unset_env_defaults_to_content_creator(monkeypatch):
+    """A4: When LOOMSHIELD_DEPLOYMENT and LOOMSHIELD_USER_ROLE are unset, configured_role() defaults to Content Creator."""
+    from backend.config import configured_role
+    monkeypatch.delenv("LOOMSHIELD_DEPLOYMENT", raising=False)
+    monkeypatch.delenv("LOOMSHIELD_USER_ROLE", raising=False)
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "production")
+
+    assert configured_role() == "Content Creator"
+    sess = client.get("/api/session")
+    assert sess.status_code == 200
+    assert sess.json()["user_role"] == "Content Creator"
+    assert sess.json()["configured_role"] == "Content Creator"
 
