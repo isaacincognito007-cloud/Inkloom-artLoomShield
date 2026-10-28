@@ -128,8 +128,7 @@ def configured_role() -> str:
     if role in VALID_ROLES:
         return role
 
-    is_local = deployment_mode() == "local" or bool(os.environ.get("PYTEST_CURRENT_TEST"))
-    if is_local:
+    if deployment_mode() == "local":
         return "Brand Administrator"
 
     logger.warning(
@@ -200,10 +199,16 @@ def verify_demo_token(token: str, now_ts: Optional[float] = None) -> Dict[str, A
         raise ValueError("Malformed demo session token structure.")
 
     payload_b64, sig_b64 = parts
-    expected_sig = hmac.new(get_session_secret(), payload_b64.encode("ascii"), hashlib.sha256).digest()
-    expected_sig_b64 = _b64url_encode(expected_sig)
+    try:
+        payload_ascii_bytes = payload_b64.encode("ascii")
+        sig_input_bytes = sig_b64.encode("ascii")
+        expected_sig = hmac.new(get_session_secret(), payload_ascii_bytes, hashlib.sha256).digest()
+        expected_sig_b64_bytes = _b64url_encode(expected_sig).encode("ascii")
+        sig_matches = hmac.compare_digest(expected_sig_b64_bytes, sig_input_bytes)
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise ValueError("Invalid or tampered demo session token signature.") from exc
 
-    if not hmac.compare_digest(expected_sig_b64, sig_b64):
+    if not sig_matches:
         raise ValueError("Invalid or tampered demo session token signature.")
 
     try:

@@ -24,6 +24,7 @@ from .certificates import (
     canonicalize_payload,
     get_public_key_metadata,
     get_signing_key,
+    log_signing_key_startup_status,
     sign_certificate_payload,
     verify_certificate_envelope,
 )
@@ -108,6 +109,7 @@ def require_permission(role: str, permission: str, message: str) -> None:
 async def lifespan(app: FastAPI):
     global _LAST_SELFTEST_RESULT, _LAST_SELFTEST_TIME
     init_db()
+    log_signing_key_startup_status()
     try:
         _LAST_SELFTEST_RESULT = run_engine_selftest()
         _LAST_SELFTEST_TIME = datetime.now(timezone.utc).isoformat()
@@ -1845,26 +1847,52 @@ def transition_audit_workflow(
     current_state = detail["overall_status"]
     target_state = req.new_state
 
-    # 1. Permission checks
+    actor_uid = str(actor.get("user_id") or "").strip()
+    actor_uname = str(actor.get("user_name") or configured_user_name())
+    is_token_actor = (actor.get("source") == "demo_token" and bool(actor_uid))
+
+    # Collect all identified submitter user_ids from audit record AND approvals history (new_state='In Review')
+    history_submitter_uids = {
+        str(ap.get("approver_user_id") or "").strip()
+        for ap in (detail.get("approvals") or [])
+        if ap.get("new_state") == "In Review" and str(ap.get("approver_user_id") or "").strip()
+    }
+    current_sub_uid = str(detail.get("submitted_by_user_id") or "").strip()
+    identified_submitters = set(history_submitter_uids)
+    if current_sub_uid:
+        identified_submitters.add(current_sub_uid)
+
+    # 1. Permission & Separation of Duties checks
     if target_state == "Approved":
         if not has_permission(role, "approve"):
             raise HTTPException(
                 status_code=403,
                 detail=f"Signed-in role '{role}' is not authorized to approve audits.",
             )
-        # Separation of duties: the user who submitted an audit for review cannot approve it
-        submitted_by_uid = str(detail.get("submitted_by_user_id") or "").strip()
-        actor_uid = str(actor.get("user_id") or "").strip()
-        if is_demo_mode() and actor_uid and submitted_by_uid and actor_uid == submitted_by_uid:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"Separation of duties: '{actor['user_name']}' submitted this audit for review "
-                    "and cannot approve their own submission. A different Reviewer or Brand Administrator must approve it."
-                ),
-            )
+        if is_demo_mode() and identified_submitters:
+            # H1b: If the audit has any identified submitter, an Approved transition with no verified token identity is rejected
+            if not is_token_actor:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Sign in as a demo user to approve this audit.",
+                )
+            # H1a: Block approval if actor's user_id appears on ANY approvals row with new_state='In Review' or submitted_by_user_id
+            if actor_uid in identified_submitters:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Separation of duties: '{actor['user_name']}' submitted this audit for review "
+                        "and cannot approve their own submission. A different Reviewer or Brand Administrator must approve it."
+                    ),
+                )
     elif target_state == "In Review":
         require_permission(role, "submit_for_review", "Your role is not authorized to submit for review")
+        # H1c: A header-only request cannot resubmit an audit that has an identified submitter
+        if is_demo_mode() and identified_submitters and not is_token_actor:
+            raise HTTPException(
+                status_code=403,
+                detail="Sign in as a demo user to resubmit this audit for review.",
+            )
     elif target_state == "Changes Requested":
         require_permission(role, "request_changes", "Your role is not authorized to request changes")
     elif target_state == "Revised":
@@ -1920,19 +1948,30 @@ def transition_audit_workflow(
     now = datetime.now(timezone.utc).isoformat()
     content_hash = hashlib.sha256(detail["current_content"].encode("utf-8")).hexdigest()
     latest_version = len(detail["revisions"])
-    actor_uid = str(actor.get("user_id") or "")
-    actor_uname = str(actor.get("user_name") or configured_user_name())
 
     with db_session() as conn:
         cur = conn.cursor()
         if target_state == "In Review":
+            # H1c: Never overwrite a non-empty submitted_by_user_id with an empty one
             cur.execute(
                 """
                 UPDATE audits
-                SET overall_status = ?, submitted_by_user_id = ?, submitted_by_name = ?, updated_at = ?
+                SET overall_status = ?,
+                    submitted_by_user_id = CASE WHEN ? != '' THEN ? ELSE submitted_by_user_id END,
+                    submitted_by_name = CASE WHEN ? != '' THEN ? ELSE submitted_by_name END,
+                    updated_at = ?
                 WHERE id = ? AND overall_status = ?
                 """,
-                (target_state, actor_uid, actor_uname, now, audit_id, current_state),
+                (
+                    target_state,
+                    actor_uid,
+                    actor_uid,
+                    actor_uid,
+                    actor_uname,
+                    now,
+                    audit_id,
+                    current_state,
+                ),
             )
         else:
             cur.execute(
@@ -2103,11 +2142,42 @@ def _issue_or_get_certificate(audit_id: str, actor: Dict[str, str]) -> Dict[str,
         return envelope
 
 
+def _get_existing_certificate(audit_id: str) -> Dict[str, Any]:
+    """Return an already-issued certificate for an Approved audit, or raise 404 (never issues)."""
+    detail = get_audit_detail(audit_id)
+    if detail.get("overall_status") != "Approved":
+        raise HTTPException(
+            status_code=409,
+            detail="Compliance certificates can only be issued for Approved audits.",
+        )
+    _, _, _, is_ephemeral = get_signing_key()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM certificates WHERE audit_id = ?", (audit_id,))
+    existing = cur.fetchone()
+    conn.close()
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No compliance certificate has been issued for audit '{audit_id}' yet.",
+        )
+    payload = json.loads(existing["payload_json"])
+    return {
+        "payload": payload,
+        "alg": "Ed25519",
+        "kid": existing["kid"],
+        "signature_b64": existing["signature"],
+        "ephemeral_key": bool(payload.get("ephemeral_key", is_ephemeral)),
+        "key_notice": payload.get("key_notice", EPHEMERAL_KEY_NOTICE if is_ephemeral else PERSISTENT_KEY_NOTICE),
+    }
+
+
 @app.post("/api/audits/{audit_id}/certificate")
 def create_or_get_audit_certificate(
     audit_id: str,
     actor: Dict[str, str] = Depends(current_actor),
 ):
+    require_permission(actor["role"], "approve", "Your role is not authorized to issue compliance certificates")
     return _issue_or_get_certificate(audit_id, actor)
 
 
@@ -2117,7 +2187,7 @@ def download_audit_certificate(
     download: bool = False,
     actor: Dict[str, str] = Depends(current_actor),
 ):
-    envelope = _issue_or_get_certificate(audit_id, actor)
+    envelope = _get_existing_certificate(audit_id)
     headers = {}
     if download:
         safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", audit_id)
@@ -2153,38 +2223,40 @@ async def verify_certificate_endpoint(request: Request):
 
     result = verify_certificate_envelope(envelope, public_key_b64=pub_override)
 
-    # If payload has audit_id, check if the audit exists on this server and whether its content hash still matches
-    payload = envelope.get("payload") if isinstance(envelope, dict) else None
-    audit_id = payload.get("audit_id") if isinstance(payload, dict) else None
-    cert_hash = payload.get("content_sha256") if isinstance(payload, dict) else None
+    # H2: Run the audit cross-check ONLY when the cryptographic signature verified.
+    # Invalid or malformed envelopes trigger NO database lookup and reveal nothing about server audits.
+    if result.get("valid") is True:
+        payload = envelope.get("payload") if isinstance(envelope, dict) else None
+        audit_id = payload.get("audit_id") if isinstance(payload, dict) else None
+        cert_hash = payload.get("content_sha256") if isinstance(payload, dict) else None
 
-    if isinstance(audit_id, str) and audit_id.strip():
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT current_content, overall_status FROM audits WHERE id = ?", (audit_id.strip(),))
-        a_row = cur.fetchone()
-        conn.close()
+        if isinstance(audit_id, str) and audit_id.strip():
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT current_content, overall_status FROM audits WHERE id = ?", (audit_id.strip(),))
+            a_row = cur.fetchone()
+            conn.close()
 
-        if a_row:
-            live_hash = hashlib.sha256(str(a_row["current_content"] or "").encode("utf-8")).hexdigest()
-            matches = live_hash == cert_hash
-            result["audit_exists_on_server"] = True
-            result["server_audit_status"] = a_row["overall_status"]
-            result["server_content_sha256"] = live_hash
-            result["content_hash_matches_server"] = matches
-            if not matches:
-                if result.get("valid"):
+            if a_row:
+                live_hash = hashlib.sha256(str(a_row["current_content"] or "").encode("utf-8")).hexdigest()
+                matches = bool(live_hash == cert_hash)
+                result["audit_exists_on_server"] = True
+                result["server_audit_status"] = a_row["overall_status"]
+                result["content_hash_matches_server"] = matches
+                if not matches:
                     result["status"] = "content_hash_mismatch"
-                result["valid"] = False
-                result["reasons"].append(
-                    f"Server audit content hash ({live_hash[:16]}…) no longer matches certificate content_sha256 ({str(cert_hash)[:16]}…)."
-                )
+                    result["valid"] = False
+                    result["reasons"].append(
+                        "Server audit content hash no longer matches the certified content hash."
+                    )
+            else:
+                result["audit_exists_on_server"] = False
+                result["server_audit_status"] = None
+                result["content_hash_matches_server"] = False
         else:
             result["audit_exists_on_server"] = False
-            result["content_hash_matches_server"] = None
-    else:
-        result["audit_exists_on_server"] = False
-        result["content_hash_matches_server"] = None
+            result["server_audit_status"] = None
+            result["content_hash_matches_server"] = False
 
     return result
 

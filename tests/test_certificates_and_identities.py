@@ -396,3 +396,353 @@ def test_token_takes_precedence_over_role_header_in_demo(monkeypatch):
     assert sess.status_code == 200
     assert sess.json()["user_role"] == "Content Creator"
     assert sess.json()["user_id"] == "usr_priya"
+
+
+# ============================================================================
+# DAY 2 HARDENING TESTS (H1 - H8)
+# ============================================================================
+
+def test_h1_header_only_approval_blocked_when_submitter_identified(monkeypatch):
+    """H1(b): When an audit has an identified submitter, header-only Reviewer approval is rejected with 403."""
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
+    marcus_token = client.post("/api/demo/login", json={"user_id": "usr_marcus"}).json()["token"]
+
+    aud = client.post(
+        "/api/audits",
+        headers={"Authorization": f"Bearer {marcus_token}"},
+        json={
+            "brand_id": "novapay",
+            "document_name": "H1 Header Approval Block",
+            "content": "NovaPay Core processes enterprise cross-border payouts.",
+        },
+    ).json()
+    aid = aud["id"]
+
+    sub_res = client.post(
+        f"/api/audits/{aid}/workflow",
+        headers={"Authorization": f"Bearer {marcus_token}"},
+        json={"new_state": "In Review", "comment": "Submitted with Marcus token"},
+    )
+    assert sub_res.status_code == 200
+    assert sub_res.json()["submitted_by_user_id"] == "usr_marcus"
+
+    # Header-only Reviewer (no Bearer token) attempts to approve -> 403
+    app_res = client.post(
+        f"/api/audits/{aid}/workflow",
+        headers={"x-loomshield-role": "Reviewer"},
+        json={"new_state": "Approved", "comment": "Header-only approval attempt", "override_acknowledged": True},
+    )
+    assert app_res.status_code == 403
+    assert app_res.json()["error"]["message"] == "Sign in as a demo user to approve this audit."
+
+
+def test_h1_resubmit_history_blocks_original_submitter_and_header_only_resubmit(monkeypatch):
+    """H1(a,c): Header-only cannot resubmit an identified audit; original submitter in approvals history cannot approve."""
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
+    marcus_token = client.post("/api/demo/login", json={"user_id": "usr_marcus"}).json()["token"]
+    priya_token = client.post("/api/demo/login", json={"user_id": "usr_priya"}).json()["token"]
+    ava_token = client.post("/api/demo/login", json={"user_id": "usr_ava"}).json()["token"]
+
+    aud = client.post(
+        "/api/audits",
+        headers={"Authorization": f"Bearer {marcus_token}"},
+        json={
+            "brand_id": "novapay",
+            "document_name": "H1 History SoD Check",
+            "content": "NovaPay Core processes enterprise cross-border payouts.",
+        },
+    ).json()
+    aid = aud["id"]
+
+    # 1. Marcus submits to In Review with token
+    r_sub1 = client.post(
+        f"/api/audits/{aid}/workflow",
+        headers={"Authorization": f"Bearer {marcus_token}"},
+        json={"new_state": "In Review", "comment": "Initial submit by Marcus"},
+    )
+    assert r_sub1.status_code == 200
+    assert r_sub1.json()["submitted_by_user_id"] == "usr_marcus"
+
+    # 2. Marcus requests changes -> Changes Requested
+    r_chg = client.post(
+        f"/api/audits/{aid}/workflow",
+        headers={"Authorization": f"Bearer {marcus_token}"},
+        json={"new_state": "Changes Requested", "comment": "Needs minor revision"},
+    )
+    assert r_chg.status_code == 200
+    assert r_chg.json()["overall_status"] == "Changes Requested"
+    assert r_chg.json()["submitted_by_user_id"] == "usr_marcus"
+
+    # 3. Header-only attempts to resubmit to In Review -> rejected (403), submitted_by_user_id preserved
+    r_hdr_resub = client.post(
+        f"/api/audits/{aid}/workflow",
+        headers={"x-loomshield-role": "Content Creator"},
+        json={"new_state": "In Review", "comment": "Trying to wipe submitter via header-only resubmit"},
+    )
+    assert r_hdr_resub.status_code == 403
+    assert "sign in as a demo user" in r_hdr_resub.json()["error"]["message"].lower()
+
+    detail_after_hdr = client.get(f"/api/audits/{aid}").json()
+    assert detail_after_hdr["submitted_by_user_id"] == "usr_marcus"
+
+    # 4. Priya (Content Creator) resubmits with her token -> succeeds, current submitted_by_user_id is usr_priya
+    r_priya_resub = client.post(
+        f"/api/audits/{aid}/workflow",
+        headers={"Authorization": f"Bearer {priya_token}"},
+        json={"new_state": "In Review", "comment": "Resubmitted by Priya"},
+    )
+    assert r_priya_resub.status_code == 200
+    assert r_priya_resub.json()["submitted_by_user_id"] == "usr_priya"
+
+    # 5. Marcus tries to approve with his token -> still rejected (403) because Marcus is in approvals history for In Review
+    r_marcus_app = client.post(
+        f"/api/audits/{aid}/workflow",
+        headers={"Authorization": f"Bearer {marcus_token}"},
+        json={"new_state": "Approved", "comment": "Marcus trying to approve after Priya resubmit", "override_acknowledged": True},
+    )
+    assert r_marcus_app.status_code == 403
+    assert "separation of duties" in r_marcus_app.json()["error"]["message"].lower()
+
+    # 6. Ava (a different signed-in reviewer not in submitter history) approves -> 200 OK
+    r_ava_app = client.post(
+        f"/api/audits/{aid}/workflow",
+        headers={"Authorization": f"Bearer {ava_token}"},
+        json={"new_state": "Approved", "comment": "Approved by Ava", "override_acknowledged": True},
+    )
+    assert r_ava_app.status_code == 200
+    assert r_ava_app.json()["overall_status"] == "Approved"
+
+
+def test_h1_production_workflow_unchanged(monkeypatch):
+    """H1(4): Production mode workflow transitions remain unchanged without demo tokens."""
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "production")
+    monkeypatch.setenv("LOOMSHIELD_USER_ROLE", "Brand Administrator")
+    monkeypatch.setenv("LOOMSHIELD_USER_NAME", "Prod Admin")
+
+    aud = client.post(
+        "/api/audits",
+        json={
+            "brand_id": "novapay",
+            "document_name": "Production Workflow Audit",
+            "content": "NovaPay Core processes enterprise cross-border payouts.",
+        },
+    ).json()
+    aid = aud["id"]
+
+    r_sub = client.post(f"/api/audits/{aid}/workflow", json={"new_state": "In Review", "comment": "Prod submit"})
+    assert r_sub.status_code == 200
+    assert r_sub.json()["overall_status"] == "In Review"
+
+    r_app = client.post(
+        f"/api/audits/{aid}/workflow",
+        json={"new_state": "Approved", "comment": "Prod approve", "override_acknowledged": True},
+    )
+    assert r_app.status_code == 200
+    assert r_app.json()["overall_status"] == "Approved"
+
+
+def test_h2_verify_invalid_envelope_reveals_no_audit_info_and_skips_db_lookup(monkeypatch):
+    """H2: Invalid or malformed envelopes carrying a real audit_id trigger no DB lookup and reveal nothing about the audit."""
+    env = client.post("/api/audits/AUD-1002/certificate").json()
+
+    tampered = copy.deepcopy(env)
+    tampered["payload"]["document_name"] = "Tampered Title"
+    assert tampered["payload"]["audit_id"] == "AUD-1002"
+
+    # Fail test if get_connection is called during verification of an invalid or malformed envelope
+    def _forbid_db_lookup(*args, **kwargs):
+        raise AssertionError("Database lookup must not be triggered for invalid or malformed certificate envelopes")
+
+    monkeypatch.setattr(main_mod, "get_connection", _forbid_db_lookup)
+
+    res_invalid = client.post("/api/certificates/verify", json=tampered)
+    assert res_invalid.status_code == 200
+    body_inv = res_invalid.json()
+    assert body_inv["valid"] is False
+    assert "audit_exists_on_server" not in body_inv
+    assert "server_audit_status" not in body_inv
+    assert "content_hash_matches_server" not in body_inv
+    assert "server_content_sha256" not in body_inv
+
+    res_malformed = client.post(
+        "/api/certificates/verify",
+        json={"alg": "Ed25519", "kid": env["kid"], "payload": {"audit_id": "AUD-1002"}},
+    )
+    assert res_malformed.status_code == 200
+    body_mal = res_malformed.json()
+    assert body_mal["valid"] is False
+    assert "audit_exists_on_server" not in body_mal
+    assert "server_audit_status" not in body_mal
+    assert "content_hash_matches_server" not in body_mal
+    assert "server_content_sha256" not in body_mal
+
+
+def test_h2_verify_valid_certificate_returns_boolean_only_no_hashes():
+    """H2: Valid certificate returns audit_exists_on_server, server_audit_status, and content_hash_matches_server boolean without hash fragments."""
+    env = client.post("/api/audits/AUD-1002/certificate").json()
+
+    res_ok = client.post("/api/certificates/verify", json=env)
+    assert res_ok.status_code == 200
+    data_ok = res_ok.json()
+    assert data_ok["valid"] is True
+    assert data_ok["audit_exists_on_server"] is True
+    assert data_ok["server_audit_status"] == "Approved"
+    assert data_ok["content_hash_matches_server"] is True
+    assert "server_content_sha256" not in data_ok
+
+    # Simulate server content drift on AUD-1002 and verify no hash fragment is leaked in reasons
+    from backend.database import get_connection
+    conn = get_connection()
+    orig_row = conn.execute("SELECT current_content FROM audits WHERE id = 'AUD-1002'").fetchone()
+    orig_content = orig_row["current_content"]
+    try:
+        conn.execute("UPDATE audits SET current_content = 'Drifted content after approval' WHERE id = 'AUD-1002'")
+        conn.commit()
+        conn.close()
+
+        res_drift = client.post("/api/certificates/verify", json=env)
+        assert res_drift.status_code == 200
+        data_drift = res_drift.json()
+        assert data_drift["valid"] is False
+        assert data_drift["status"] == "content_hash_mismatch"
+        assert data_drift["audit_exists_on_server"] is True
+        assert data_drift["content_hash_matches_server"] is False
+        assert "server_content_sha256" not in data_drift
+        for reason in data_drift.get("reasons", []):
+            assert env["payload"]["content_sha256"][:12] not in reason
+    finally:
+        conn2 = get_connection()
+        conn2.execute("UPDATE audits SET current_content = ? WHERE id = 'AUD-1002'", (orig_content,))
+        conn2.commit()
+        conn2.close()
+
+
+def test_h3_certificate_post_requires_approve_and_get_never_issues(monkeypatch):
+    """H3: POST /api/audits/{id}/certificate requires approve permission (403 for Content Creator); GET returns 404 before issue and never issues."""
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
+    from backend.database import get_connection
+    conn = get_connection()
+    conn.execute("DELETE FROM certificates WHERE audit_id = 'AUD-1002'")
+    conn.commit()
+    conn.close()
+
+    priya_token = client.post("/api/demo/login", json={"user_id": "usr_priya"}).json()["token"]
+    ava_token = client.post("/api/demo/login", json={"user_id": "usr_ava"}).json()["token"]
+
+    # 1. Before issue, GET on Approved audit AUD-1002 returns 404 and does not issue
+    get_before = client.get("/api/audits/AUD-1002/certificate")
+    assert get_before.status_code == 404
+    assert get_before.json()["error"]["code"] == "NOT_FOUND"
+
+    # 2. Content Creator POST to issue certificate -> 403 Forbidden
+    post_cc = client.post(
+        "/api/audits/AUD-1002/certificate",
+        headers={"Authorization": f"Bearer {priya_token}"},
+    )
+    assert post_cc.status_code == 403
+    assert post_cc.json()["error"]["code"] == "PERMISSION_DENIED"
+
+    # Confirm certificate was still not issued
+    assert client.get("/api/audits/AUD-1002/certificate").status_code == 404
+
+    # 3. Brand Administrator issues certificate via POST -> 200 OK
+    post_admin = client.post(
+        "/api/audits/AUD-1002/certificate",
+        headers={"Authorization": f"Bearer {ava_token}"},
+    )
+    assert post_admin.status_code == 200
+
+    # 4. GET after issue returns 200 and is identical to POST
+    get_after = client.get("/api/audits/AUD-1002/certificate")
+    assert get_after.status_code == 200
+    assert get_after.json() == post_admin.json()
+
+
+def test_h4_non_ascii_token_signature_returns_401_standard_error_shape(monkeypatch):
+    """H4: A demo token with non-ASCII characters in the signature returns 401 in the standard error shape."""
+    from backend.config import verify_demo_token
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
+    valid_token = client.post("/api/demo/login", json={"user_id": "usr_marcus"}).json()["token"]
+    payload_part = valid_token.split(".", 1)[0]
+
+    # Direct unit check with arbitrary Unicode characters (including multi-byte UTF-8)
+    with pytest.raises(ValueError, match="Invalid or tampered"):
+        verify_demo_token(f"{payload_part}.sig_é_ü_Ω_🚀")
+
+    # End-to-end HTTP header check with non-ASCII bytes (decoded by ASGI/Starlette as non-ASCII str)
+    raw_auth_header = b"Bearer " + payload_part.encode("ascii") + ".sig_\u00e9_\u00fc".encode("latin-1")
+
+    # 1. On /api/session
+    res_sess = client.get("/api/session", headers={"Authorization": raw_auth_header})
+    assert res_sess.status_code == 401
+    err_sess = res_sess.json()
+    assert "error" in err_sess
+    assert err_sess["error"]["code"] == "UNAUTHORIZED"
+    assert "request_id" in err_sess["error"]
+
+    # 2. On a protected endpoint (POST /api/audits)
+    res_prot = client.post(
+        "/api/audits",
+        headers={"Authorization": raw_auth_header},
+        json={"brand_id": "novapay", "document_name": "Non-ASCII Sig", "content": "NovaPay Core text."},
+    )
+    assert res_prot.status_code == 401
+    err_prot = res_prot.json()
+    assert "error" in err_prot
+    assert err_prot["error"]["code"] == "UNAUTHORIZED"
+    assert "request_id" in err_prot["error"]
+
+
+def test_h6_signing_key_startup_warning_logs_without_leaking_key(monkeypatch, caplog):
+    """H6: Startup check logs a warning when LOOMSHIELD_SIGNING_KEY is unset or malformed and never logs the key material."""
+    import logging
+    from backend.certificates import log_signing_key_startup_status
+
+    # 1. Ephemeral key warning when unset
+    monkeypatch.delenv("LOOMSHIELD_SIGNING_KEY", raising=False)
+    with caplog.at_level(logging.WARNING, logger="loomshield.certificates"):
+        caplog.clear()
+        log_signing_key_startup_status()
+        assert any("ephemeral ed25519 demo signing key" in rec.message.lower() for rec in caplog.records)
+
+    # 2. Malformed key warning without logging the secret value
+    secret_malformed_value = "super-secret-malformed-key-material-987654321"
+    monkeypatch.setenv("LOOMSHIELD_SIGNING_KEY", secret_malformed_value)
+    with caplog.at_level(logging.WARNING, logger="loomshield.certificates"):
+        caplog.clear()
+        log_signing_key_startup_status()
+        assert any("malformed" in rec.message.lower() for rec in caplog.records)
+        for rec in caplog.records:
+            assert secret_malformed_value not in rec.message
+
+
+def test_h8_get_client_ip_render_proxy_anti_spoofing(monkeypatch):
+    """H8: get_client_ip ignores spoofed x-vercel-forwarded-for and leftmost X-Forwarded-For hops behind Render's proxy."""
+    from types import SimpleNamespace
+    from backend.rate_limiter import get_client_ip
+
+    monkeypatch.delenv("LOOMSHIELD_TRUST_VERCEL_HEADER", raising=False)
+    monkeypatch.delenv("LOOMSHIELD_TRUSTED_PROXY_HOPS", raising=False)
+
+    # 1. Spoofed x-vercel-forwarded-for + spoofed leftmost X-Forwarded-For hop on Render
+    # Render appends the real client IP (198.51.100.42) as the rightmost hop in x-forwarded-for
+    req_spoof = SimpleNamespace(
+        headers={
+            "x-vercel-forwarded-for": "1.1.1.1",
+            "x-forwarded-for": "8.8.8.8, 198.51.100.42",
+        },
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    assert get_client_ip(req_spoof) == "198.51.100.42"
+
+    # 2. Another real client (198.51.100.99) gets its own bucket (does not collapse users into one bucket)
+    req_user2 = SimpleNamespace(
+        headers={"x-forwarded-for": "198.51.100.99"},
+        client=SimpleNamespace(host="10.0.0.5"),
+    )
+    assert get_client_ip(req_user2) == "198.51.100.99"
+
+    # 3. When LOOMSHIELD_TRUST_VERCEL_HEADER=1 is explicitly enabled, x-vercel-forwarded-for is honoured
+    monkeypatch.setenv("LOOMSHIELD_TRUST_VERCEL_HEADER", "1")
+    assert get_client_ip(req_spoof) == "1.1.1.1"
+

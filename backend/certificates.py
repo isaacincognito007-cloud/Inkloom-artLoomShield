@@ -12,7 +12,10 @@ Provides:
 import base64
 import hashlib
 import json
+import logging
 import os
+
+logger = logging.getLogger("loomshield.certificates")
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -53,8 +56,17 @@ def get_signing_key() -> Tuple[Ed25519PrivateKey, bytes, str, bool]:
             if len(decoded) == 32:
                 seed_bytes = decoded
                 is_ephemeral = False
+            else:
+                logger.warning(
+                    "LOOMSHIELD_SIGNING_KEY is malformed (decoded seed must be 32 bytes, got %d); "
+                    "falling back to ephemeral Ed25519 demo signing key.",
+                    len(decoded),
+                )
         except Exception:
-            # Fall back safely to process ephemeral key if malformed
+            logger.warning(
+                "LOOMSHIELD_SIGNING_KEY is malformed (invalid base64 encoding); "
+                "falling back to ephemeral Ed25519 demo signing key."
+            )
             is_ephemeral = True
             seed_bytes = _PROCESS_EPHEMERAL_SEED
 
@@ -66,6 +78,23 @@ def get_signing_key() -> Tuple[Ed25519PrivateKey, bytes, str, bool]:
     )
     kid = compute_kid_from_public_bytes(pub_bytes)
     return priv, pub_bytes, kid, is_ephemeral
+
+
+def log_signing_key_startup_status() -> None:
+    """Log a startup warning (never logging any key material) if an ephemeral or malformed key is active."""
+    env_seed_b64 = os.environ.get("LOOMSHIELD_SIGNING_KEY", "").strip()
+    _, _, kid, is_ephemeral = get_signing_key()
+    if not env_seed_b64:
+        logger.warning(
+            "LOOMSHIELD_SIGNING_KEY is unset; using ephemeral Ed25519 demo signing key (kid=%s). "
+            "Certificates will only verify until the server restarts.",
+            kid,
+        )
+    elif is_ephemeral:
+        logger.warning(
+            "LOOMSHIELD_SIGNING_KEY is malformed; using ephemeral Ed25519 demo signing key (kid=%s).",
+            kid,
+        )
 
 
 def get_public_key_metadata() -> Dict[str, Any]:

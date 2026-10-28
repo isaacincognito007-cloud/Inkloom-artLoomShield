@@ -28,14 +28,21 @@
 4. **100 MB Streaming Uploads:** Chunked streaming file ingestion for large marketing PDFs and catalogs.
 5. **Non-Destructive Preset Application:** Apply rule-set fragments to existing custom brands with one-click rollback.
 
-### Render Deployment Configuration
+### Render setup
+Configure the following environment variables in the Render dashboard (never commit real secrets or signing keys to Git):
+
 ```bash
 LOOMSHIELD_WORKSPACE_MODE=demo
 LOOMSHIELD_DEPLOYMENT=hosted
+LOOMSHIELD_SIGNING_KEY=<base64-ed25519-32-byte-seed-from-scripts/generate_signing_key.py>
+LOOMSHIELD_SESSION_SECRET=<random-32-byte-hex-secret-for-demo-hmac-tokens>
 LOOMSHIELD_USER_ROLE=Brand Administrator
 LOOMSHIELD_USER_NAME=Sample workspace user
 LOOMSHIELD_CORS_ORIGINS=https://inkloom-artloomshield-frontend.vercel.app,http://localhost:3000
 ```
+
+- **Generate a signing key locally:** Run `python scripts/generate_signing_key.py` and copy `LOOMSHIELD_SIGNING_KEY` into Render's Environment tab. If `LOOMSHIELD_SIGNING_KEY` is unset or malformed, LoomShield logs a startup warning and falls back to an in-memory ephemeral Ed25519 key (valid only until the instance restarts).
+- **Persistent disk note:** Render's free web service filesystem is ephemeral across deploys and spin-downs. To persist SQLite audits, Brand guidelines edits, and issued certificates across restarts on a paid Render plan, attach a Render Persistent Disk (e.g. mounted at `/var/data`) and set `LOOMSHIELD_DB_PATH=/var/data/loomshield.db`.
 
 ---
 

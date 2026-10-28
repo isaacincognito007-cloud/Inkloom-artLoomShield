@@ -5,6 +5,7 @@ and safe client IP extraction with reverse proxy hop resolution and IP validatio
 """
 
 import ipaddress
+import os
 import time
 from collections import defaultdict
 from threading import Lock
@@ -83,40 +84,45 @@ def is_valid_ip(candidate: str) -> bool:
 
 
 def get_client_ip(request) -> str:
-    """Extract client IP safely from forwarded headers with Vercel->Render hop handling.
+    """Extract client IP safely from forwarded headers behind Render's reverse proxy.
 
-    Prevents spoofing of leftmost XFF headers by untrusted clients:
-    1. x-vercel-forwarded-for: set by Vercel edge to real connecting client.
-    2. x-forwarded-for: when routed via Vercel proxy rewrite to Render, Render appends Vercel IP.
-       If >= 2 hops, hops[-2] represents the client forwarded by Vercel.
-       If 1 hop (direct or single reverse proxy), hops[0] represents client.
+    Prevents spoofing of leftmost X-Forwarded-For or x-vercel-forwarded-for headers:
+    1. x-vercel-forwarded-for: honoured ONLY when LOOMSHIELD_TRUST_VERCEL_HEADER=1 is explicitly set.
+    2. x-forwarded-for: Render's ingress proxy appends the connecting client IP as the rightmost hop.
+       Resolves hops[-trusted_hops] (default LOOMSHIELD_TRUSTED_PROXY_HOPS=1 -> hops[-1]), walking
+       right-to-left so client-prepended fake IPs are ignored while keeping each user in their own bucket.
     3. x-real-ip: verified fallback.
-    4. request.client.host: direct connection fallback.
+    4. request.client.host: direct socket connection fallback.
     """
     if not request:
         return "127.0.0.1"
 
     headers = getattr(request, "headers", {})
 
-    # 1. Check x-vercel-forwarded-for (trusted Vercel edge header)
-    x_vff = headers.get("x-vercel-forwarded-for")
-    if x_vff:
-        candidate = x_vff.split(",")[-1].strip()
-        if is_valid_ip(candidate):
-            return candidate
+    # 1. Check x-vercel-forwarded-for ONLY when explicitly trusted via LOOMSHIELD_TRUST_VERCEL_HEADER=1
+    if os.environ.get("LOOMSHIELD_TRUST_VERCEL_HEADER", "").strip() == "1":
+        x_vff = headers.get("x-vercel-forwarded-for")
+        if x_vff:
+            candidate = x_vff.split(",")[-1].strip()
+            if is_valid_ip(candidate):
+                return candidate
 
-    # 2. Check x-forwarded-for with proxy hop resolution
+    # 2. Check x-forwarded-for from the right (Render appends connecting client IP at hops[-1])
     xff = headers.get("x-forwarded-for")
     if xff:
+        try:
+            trusted_hops = max(1, int(os.environ.get("LOOMSHIELD_TRUSTED_PROXY_HOPS", "1") or "1"))
+        except ValueError:
+            trusted_hops = 1
         hops = [h.strip() for h in xff.split(",") if h.strip()]
-        if len(hops) >= 2:
-            candidate = hops[-2]
-            if is_valid_ip(candidate):
-                return candidate
-        elif len(hops) == 1:
-            candidate = hops[0]
-            if is_valid_ip(candidate):
-                return candidate
+        if hops:
+            start_idx = max(0, len(hops) - trusted_hops)
+            for idx in range(start_idx, -1, -1):
+                if is_valid_ip(hops[idx]):
+                    return hops[idx]
+            for idx in range(len(hops) - 1, start_idx, -1):
+                if is_valid_ip(hops[idx]):
+                    return hops[idx]
 
     # 3. Check x-real-ip
     x_real_ip = headers.get("x-real-ip")

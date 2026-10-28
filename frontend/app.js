@@ -522,6 +522,20 @@ async function apiFetch(url, options = {}, timeoutMs = 45000) {
   }
 
   if (!res.ok) {
+    if (res.status === 401 && AppState.demoToken) {
+      AppState.demoToken = '';
+      AppState.userId = '';
+      AppState.userName = 'Sample workspace user';
+      AppState.userInitials = 'SW';
+      AppState.activeRole = (AppState.session && AppState.session.configured_role) || 'Content Creator';
+      updateTopbarContext();
+      if (AppState.activeView === 'new-audit' && AppState.auditStage === 'results') {
+        updateWorkspaceApprovalGuard();
+      } else if (AppState.activeView === 'settings' && typeof renderSettingsView === 'function') {
+        renderSettingsView();
+      }
+      showToast('Your demo session expired. Sign in again.');
+    }
     const errObj = data && data.error ? data.error : {};
     const code = errObj.code || `HTTP_${res.status}`;
     const field = errObj.field || null;
@@ -3192,11 +3206,29 @@ function updateWorkspaceApprovalGuard() {
 
   if (!approveBtn) return;
 
+  const historicalSubmitterIds = new Set();
+  if (audit.submitted_by_user_id) {
+    historicalSubmitterIds.add(audit.submitted_by_user_id);
+  }
+  (audit.approvals || []).forEach((ap) => {
+    if (ap.new_state === 'In Review' && ap.approver_user_id) {
+      historicalSubmitterIds.add(ap.approver_user_id);
+    }
+  });
+
+  if (AppState.demoMode && historicalSubmitterIds.size > 0 && !AppState.userId) {
+    overrideRow.style.display = openCount > 0 ? 'flex' : 'none';
+    const signMsg = 'Sign in as a demo user to approve this audit.';
+    noticeEl.innerHTML = `<span style="color: var(--status-error); font-weight: 600;">${escapeHtml(signMsg)}</span>`;
+    approveBtn.disabled = true;
+    approveBtn.title = signMsg;
+    return;
+  }
+
   const isSubmitter = Boolean(
     AppState.demoMode &&
     AppState.userId &&
-    audit.submitted_by_user_id &&
-    audit.submitted_by_user_id === AppState.userId
+    historicalSubmitterIds.has(AppState.userId)
   );
 
   if (isSubmitter) {
@@ -5609,9 +5641,18 @@ async function openCertificateModal(auditId) {
   if (signInMenu) signInMenu.style.display = 'none';
 
   try {
-    const certRes = await apiFetch(`/api/audits/${encodeURIComponent(auditId)}/certificate`, {
-      method: 'POST',
-    });
+    let certRes;
+    try {
+      certRes = await apiFetch(`/api/audits/${encodeURIComponent(auditId)}/certificate`);
+    } catch (getErr) {
+      if (getErr && getErr.status === 404) {
+        certRes = await apiFetch(`/api/audits/${encodeURIComponent(auditId)}/certificate`, {
+          method: 'POST',
+        });
+      } else {
+        throw getErr;
+      }
+    }
     const envelope = certRes.certificate || certRes;
     const payload = envelope.payload || {};
     const isEphemeral = Boolean(envelope.ephemeral_key ?? payload.ephemeral_key);
@@ -5820,7 +5861,16 @@ async function renderVerifyCertificateView() {
           showToast('No Approved audit found in current brand. Approve an audit first to issue a certificate.');
           return;
         }
-        const certRes = await apiFetch(`/api/audits/${encodeURIComponent(approved.id)}/certificate`, { method: 'POST' });
+        let certRes;
+        try {
+          certRes = await apiFetch(`/api/audits/${encodeURIComponent(approved.id)}/certificate`);
+        } catch (getErr) {
+          if (getErr && getErr.status === 404) {
+            certRes = await apiFetch(`/api/audits/${encodeURIComponent(approved.id)}/certificate`, { method: 'POST' });
+          } else {
+            throw getErr;
+          }
+        }
         const env = certRes.certificate || certRes;
         const ta = document.getElementById('verifyCertTextarea');
         if (ta) ta.value = JSON.stringify(env, null, 2);
