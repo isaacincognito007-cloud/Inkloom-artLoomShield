@@ -1,14 +1,15 @@
 """
-Guideline Clarity Rewriter & Deterministic Ambiguity Scorer (Round 3 Part B).
+Guideline Clarity Rewriter & Deterministic Ambiguity Scorer (Round 3 Part B & Day 3 Hardening F4).
 Extends the LoomShield Ambiguity Radar and guideline_feedback telemetry with:
 - B1: Deterministic ambiguity scorer (0-100) using an editable lexicon (backend/vague_lexicon.json),
       matched character spans, per-rule reasons, and explicit formula.
 - B2: Correlation with override rate from guideline_feedback above a configurable minimum audit sample
       (default 5 audits; below it reports "Not enough data"). Priority is High ONLY when vague AND
       override rate > 20% over the minimum sample; vague without usage data is labelled "Vague (no usage data)".
-- B3: Candidate rewrite where quantified thresholds come ONLY from (a) numeric tokens already in the rule text
-      or (b) Verified Facts retrieved via TF-IDF cosine similarity (cited by FACT id), else inserting an
-      explicit placeholder "[SET THRESHOLD: unit]". Do/Don't examples cite real finding IDs or rule wording.
+- B3 / F4: Candidate rewrite where quantified thresholds come ONLY from (a) numeric tokens already in the rule text
+      or (b) Verified Facts retrieved via TF-IDF cosine similarity >= 0.35 on quantity-type rules (claim pillar
+      or quantity qualifiers such as 'timely'), cited by FACT id; otherwise inserting an explicit placeholder
+      "[SET THRESHOLD: unit]". Consumes preceding indefinite articles (a/an) and fixes vowel/consonant agreement.
       Candidate is scored with the same scorer; if not strictly lower, returns "no improvement found".
 """
 
@@ -23,6 +24,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 LEXICON_PATH = Path(__file__).resolve().parent / "vague_lexicon.json"
+MIN_FACT_SIMILARITY = 0.35
 
 AMBIGUITY_FORMULA = (
     "Ambiguity Score (0-100) = min(100, 20 * vague_qualifier_spans [max 60] "
@@ -35,6 +37,20 @@ _OBJECTIVE_ANCHOR_RE = re.compile(
     r"(?:#[0-9a-fA-F]{3,6}\b|\[SET THRESHOLD:[^\]]+\]|['\"][^'\"]{2,}['\"]|\b(?:WCAG|ISO|SOC|GDPR|HIPAA|PCI|AA|AAA)\b)",
     re.IGNORECASE,
 )
+
+# F4(a): Quantity qualifiers that make a rule eligible for a Verified Fact numeric threshold when similarity >= 0.35
+_QUANTITY_QUALIFIERS = {
+    "timely",
+    "significantly",
+    "significant",
+    "minimal",
+    "excessive",
+    "sufficiently",
+    "sufficient",
+    "adequately",
+    "adequate",
+    "moderately",
+}
 
 
 def load_vague_lexicon(lexicon_path: Optional[Path] = None) -> Dict[str, Any]:
@@ -78,7 +94,6 @@ def find_vague_spans(text: str, qualifiers: Optional[List[str]] = None) -> List[
     if qualifiers is None:
         qualifiers = load_vague_lexicon()["qualifiers"]
 
-    # Sort longest phrases first so "appropriate amount" matches before "appropriate"
     sorted_quals = sorted(set(qualifiers), key=lambda q: (-len(q), q.lower()))
     occupied: List[Tuple[int, int]] = []
     spans: List[Dict[str, Any]] = []
@@ -251,11 +266,32 @@ def correlate_ambiguity_and_overrides(
     }
 
 
+def _is_quantity_type_rule(rule: Dict[str, Any], matched_spans: List[Dict[str, Any]]) -> bool:
+    """
+    F4(a): Determine whether a rule is quantity-type:
+    - belongs to the Promotional Claims pillar (or 'claim' in pillar/title), OR
+    - contains a quantity qualifier such as 'timely', 'significantly', 'minimal', 'excessive', 'sufficient', 'adequate'.
+    General prose/tone rules using 'appropriate amount' (such as RULE-TONE-02) are NOT quantity-type.
+    """
+    pillar_low = str(rule.get("pillar") or "").strip().lower()
+    title_low = str(rule.get("title") or "").strip().lower()
+    if "claim" in pillar_low:
+        return True
+    if not pillar_low and "claim" in title_low:
+        return True
+    for sp in matched_spans:
+        q = str(sp.get("qualifier") or "").strip().lower()
+        if q in _QUANTITY_QUALIFIERS:
+            return True
+    return False
+
+
 def _retrieve_relevant_verified_fact(
     query_text: str,
     verified_facts: List[Dict[str, Any]],
+    min_similarity: float = MIN_FACT_SIMILARITY,
 ) -> Tuple[Optional[Dict[str, Any]], float]:
-    """Use the embedded Scikit-Learn TF-IDF cosine similarity engine to find a matching Verified Fact."""
+    """Use the embedded Scikit-Learn TF-IDF cosine similarity engine to find a matching Verified Fact (>= 0.35)."""
     verified_only = [
         f for f in (verified_facts or [])
         if str(f.get("verification_status", "")).strip() == "Verified"
@@ -274,11 +310,103 @@ def _retrieve_relevant_verified_fact(
         sims = cosine_similarity(q_vec, mat)[0]
         best_idx = int(np.argmax(sims))
         best_sim = round(float(sims[best_idx]), 3)
-        if best_sim >= 0.10:
+        if best_sim >= min_similarity:
             return verified_only[best_idx], best_sim
+        return None, best_sim
     except Exception:
         pass
     return None, 0.0
+
+
+_PREPOSITION_STARTS = {"within", "under", "unless", "before", "by", "after", "at", "on"}
+
+
+def _starts_with_vowel_sound(phrase: str) -> bool:
+    s = phrase.strip()
+    if not s:
+        return False
+    m = re.match(r"^([a-zA-Z]+)", s)
+    if not m:
+        return False
+    word = m.group(1).lower()
+    # Common silent-h or consonant-sound-vowel exceptions
+    if word.startswith(("uni", "use", "usu", "eur", "one", "once")):
+        return False
+    if word.startswith(("hour", "honest", "honor", "heir")):
+        return True
+    return word[0] in "aeiou"
+
+
+def _replace_spans_with_article_agreement(
+    old_text: str,
+    spans: List[Dict[str, Any]],
+    replacements: Dict[str, str],
+) -> str:
+    """
+    F4(b): Replace vague qualifier spans in `old_text`, consuming any preceding 'a' or 'an'
+    and fixing vowel/consonant indefinite-article agreement so "Use an appropriate amount..."
+    never produces "an a".
+    """
+    if not spans:
+        return old_text
+
+    parts: List[str] = []
+    cursor = 0
+    for sp in spans:
+        s, e = int(sp["start"]), int(sp["end"])
+        if s < cursor:
+            continue
+        pre_segment = old_text[cursor:s]
+        qual_key = str(sp["qualifier"]).lower()
+        rep = str(replacements.get(qual_key, "explicitly defined")).strip()
+
+        orig_phrase = str(sp["phrase"] or "")
+        # Check if pre_segment ends with a standalone indefinite article ('a' or 'an') followed by spaces
+        m_art = re.search(r"(^|[\s(\[{,;:])(an?)(\s+)$", pre_segment, re.IGNORECASE)
+        # Prepositional replacements (e.g. "timely" -> "within the specified response window") cannot take
+        # an article: "in a timely manner" becomes "within the specified response window", not
+        # "in a within the specified response window manner".
+        rep_first_word = rep.split(" ", 1)[0].lower() if rep else ""
+        if m_art and rep_first_word in _PREPOSITION_STARTS:
+            art_prefix = pre_segment[:m_art.start(2)]
+            art_prefix = re.sub(r"(^|\s)in\s+$", r"\1", art_prefix, flags=re.IGNORECASE)
+            tail = re.match(r"\s+(manner|fashion|way)\b", old_text[e:], re.IGNORECASE)
+            if tail:
+                e = e + tail.end()
+            if m_art.group(2)[0].isupper() and rep:
+                rep = rep[0].upper() + rep[1:]
+            parts.append(art_prefix)
+            parts.append(rep)
+        elif m_art:
+            art_prefix = pre_segment[:m_art.start(2)]
+            art_word = m_art.group(2)
+            art_space = m_art.group(3)
+            art_was_cap = art_word[0].isupper()
+
+            # Check if replacement itself already starts with 'a ' or 'an '
+            m_rep_art = re.match(r"^(an?)\s+(.*)$", rep, re.IGNORECASE)
+            if m_rep_art:
+                rep_body = m_rep_art.group(2)
+            else:
+                rep_body = rep
+
+            needed_art = "an" if _starts_with_vowel_sound(rep_body) else "a"
+            if art_was_cap:
+                needed_art = needed_art.capitalize()
+            parts.append(art_prefix)
+            parts.append(f"{needed_art}{art_space}{rep_body}")
+        else:
+            if orig_phrase and orig_phrase[0].isupper() and rep:
+                rep = rep[0].upper() + rep[1:]
+            parts.append(pre_segment)
+            parts.append(rep)
+        cursor = e
+
+    parts.append(old_text[cursor:])
+    rewritten = "".join(parts).strip()
+    # Final safety pass for any accidental duplicate indefinite articles
+    rewritten = re.sub(r"\b(an?)\s+(an?)\b", lambda m: m.group(2), rewritten, flags=re.IGNORECASE)
+    return rewritten
 
 
 def extract_numeric_tokens(text: str) -> List[str]:
@@ -317,11 +445,17 @@ def generate_candidate_rewrite(
     )
     rule_numbers = set(extract_numeric_tokens(f"{title} {old_text}"))
 
-    # Attempt TF-IDF retrieval against Verified Facts
-    matched_fact, fact_similarity = _retrieve_relevant_verified_fact(
-        f"{title} {old_text}",
-        verified_facts,
-    )
+    # F4(a): Only use a retrieved Verified Fact when similarity >= 0.35 AND the rule is quantity-type
+    is_qty_rule = _is_quantity_type_rule(rule, spans)
+    matched_fact: Optional[Dict[str, Any]] = None
+    fact_similarity: float = 0.0
+    if is_qty_rule:
+        matched_fact, fact_similarity = _retrieve_relevant_verified_fact(
+            f"{title} {old_text}",
+            verified_facts,
+            min_similarity=MIN_FACT_SIMILARITY,
+        )
+
     fact_numbers: set = set()
     if matched_fact and str(matched_fact.get("numeric_value", "")).strip():
         fact_blob = " ".join(
@@ -330,29 +464,10 @@ def generate_candidate_rewrite(
         )
         fact_numbers = set(extract_numeric_tokens(fact_blob))
 
-    # 1. Replace vague qualifier spans in old_text
-    if spans:
-        parts: List[str] = []
-        cursor = 0
-        for sp in spans:
-            s, e = int(sp["start"]), int(sp["end"])
-            if s < cursor:
-                continue
-            parts.append(old_text[cursor:s])
-            qual_key = str(sp["qualifier"]).lower()
-            rep = replacements.get(qual_key, "explicitly defined")
-            # Preserve leading capitalization if at start of sentence
-            orig_phrase = sp["phrase"]
-            if orig_phrase and orig_phrase[0].isupper() and rep:
-                rep = rep[0].upper() + rep[1:]
-            parts.append(rep)
-            cursor = e
-        parts.append(old_text[cursor:])
-        rewritten = "".join(parts).strip()
-    else:
-        rewritten = old_text
+    # 1. F4(b): Replace vague qualifier spans in old_text while consuming preceding a/an and fixing agreement
+    rewritten = _replace_spans_with_article_agreement(old_text, spans, replacements)
 
-    # 2. Ensure quantified threshold from (a) rule numbers, (b) Verified Fact, or (c) explicit placeholder
+    # 2. Ensure quantified threshold from (a) rule numbers, (b) Verified Fact (if eligible), or (c) explicit placeholder
     threshold_source = "none"
     cited_fact_id: Optional[str] = None
     has_num_in_rewritten = bool(_NUMERIC_TOKEN_RE.search(rewritten))
@@ -369,7 +484,7 @@ def generate_candidate_rewrite(
         rewritten = f"{rewritten}{suffix} Enforce the configured threshold of {num_phrase}."
         threshold_source = "rule_text"
         allowed_numbers = set(rule_numbers)
-    elif matched_fact and str(matched_fact.get("numeric_value", "")).strip():
+    elif is_qty_rule and matched_fact and fact_similarity >= MIN_FACT_SIMILARITY and str(matched_fact.get("numeric_value", "")).strip():
         cited_fact_id = str(matched_fact["id"])
         f_val = str(matched_fact.get("numeric_value", "")).strip()
         f_unit = str(matched_fact.get("numeric_units", "")).strip()
@@ -384,7 +499,6 @@ def generate_candidate_rewrite(
         threshold_source = "verified_fact"
         allowed_numbers = rule_numbers | fact_numbers
     else:
-        # Insert explicit placeholder without any invented numbers
         if "[SET THRESHOLD:" not in rewritten:
             suffix = "" if rewritten.endswith(".") else "."
             rewritten = f"{rewritten}{suffix} Enforce an explicit measurable limit of [SET THRESHOLD: unit]."

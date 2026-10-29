@@ -6,11 +6,44 @@ import math
 import os
 import re
 import time
+import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from bs4 import BeautifulSoup
 from PIL import Image
+
+MAX_IMAGE_PIXELS = 25_000_000
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
+
+class ImageTooLargeError(ValueError):
+    """Raised when a raster image header exceeds the 25 megapixel limit before pixel decode."""
+    pass
+
+
+def probe_and_decode_raster_image(raw_bytes: bytes) -> Image.Image:
+    """Read raster header dimensions first (no convert); reject >25 MP before decoding pixels."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+        try:
+            img = Image.open(io.BytesIO(raw_bytes))
+        except Image.DecompressionBombError as exc:
+            raise ImageTooLargeError(
+                "Image exceeds the 25 megapixel limit (maximum 25,000,000 pixels)."
+            ) from exc
+        width, height = img.size
+        total_pixels = int(width) * int(height)
+        if total_pixels > MAX_IMAGE_PIXELS:
+            img.close()
+            raise ImageTooLargeError(
+                f"Image resolution {width}x{height} ({total_pixels:,} pixels) exceeds the 25 megapixel limit."
+            )
+        try:
+            rgba_img = img.convert("RGBA")
+        finally:
+            img.close()
+        return rgba_img
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -694,10 +727,22 @@ def parse_uploaded_file(filename: str, raw_bytes: bytes) -> Dict[str, Any]:
     }
 
 
-def inspect_raster_image(raw_bytes: bytes, brand_colors: List[Dict[str, Any]]) -> Dict[str, Any]:
+def inspect_raster_image(
+    raw_bytes: bytes,
+    brand_colors: List[Dict[str, Any]],
+    decoded_image: Optional[Image.Image] = None,
+) -> Dict[str, Any]:
     try:
-        rgba_img = Image.open(io.BytesIO(raw_bytes)).convert("RGBA")
-        width, height = rgba_img.size
+        if decoded_image is not None:
+            width, height = decoded_image.size
+            if int(width) * int(height) > MAX_IMAGE_PIXELS:
+                raise ImageTooLargeError(
+                    f"Image resolution {width}x{height} ({int(width) * int(height):,} pixels) exceeds the 25 megapixel limit."
+                )
+            rgba_img = decoded_image
+        else:
+            rgba_img = probe_and_decode_raster_image(raw_bytes)
+            width, height = rgba_img.size
         resized = rgba_img.resize((120, 80))
         arr = np.array(resized)
         alpha = arr[:, :, 3]
@@ -750,6 +795,15 @@ def inspect_raster_image(raw_bytes: bytes, brand_colors: List[Dict[str, Any]]) -
             "swatches": extracted_swatches,
             "off_palette_swatches": off_palette_swatches,
             "limitation_note": "Dominant colour clusters were compared against configured Brand Vault hex colours using CIE Delta-E. Full vector lockup geometry requires an SVG or explicit bounding specification.",
+        }
+    except ImageTooLargeError as exc:
+        return {
+            "inspect_ok": False,
+            "too_large": True,
+            "status_code": 400,
+            "error": str(exc),
+            "swatches": [],
+            "off_palette_swatches": [],
         }
     except Exception as exc:
         return {
@@ -855,7 +909,7 @@ def run_six_pillar_audit(
                 "source_evidence": parser_error_msg,
                 "explanation": parser_error_msg,
                 "suggested_correction": correction,
-                "detection_method": "File Parser Validation",
+                "detection_method": "Tier 1: File Parser Validation",
                 "engine_source": "Tier 1: Deterministic Engine",
                 "similarity_score": None,
                 "review_state": "open",
@@ -912,7 +966,7 @@ def run_six_pillar_audit(
                         "source_evidence": f"{tr['description']} (Approved Do Example: \"{tr.get('do_example', '')}\")",
                         "explanation": f"Phrase '{matched_str}' conflicts with tone rule {tr['id']}: {tr['description']}",
                         "suggested_correction": suggestion,
-                        "detection_method": "Configured Tone Pattern & Polarity Heuristic",
+                        "detection_method": "Tier 1: Configured Tone Pattern & Polarity Heuristic",
                         "engine_source": "Tier 1: Deterministic Engine",
                         "similarity_score": None,
                         "review_state": "open",
@@ -957,7 +1011,7 @@ def run_six_pillar_audit(
                     "source_evidence": f"Preferred term: '{preferred}' | Prohibited/Deprecated: '{prohibited}'. Note: {term['notes']}",
                     "explanation": f"Detected '{matched_text}'. {term['notes']}",
                     "suggested_correction": replacement,
-                    "detection_method": "Exact Lexicon & Case-Sensitivity Dictionary Match",
+                    "detection_method": "Tier 1: Exact Lexicon & Case-Sensitivity Dictionary Match",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": None,
                     "review_state": "open",
@@ -993,7 +1047,7 @@ def run_six_pillar_audit(
                         "source_evidence": f"Messaging Principle ({mr['id']}): {mr['description']}",
                         "explanation": f"Excerpt contradicts documented brand messaging principle {mr['id']} requiring human oversight controls.",
                         "suggested_correction": cfg.get("replacement") or mr.get("do_example", ""),
-                        "detection_method": "Messaging Principle Contradiction Check",
+                        "detection_method": "Tier 2: Messaging Principle Contradiction Check",
                         "engine_source": "Tier 2: Embedded NLP Engine",
                         "similarity_score": None,
                         "review_state": "open",
@@ -1074,7 +1128,7 @@ def run_six_pillar_audit(
                         f"Promotional guarantee or superlative '{phrase}' conflicts with approved evidence in {best_fact['id']}."
                     ),
                     "suggested_correction": f"{best_fact['numeric_value']}{best_fact['numeric_units'] if best_fact['numeric_units'].startswith('%') else ' ' + best_fact['numeric_units']} ({best_fact['applicable_conditions']})",
-                    "detection_method": "Superlative Pattern + TF-IDF Evidence Retrieval",
+                    "detection_method": "Tier 2: Superlative Pattern + TF-IDF Evidence Retrieval",
                     "engine_source": "Tier 1 + Tier 2 Local Hybrid",
                     "similarity_score": best_sim,
                     "review_state": "open",
@@ -1096,7 +1150,7 @@ def run_six_pillar_audit(
                         f"Superlative or absolute guarantee '{phrase}' is not backed by any Verified Fact in the Brand Vault."
                     ),
                     "suggested_correction": "",
-                    "detection_method": "Tier 1 Superlative Pattern + TF-IDF Vault Search",
+                    "detection_method": "Tier 1: Superlative Pattern + TF-IDF Vault Search",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": best_sim if best_sim > 0 else None,
                     "review_state": "needs_review",
@@ -1189,7 +1243,7 @@ def run_six_pillar_audit(
                         f"'{matched_pending['verification_status']}' and is not approved for public release."
                     ),
                     "suggested_correction": "",
-                    "detection_method": "Fact Administrative Status Verification",
+                    "detection_method": "Tier 2: Fact Administrative Status Verification",
                     "engine_source": "Tier 2: Embedded NLP Engine",
                     "similarity_score": None,
                     "review_state": "needs_review",
@@ -1230,7 +1284,7 @@ def run_six_pillar_audit(
                         f"(highest TF-IDF cosine similarity: {best_sim}). Similarity alone does not prove a claim true or false; verify manually."
                     ),
                     "suggested_correction": "",
-                    "detection_method": "TF-IDF Cosine Retrieval (Below Evidence Threshold)",
+                    "detection_method": "Tier 2: TF-IDF Cosine Retrieval (Below Evidence Threshold)",
                     "engine_source": "Tier 2: Embedded NLP Engine",
                     "similarity_score": best_sim,
                     "review_state": "needs_review",
@@ -1278,7 +1332,7 @@ def run_six_pillar_audit(
                             f"(approved value: '{approved_num}{best_fact['numeric_units'] if best_fact['numeric_units'].startswith('%') else ' ' + best_fact['numeric_units']}'). Ask the creator to verify or revise the claim."
                         ),
                         "suggested_correction": suggested_sentence,
-                        "detection_method": "Local NLP (TF-IDF Fact Retrieval + Numerical Comparison)",
+                        "detection_method": "Tier 2: Local NLP (TF-IDF Fact Retrieval + Numerical Comparison)",
                         "engine_source": "Tier 2: Embedded NLP Engine",
                         "similarity_score": best_sim,
                         "review_state": "open",
@@ -1304,7 +1358,7 @@ def run_six_pillar_audit(
                             f"specifies '{approved_num} {best_fact['numeric_units']}'."
                         ),
                         "suggested_correction": best_fact["statement"],
-                        "detection_method": "Local NLP (TF-IDF Fact Retrieval + Unit Verification)",
+                        "detection_method": "Tier 2: Local NLP (TF-IDF Fact Retrieval + Unit Verification)",
                         "engine_source": "Tier 2: Embedded NLP Engine",
                         "similarity_score": best_sim,
                         "review_state": "open",
@@ -1329,7 +1383,7 @@ def run_six_pillar_audit(
                             f"Claim uses unconditional 'guarantees' whereas {best_fact['id']} specifies qualified performance ('up to {approved_num}%' under stated conditions)."
                         ),
                         "suggested_correction": best_fact["statement"],
-                        "detection_method": "TF-IDF Fact Retrieval + Qualifier Check",
+                        "detection_method": "Tier 2: TF-IDF Fact Retrieval + Qualifier Check",
                         "engine_source": "Tier 2: Embedded NLP Engine",
                         "similarity_score": best_sim,
                         "review_state": "open",
@@ -1374,7 +1428,7 @@ def run_six_pillar_audit(
             "source_evidence": "Colours must be valid 3-digit (#RGB) or 6-digit (#RRGGBB) hexadecimal strings.",
             "explanation": f"Invalid colour input provided (fg='{fg_color}', bg='{bg_color}'). Colour distance and contrast checks could not be completed.",
             "suggested_correction": "#17191C",
-            "detection_method": "Hexadecimal Colour Format Validation",
+            "detection_method": "Tier 1: Hexadecimal Colour Format Validation",
             "engine_source": "Tier 1: Deterministic Engine",
             "similarity_score": None,
             "review_state": "open",
@@ -1396,7 +1450,7 @@ def run_six_pillar_audit(
             "source_evidence": visual_inspection.get("error", "Image decoder failed."),
             "explanation": visual_inspection.get("error", "Uploaded image could not be decoded."),
             "suggested_correction": "Upload a valid, uncorrupted PNG or JPEG image.",
-            "detection_method": "Pillow Raster Decoder Validation",
+            "detection_method": "Tier 1: Pillow Raster Decoder Validation",
             "engine_source": "Tier 1: Deterministic Engine",
             "similarity_score": None,
             "review_state": "open",
@@ -1426,7 +1480,7 @@ def run_six_pillar_audit(
                         f"reference colour {closest_fg['name']} ({closest_fg['hex_code']}), exceeding tolerance {closest_fg['max_delta_e']}."
                     ),
                     "suggested_correction": closest_fg["hex_code"],
-                    "detection_method": "CIE LAB Delta-E Colour Distance Calculation",
+                    "detection_method": "Tier 1: CIE LAB Delta-E Colour Distance Calculation",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": None,
                     "review_state": "open",
@@ -1454,7 +1508,7 @@ def run_six_pillar_audit(
                         f"{sw['closest_brand_color']} ({sw['closest_brand_hex']}) by CIE Delta-E = {sw['delta_e']}."
                     ),
                     "suggested_correction": sw["closest_brand_hex"],
-                    "detection_method": "Pillow + NumPy Dominant Swatch Extraction & CIE Delta-E",
+                    "detection_method": "Tier 1: Pillow + NumPy Dominant Swatch Extraction & CIE Delta-E",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": None,
                     "review_state": "open",
@@ -1486,7 +1540,7 @@ def run_six_pillar_audit(
                             f"exceeding tolerance {cell.get('max_delta_e')}."
                         ),
                         "suggested_correction": cell.get("closest_brand_hex") or "#17191C",
-                        "detection_method": "N×N Grid Dominant Swatch & CIE LAB Delta-E",
+                        "detection_method": "Tier 1: N×N Grid Dominant Swatch & CIE LAB Delta-E",
                         "engine_source": "Tier 1: Deterministic Engine",
                         "similarity_score": None,
                         "review_state": "open",
@@ -1513,14 +1567,23 @@ def run_six_pillar_audit(
                     ),
                     "explanation": cs.get("reason") or "Logo clear space is below the Brand Vault minimum requirement.",
                     "suggested_correction": f"Provide at least {cs.get('required_min_px')}px ({cs.get('required_ratio')}x logo height) clear space around the logo.",
-                    "detection_method": "Logo Bounding Box Clear-Space Measurement",
+                    "detection_method": "Tier 1: Logo Bounding Box Clear-Space Measurement",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": None,
                     "review_state": "open",
                 })
                 vis_findings_count += 1
 
-        pillar_states["Visual and Logo Consistency"] = "Findings" if vis_findings_count > 0 else "Passed"
+        if vis_findings_count > 0:
+            pillar_states["Visual and Logo Consistency"] = "Findings"
+        elif (
+            not brand_colors
+            and (not visual_inspection or visual_inspection.get("palette_state") == "Not Checked")
+            and not (visual_inspection and isinstance(visual_inspection.get("clear_space"), dict) and visual_inspection["clear_space"].get("checked"))
+        ):
+            pillar_states["Visual and Logo Consistency"] = "Not Checked"
+        else:
+            pillar_states["Visual and Logo Consistency"] = "Passed"
 
     # ------------------------------------------------------------------------
     # PILLAR 6: ACCESSIBILITY
@@ -1556,7 +1619,7 @@ def run_six_pillar_audit(
                         f"which is below the configured minimum of {min_norm}:1."
                     ),
                     "suggested_correction": "#17191C",
-                    "detection_method": "WCAG 2.1 Relative Luminance Calculation",
+                    "detection_method": "Tier 1: WCAG 2.1 Relative Luminance Calculation",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": None,
                     "review_state": "open",
@@ -1578,7 +1641,7 @@ def run_six_pillar_audit(
                     "source_evidence": "WCAG 2.1 Success Criterion 1.1.1 (Non-text Content) & Brand Accessibility Rules.",
                     "explanation": "A visual asset is attached to this audit without descriptive alternative text (>=10 characters).",
                     "suggested_correction": f"{brand['name']} product overview graphic showing approved workflow metrics.",
-                    "detection_method": "Alternative-Text Metadata Check",
+                    "detection_method": "Tier 1: Alternative-Text Metadata Check",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": None,
                     "review_state": "open",
@@ -1599,7 +1662,7 @@ def run_six_pillar_audit(
                 "source_evidence": "WCAG 2.1 Success Criteria 1.1.1 & 1.3.1 (Document Structure & Markup).",
                 "explanation": sf["explanation"],
                 "suggested_correction": sf["suggested_correction"],
-                "detection_method": "HTML/SVG/Markdown DOM Structural Inspection",
+                "detection_method": "Tier 1: HTML/SVG/Markdown DOM Structural Inspection",
                 "engine_source": "Tier 1: Deterministic Engine",
                 "similarity_score": None,
                 "review_state": "open",
@@ -1625,7 +1688,7 @@ def run_six_pillar_audit(
                     f"which is substantially harder to read than the configured target ({target_ease})."
                 ),
                 "suggested_correction": "Split sentences exceeding 25 words and define specialist terms on first use.",
-                "detection_method": "Flesch-Kincaid Readability Formula",
+                "detection_method": "Tier 1: Flesch-Kincaid Readability Formula",
                 "engine_source": "Tier 1: Deterministic Engine",
                 "similarity_score": None,
                 "review_state": "open",
@@ -1656,7 +1719,7 @@ def run_six_pillar_audit(
                             f"produces a relative luminance contrast ratio of {tc_el.get('contrast_ratio')}:1, below the required minimum of {tc_el.get('required_ratio', 4.5)}:1."
                         ),
                         "suggested_correction": "#17191C",
-                        "detection_method": "SVG/Region WCAG 2.1 Relative Luminance Contrast",
+                        "detection_method": "Tier 1: SVG/Region WCAG 2.1 Relative Luminance Contrast",
                         "engine_source": "Tier 1: Deterministic Engine",
                         "similarity_score": None,
                         "review_state": "open",

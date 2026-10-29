@@ -4896,16 +4896,17 @@ function drawHeatmapCanvasOverlay(canvas, hm, activeLayers, focusedCellId, baseI
       const rw = Math.max(24, (el.width || 40) * sx);
       const rh = Math.max(16, (el.height || 18) * sy);
 
+      const notMeasured = el.status === 'Not measured' || el.contrast_ratio === null || el.contrast_ratio === undefined;
       ctx.save();
-      ctx.strokeStyle = el.passed ? '#067647' : '#B42318';
+      ctx.strokeStyle = notMeasured ? '#475467' : (el.passed ? '#067647' : '#B42318');
       ctx.lineWidth = 2;
-      ctx.setLineDash(el.passed ? [] : [4, 3]);
+      ctx.setLineDash(notMeasured ? [2, 2] : (el.passed ? [] : [4, 3]));
       ctx.strokeRect(rx, ry, rw, rh);
-      ctx.fillStyle = el.passed ? 'rgba(6, 118, 71, 0.88)' : 'rgba(180, 35, 24, 0.92)';
+      ctx.fillStyle = notMeasured ? 'rgba(71, 84, 103, 0.92)' : (el.passed ? 'rgba(6, 118, 71, 0.88)' : 'rgba(180, 35, 24, 0.92)');
       ctx.fillRect(rx, Math.max(0, ry - 16), Math.min(w - rx, 98), 16);
       ctx.fillStyle = '#FFFFFF';
       ctx.font = '600 10px Inter, sans-serif';
-      ctx.fillText(`${el.passed ? 'PASS' : 'FAIL'} ${el.contrast_ratio}:1`, rx + 4, Math.max(11, ry - 4));
+      ctx.fillText(notMeasured ? 'NOT MEASURED' : `${el.passed ? 'PASS' : 'FAIL'} ${el.contrast_ratio}:1`, rx + 4, Math.max(11, ry - 4));
       ctx.restore();
     });
   }
@@ -4994,14 +4995,15 @@ function renderVisualHeatmapInspector(viewer, audit, docHtml) {
         <canvas id="heatmapOverlayCanvas" width="440" height="280" aria-label="Visual asset compliance heatmap canvas"></canvas>
         <div class="heatmap-focus-grid" id="heatmapFocusableGrid" style="grid-template-columns: repeat(${n}, 1fr); grid-template-rows: repeat(${n}, 1fr);" role="group" aria-label="Interactive ${n} by ${n} heatmap cells">
           ${cells.map((c) => {
-            const deVal = c.min_delta_e ?? c.delta_e ?? 0;
-            const statusText = c.flagged ? 'FAIL [Hatch]' : 'PASS [Solid]';
+            const notChecked = c.status === 'not_checked';
+            const deVal = notChecked ? '—' : (c.min_delta_e ?? c.delta_e ?? 0);
+            const statusText = notChecked ? 'NOT CHECKED' : (c.flagged ? 'FAIL [Hatch]' : 'PASS [Solid]');
             return `
               <button
                 type="button"
                 class="heatmap-cell-btn ${c.flagged ? 'is-flagged' : 'is-passed'} ${focusedCellId === c.cell_id ? 'is-focused' : ''}"
                 data-cell-id="${escapeHtml(c.cell_id)}"
-                aria-label="Cell ${escapeHtml(c.cell_id)}: ${c.flagged ? 'FAIL' : 'PASS'}, dominant ${escapeHtml(c.dominant_hex || 'transparent')}, Delta-E ${deVal} to ${escapeHtml(c.closest_brand_color || 'palette')}"
+                aria-label="Cell ${escapeHtml(c.cell_id)}: ${notChecked ? 'Not checked' : (c.flagged ? 'FAIL' : 'PASS')}, dominant ${escapeHtml(c.dominant_hex || 'transparent')}, Delta-E ${deVal} to ${escapeHtml(c.closest_brand_color || 'palette')}"
               >
                 <span class="heatmap-cell-coord">${escapeHtml(c.cell_id)}</span>
                 <span class="heatmap-cell-status-tag">${escapeHtml(statusText)}</span>
@@ -5023,6 +5025,11 @@ function renderVisualHeatmapInspector(viewer, audit, docHtml) {
         <div style="font-size: 12.5px; color: var(--slate-800);">
           <strong>Text contrast scope:</strong> ${escapeHtml(tc.disclosure || 'Contrast measured for 0 text elements; text inside raster images is not detected.')}
         </div>
+        <div style="font-size: 12.5px; color: var(--slate-800); margin-top: 4px;" id="heatmapPaletteScope">
+          <strong>Palette (${escapeHtml(hm.palette_state || 'Not Checked')}):</strong> ${hm.palette_state === 'Not Checked'
+            ? 'No brand palette colours are configured, so palette compliance was not checked.'
+            : `A cell is flagged when its dominant colour, or any colour cluster covering at least ${escapeHtml(String(hm.off_palette_min_cell_coverage_pct ?? 2))}% of the cell, is outside the palette tolerance. Smaller details are not reported.`}
+        </div>
         <div style="font-size: 12.5px; color: var(--slate-800); margin-top: 4px;">
           <strong>Logo clear space (${escapeHtml(cs.state || 'Not Checked')}):</strong> ${escapeHtml(cs.reason || 'No logo location specified.')}
         </div>
@@ -5042,8 +5049,9 @@ function renderVisualHeatmapInspector(viewer, audit, docHtml) {
           </thead>
           <tbody>
             ${cells.map((c) => {
-              const deVal = c.min_delta_e ?? c.delta_e ?? 0;
-              const maxDe = c.threshold_delta_e ?? c.max_delta_e ?? 14;
+              const notChecked = c.status === 'not_checked';
+              const deVal = notChecked ? '—' : (c.min_delta_e ?? c.delta_e ?? 0);
+              const maxDe = notChecked ? '—' : (c.threshold_delta_e ?? c.max_delta_e ?? 14);
               return `
                 <tr data-table-cell-id="${escapeHtml(c.cell_id)}" class="${c.flagged ? 'heatmap-row-flagged' : ''}">
                   <td class="mono-id"><strong>${escapeHtml(c.cell_id)}</strong></td>
@@ -5059,7 +5067,9 @@ function renderVisualHeatmapInspector(viewer, audit, docHtml) {
                   <td class="mono-id">${deVal}</td>
                   <td class="mono-id">${maxDe}</td>
                   <td>
-                    ${c.flagged
+                    ${notChecked
+                      ? '<span class="status-badge badge-neutral"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Not checked</span></span>'
+                      : c.flagged
                       ? '<span class="status-badge badge-error"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>FAIL · Diagonal Hatch</span></span>'
                       : '<span class="status-badge badge-passed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>PASS · Solid</span></span>'}
                   </td>
