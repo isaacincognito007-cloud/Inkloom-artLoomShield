@@ -13,12 +13,12 @@ import numpy as np
 from bs4 import BeautifulSoup
 from PIL import Image
 
-MAX_IMAGE_PIXELS = 25_000_000
+MAX_IMAGE_PIXELS = 12_000_000
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 
 class ImageTooLargeError(ValueError):
-    """Raised when a raster image header exceeds the 25 megapixel limit before pixel decode."""
+    """Raised when a raster image header exceeds the 12 megapixel limit before pixel decode."""
     pass
 
 
@@ -30,14 +30,14 @@ def probe_and_decode_raster_image(raw_bytes: bytes) -> Image.Image:
             img = Image.open(io.BytesIO(raw_bytes))
         except Image.DecompressionBombError as exc:
             raise ImageTooLargeError(
-                "Image exceeds the 25 megapixel limit (maximum 25,000,000 pixels)."
+                "Image exceeds the 12 megapixel limit (maximum 12,000,000 pixels; reduced from previous 25 megapixel limit)."
             ) from exc
         width, height = img.size
         total_pixels = int(width) * int(height)
         if total_pixels > MAX_IMAGE_PIXELS:
             img.close()
             raise ImageTooLargeError(
-                f"Image resolution {width}x{height} ({total_pixels:,} pixels) exceeds the 25 megapixel limit."
+                f"Image resolution {width}x{height} ({total_pixels:,} pixels) exceeds the 12 megapixel limit (reduced from previous 25 megapixel limit)."
             )
         try:
             rgba_img = img.convert("RGBA")
@@ -737,7 +737,7 @@ def inspect_raster_image(
             width, height = decoded_image.size
             if int(width) * int(height) > MAX_IMAGE_PIXELS:
                 raise ImageTooLargeError(
-                    f"Image resolution {width}x{height} ({int(width) * int(height):,} pixels) exceeds the 25 megapixel limit."
+                    f"Image resolution {width}x{height} ({int(width) * int(height):,} pixels) exceeds the 12 megapixel limit (reduced from previous 25 megapixel limit)."
                 )
             rgba_img = decoded_image
         else:
@@ -966,7 +966,7 @@ def run_six_pillar_audit(
                         "source_evidence": f"{tr['description']} (Approved Do Example: \"{tr.get('do_example', '')}\")",
                         "explanation": f"Phrase '{matched_str}' conflicts with tone rule {tr['id']}: {tr['description']}",
                         "suggested_correction": suggestion,
-                        "detection_method": "Tier 1: Configured Tone Pattern & Polarity Heuristic",
+                        "detection_method": "Tier 2: Configured Tone Pattern & Polarity Heuristic",
                         "engine_source": "Tier 1: Deterministic Engine",
                         "similarity_score": None,
                         "review_state": "open",
@@ -1128,7 +1128,7 @@ def run_six_pillar_audit(
                         f"Promotional guarantee or superlative '{phrase}' conflicts with approved evidence in {best_fact['id']}."
                     ),
                     "suggested_correction": f"{best_fact['numeric_value']}{best_fact['numeric_units'] if best_fact['numeric_units'].startswith('%') else ' ' + best_fact['numeric_units']} ({best_fact['applicable_conditions']})",
-                    "detection_method": "Tier 2: Superlative Pattern + TF-IDF Evidence Retrieval",
+                    "detection_method": "Tier 1 + Tier 2: Superlative Pattern + TF-IDF Evidence Retrieval",
                     "engine_source": "Tier 1 + Tier 2 Local Hybrid",
                     "similarity_score": best_sim,
                     "review_state": "open",
@@ -1150,7 +1150,7 @@ def run_six_pillar_audit(
                         f"Superlative or absolute guarantee '{phrase}' is not backed by any Verified Fact in the Brand Vault."
                     ),
                     "suggested_correction": "",
-                    "detection_method": "Tier 1: Superlative Pattern + TF-IDF Vault Search",
+                    "detection_method": "Tier 1 + Tier 2: Superlative Pattern + TF-IDF Vault Search",
                     "engine_source": "Tier 1: Deterministic Engine",
                     "similarity_score": best_sim if best_sim > 0 else None,
                     "review_state": "needs_review",
