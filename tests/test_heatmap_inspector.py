@@ -240,8 +240,8 @@ def _solid_png_bytes(width, height, mode="1", color=1):
 
 
 def test_f1_9000x9000_png_rejected_quickly_before_decode_and_decoded_once_for_both_analyzers(monkeypatch):
-    assert MAX_IMAGE_PIXELS == 25_000_000
-    assert Image.MAX_IMAGE_PIXELS == 25_000_000
+    assert MAX_IMAGE_PIXELS == 12_000_000
+    assert Image.MAX_IMAGE_PIXELS == 12_000_000
 
     huge_png = _solid_png_bytes(9000, 9000)
     assert len(huge_png) < 200 * 1024
@@ -300,10 +300,10 @@ def test_f1_9000x9000_png_rejected_quickly_before_decode_and_decoded_once_for_bo
 
 
 def test_f1_4000x4000_image_under_limit_is_accepted():
-    # 16 MP is under the 25 MP limit and must still be analysed (peak memory is measured separately).
-    png = _solid_png_bytes(4000, 4000, mode="RGB", color=(23, 25, 28))
+    # G2: 12 MP (4000x3000) is accepted at the new 12 megapixel limit and downscaled.
+    png = _solid_png_bytes(4000, 3000, mode="RGB", color=(23, 25, 28))
     rgba = probe_and_decode_raster_image(png)
-    assert rgba.size == (4000, 4000)
+    assert rgba.size == (4000, 3000)
     vault = get_brand_vault_bundle("novapay")
     hm = inspect_visual_heatmap(
         raw_bytes=png, brand_colors=vault["colors"], brand=vault["brand"], filename="big.png", decoded_image=rgba

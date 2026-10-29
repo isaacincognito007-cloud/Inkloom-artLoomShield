@@ -680,7 +680,7 @@ def inspect_visual_heatmap(
                 orig_w, orig_h = decoded_image.size
                 if int(orig_w) * int(orig_h) > MAX_IMAGE_PIXELS:
                     raise ImageTooLargeError(
-                        f"Image resolution {orig_w}x{orig_h} ({int(orig_w) * int(orig_h):,} pixels) exceeds the 25 megapixel limit."
+                        f"Image resolution {orig_w}x{orig_h} ({int(orig_w) * int(orig_h):,} pixels) exceeds the 12 megapixel limit (reduced from previous 25 megapixel limit)."
                     )
                 rgba_img = decoded_image
             else:

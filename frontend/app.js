@@ -1300,7 +1300,7 @@ function renderRecentAuditsTable() {
               (AppState.overviewData && AppState.overviewData.is_demo)
             );
             const sourceBadge = isDemoAudit
-              ? `<span class="status-badge badge-neutral" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Demo</span></span>`
+              ? `<span class="status-badge badge-neutral" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg><span>Sample data</span></span>`
               : `<span class="status-badge badge-info" style="font-size: 11px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>Custom</span></span>`;
 
             let actionLabel = 'Open review';
@@ -4600,7 +4600,10 @@ async function renderReviewQueueView() {
                 return `
                   <tr>
                     <td class="rq-doc-col" data-label="Document">
-                      <strong style="font-size: 14.5px; line-height: 20px; display: block;">${escapeHtml(a.document_name)}</strong>
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <strong style="font-size: 14.5px; line-height: 20px;">${escapeHtml(a.document_name)}</strong>
+                        ${(a.id.startsWith('AUD-100') || (a.document_name && (a.document_name.includes('sample data') || a.document_name.includes('(Demo)')))) ? '<span class="status-badge badge-neutral" style="font-size: 11px;"><span>Sample data</span></span>' : ''}
+                      </div>
                       <div style="margin-top: 4px;"><span class="mono-id">${escapeHtml(a.id)}</span></div>
                     </td>
                     <td data-label="Submitted by">${escapeHtml(a.submitted_by_name || '—')}</td>
@@ -4969,7 +4972,7 @@ function renderVisualHeatmapInspector(viewer, audit, docHtml) {
             Delta-E Palette (${hm.flagged_cells_count || 0} flagged)
           </button>
           <button type="button" class="btn btn-sm heatmap-layer-toggle ${layers.contrast ? 'active' : ''}" data-hm-layer="contrast" aria-pressed="${layers.contrast ? 'true' : 'false'}">
-            Text Contrast (${tc.measured_count || 0})
+            Text Contrast (${tc.measured_count > 0 ? (tc.state === 'Findings' ? 'Findings' : 'Passed') : 'Not measured'})
           </button>
           <button type="button" class="btn btn-sm heatmap-layer-toggle ${layers.clear_space ? 'active' : ''}" data-hm-layer="clear_space" aria-pressed="${layers.clear_space ? 'true' : 'false'}">
             Clear Space (${escapeHtml(cs.state || 'Not Checked')})
@@ -5023,7 +5026,7 @@ function renderVisualHeatmapInspector(viewer, audit, docHtml) {
 
       <div class="heatmap-disclosures-box">
         <div style="font-size: 12.5px; color: var(--slate-800);">
-          <strong>Text contrast scope:</strong> ${escapeHtml(tc.disclosure || 'Contrast measured for 0 text elements; text inside raster images is not detected.')}
+          <strong>Text contrast (${tc.measured_count > 0 ? (tc.state === 'Findings' ? 'Findings' : 'Passed') : 'Not measured'}):</strong> ${escapeHtml(tc.disclosure || 'Contrast measured for 0 text elements; text inside raster images is not detected.')}
         </div>
         <div style="font-size: 12.5px; color: var(--slate-800); margin-top: 4px;" id="heatmapPaletteScope">
           <strong>Palette (${escapeHtml(hm.palette_state || 'Not Checked')}):</strong> ${hm.palette_state === 'Not Checked'
@@ -5237,6 +5240,12 @@ async function renderAmbiguityRadarView() {
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>
               <span>Sample: ${sampleAuditsCnt} / ${minSampleReq} audits (${hasSufficientSample ? 'Sufficient sample' : 'Not enough data'})</span>
             </span>
+            ${data.sample_audits_note ? `
+              <span class="status-badge badge-neutral" style="font-size: 11px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>
+                <span>${escapeHtml(data.sample_audits_note)}</span>
+              </span>
+            ` : ''}
             <span style="font-size: 11px; color: var(--text-secondary);">
               Brand Vault v${data.brand_version || 1} &bull; Updated ${escapeHtml(formatTimestamp(AppState.lastRefreshed.radar))}
             </span>
@@ -5714,7 +5723,7 @@ async function renderAuditHistoryView() {
             <select id="historyAuditSelect" class="form-control" style="width: auto;">
               ${audits.map((a) => `
                 <option value="${escapeHtml(a.id)}" ${a.id === detail.id ? 'selected' : ''}>
-                  ${escapeHtml(a.id)} — ${escapeHtml(a.document_name)} (${escapeHtml(normalizeStatusDisplay(a.overall_status))})
+                  ${escapeHtml(a.id)} — ${escapeHtml(a.document_name)} ${(a.id.startsWith('AUD-100') || (a.document_name && (a.document_name.includes('sample data') || a.document_name.includes('(Demo)')))) ? '(Sample data) ' : ''}(${escapeHtml(normalizeStatusDisplay(a.overall_status))})
                 </option>
               `).join('')}
             </select>

@@ -540,7 +540,7 @@ def test_f9_every_emitted_finding_detection_method_starts_with_tier_prefix():
     assert len(db_findings) > 0
     for fid, dm in db_findings:
         dm_str = str(dm or "").strip()
-        assert dm_str.startswith("Tier 1:") or dm_str.startswith("Tier 2:"), (
+        assert dm_str.startswith("Tier 1:") or dm_str.startswith("Tier 2:") or dm_str.startswith("Tier 1 + Tier 2:"), (
             f"Database finding {fid} detection_method '{dm}' does not start with Tier prefix"
         )
 
@@ -565,7 +565,7 @@ def test_f9_every_emitted_finding_detection_method_starts_with_tier_prefix():
     assert len(findings) >= 3
     for f in findings:
         dm = str(f.get("detection_method") or "").strip()
-        assert dm.startswith("Tier 1:") or dm.startswith("Tier 2:"), (
+        assert dm.startswith("Tier 1:") or dm.startswith("Tier 2:") or dm.startswith("Tier 1 + Tier 2:"), (
             f"Emitted finding {f.get('id')} detection_method '{dm}' does not start with Tier prefix"
         )
 

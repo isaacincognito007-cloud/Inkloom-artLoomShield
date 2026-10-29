@@ -373,15 +373,22 @@ def init_db() -> None:
     _ensure_column(cur, "approvals", "approver_name", "TEXT DEFAULT ''")
     _ensure_column(cur, "audit_events", "actor_user_id", "TEXT DEFAULT ''")
 
-    # F9: Ensure every finding detection_method starts with a consistent 'Tier 1: ' or 'Tier 2: ' prefix
+    # G5: Ensure every finding detection_method strictly reflects its underlying detection tier:
+    # Tier 1: regex, dictionary, math, image formats
+    # Tier 2: TF-IDF retrieval, polarity classifier, administrative status
+    # Tier 1 + Tier 2: superlative pattern + TF-IDF retrieval / vault search
     cur.execute(
         """
         UPDATE findings
         SET detection_method = CASE
-            WHEN detection_method LIKE '%NLP%' THEN 'Tier 2: ' || detection_method
-            ELSE 'Tier 1: ' || detection_method
+            WHEN detection_method LIKE '%Superlative Pattern%' THEN 'Tier 1 + Tier 2: ' || REPLACE(REPLACE(REPLACE(detection_method, 'Tier 1 + Tier 2: ', ''), 'Tier 1: ', ''), 'Tier 2: ', '')
+            WHEN detection_method LIKE '%NLP%' OR detection_method LIKE '%Polarity%' OR detection_method LIKE '%TF-IDF%' OR detection_method LIKE '%Messaging Principle%' OR detection_method LIKE '%Administrative Status%' THEN 'Tier 2: ' || REPLACE(REPLACE(REPLACE(detection_method, 'Tier 1 + Tier 2: ', ''), 'Tier 1: ', ''), 'Tier 2: ', '')
+            ELSE 'Tier 1: ' || REPLACE(REPLACE(REPLACE(detection_method, 'Tier 1 + Tier 2: ', ''), 'Tier 1: ', ''), 'Tier 2: ', '')
         END
-        WHERE detection_method NOT LIKE 'Tier 1%' AND detection_method NOT LIKE 'Tier 2%'
+        WHERE (detection_method NOT LIKE 'Tier 1: %' AND detection_method NOT LIKE 'Tier 2: %' AND detection_method NOT LIKE 'Tier 1 + Tier 2: %')
+           OR detection_method LIKE 'Tier 1: Configured Tone Pattern%'
+           OR detection_method LIKE 'Tier 2: Superlative Pattern%'
+           OR detection_method LIKE 'Tier 1: Superlative Pattern%'
         """
     )
 
@@ -399,11 +406,11 @@ def init_db() -> None:
             ],
         )
 
-    # Only the isolated sample workspace or test runs are pre-populated. Production starts empty.
+    # G1: A fresh clone creates and seeds the default Brand Vault workspace on first start in demo and production mode.
     cur.execute("SELECT COUNT(*) AS cnt FROM brands")
-    if cur.fetchone()["cnt"] == 0 and _should_seed_workspace():
+    if cur.fetchone()["cnt"] == 0:
         seed_default_workspace(cur)
-    elif _is_demo_mode():
+    if _is_demo_mode():
         # F6: idempotent top-up of demo-only sample data (INSERT OR IGNORE).
         ensure_demo_sample_data(cur)
 
@@ -871,6 +878,11 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
         """,
         colors,
     )
+
+    # G1 / G4: In production mode, seed ONLY the Brand Vault workspace (brands, colors, rules, terminology, facts).
+    # Sample audits AUD-1001..AUD-1006 are strictly isolated to demo mode and test workspaces.
+    if not (_is_demo_mode() or _should_seed_workspace()):
+        return
 
     # 6. Seed Consistent Demo Audits (AUD-1001 In Review with v1->v2 revision, AUD-1002 Approved)
     import hashlib
@@ -1382,7 +1394,7 @@ def ensure_demo_sample_data(cur: sqlite3.Cursor, now: str = "") -> None:
             "Rule RULE-TONE-02 requires an appropriate amount of technical detail.",
             "Flagged under subjective technical-detail threshold in RULE-TONE-02.",
             "Explain the primary business benefit in plain language before introducing API endpoint names.",
-            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            "Tier 2: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
             None, "dismissed", "Dismissed (sample data): API playbook targets integration engineers.", now,
         ),
         (
@@ -1393,7 +1405,7 @@ def ensure_demo_sample_data(cur: sqlite3.Cursor, now: str = "") -> None:
             "Rule RULE-TONE-02 requires an appropriate amount of technical detail.",
             "Flagged ISO 20022 schema identifiers as high technical density.",
             "Define pacs.008 (Customer Credit Transfer) and camt.053 (Bank-to-Customer Statement) on first use.",
-            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            "Tier 2: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
             None, "accepted", "Define pacs.008 (Customer Credit Transfer) and camt.053 on first use.", now,
         ),
         (
@@ -1404,7 +1416,7 @@ def ensure_demo_sample_data(cur: sqlite3.Cursor, now: str = "") -> None:
             "Rule RULE-TONE-02 requires an appropriate amount of technical detail.",
             "Flagged under subjective technical-detail wording.",
             "Specify exact UTC cut-off timestamps for each clearing corridor.",
-            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            "Tier 2: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
             None, "dismissed", "Dismissed (sample data): maintenance alert links to status table.", now,
         ),
         # RULE-TONE-03 findings (3 findings, 2 overrides -> 66.7% > 20% -> High Priority)
@@ -1416,7 +1428,7 @@ def ensure_demo_sample_data(cur: sqlite3.Cursor, now: str = "") -> None:
             "Rule RULE-TONE-03 requires summaries to be reasonably concise and intuitive.",
             "Subjective conciseness trigger on executive summary paragraph.",
             "Keep executive summary paragraphs under 40 words with a 1-sentence takeaway.",
-            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            "Tier 2: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
             None, "dismissed", "Dismissed (sample data): 'reasonably concise' has no word count threshold.", now,
         ),
         (
@@ -1427,7 +1439,7 @@ def ensure_demo_sample_data(cur: sqlite3.Cursor, now: str = "") -> None:
             "Rule RULE-TONE-03 requires summaries to be reasonably concise and intuitive.",
             "Subjective intuitiveness check triggered.",
             "State the reconciliation workflow in plain language before listing schema tags.",
-            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            "Tier 2: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
             None, "dismissed", "Dismissed (sample data): 'intuitive' is interpreted differently by reviewers.", now,
         ),
         (
@@ -1438,7 +1450,7 @@ def ensure_demo_sample_data(cur: sqlite3.Cursor, now: str = "") -> None:
             "Rule RULE-TONE-03 requires summaries to be reasonably concise and intuitive.",
             "Summary phrasing reviewed for executive clarity.",
             "Lead with measurable cash-visibility benefits for CFOs.",
-            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            "Tier 2: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
             None, "accepted", "Lead with measurable cash-visibility benefits for CFOs.", now,
         ),
         # RULE-MSG-02 findings (5 findings, 1 override -> 20.0% <= 20% -> Medium Priority: Vague (low override rate))

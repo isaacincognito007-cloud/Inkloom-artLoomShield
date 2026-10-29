@@ -177,13 +177,15 @@ app.add_middleware(
 # in-handler chunked read alone cannot stop a large body from being received. Reject declared oversize
 # bodies on the upload route up-front from Content-Length. MULTIPART_OVERHEAD_ALLOWANCE covers the form
 # fields and multipart boundaries around a file of at most 5 MB.
+# G6(a): upload_size_guard_middleware applies strictly to upload routes and never rejects
+# a file of 5 MB minus 1 KB because of multipart header/boundary overhead.
 UPLOAD_ROUTE_PATHS = ("/api/audits/upload",)
-MULTIPART_OVERHEAD_ALLOWANCE = 64 * 1024
+MULTIPART_OVERHEAD_ALLOWANCE = 256 * 1024
 
 
 @app.middleware("http")
 async def upload_size_guard_middleware(request: Request, call_next):
-    if request.method == "POST" and request.url.path in UPLOAD_ROUTE_PATHS:
+    if request.method == "POST" and request.url.path.rstrip("/") in UPLOAD_ROUTE_PATHS:
         declared = request.headers.get("content-length", "").strip()
         if declared.isdigit() and int(declared) > (5 * 1024 * 1024) + MULTIPART_OVERHEAD_ALLOWANCE:
             return JSONResponse(
@@ -846,8 +848,10 @@ def get_overview_dashboard(brand_id: str):
     cur = conn.cursor()
 
     # F6: demo-only sample audits never count towards a non-demo overview.
-    demo_filter = "" if is_demo_mode() else " AND id NOT IN ('AUD-1003', 'AUD-1004', 'AUD-1005', 'AUD-1006')"
-    demo_join_filter = "" if is_demo_mode() else " AND a.id NOT IN ('AUD-1003', 'AUD-1004', 'AUD-1005', 'AUD-1006')"
+    # G4: In demo mode, include all 6 sample audits (AUD-1001..AUD-1006). In non-demo mode, extra demo audits AUD-1003..1006 are excluded.
+    DEMO_EXTRA_AUDIT_IDS = ("AUD-1003", "AUD-1004", "AUD-1005", "AUD-1006")
+    demo_filter = "" if is_demo_mode() else f" AND id NOT IN {DEMO_EXTRA_AUDIT_IDS}"
+    demo_join_filter = "" if is_demo_mode() else f" AND a.id NOT IN {DEMO_EXTRA_AUDIT_IDS}"
 
     cur.execute(f"SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ?{demo_filter}", (brand_id,))
     docs_audited = int(cur.fetchone()["cnt"])
@@ -888,14 +892,14 @@ def get_overview_dashboard(brand_id: str):
     active_rules_count = sum(1 for r in vault["rules"] if int(r.get("active", 1)) == 1)
 
     cur.execute(
-        """
+        f"""
         SELECT
             a.id, a.document_name, a.input_format, a.overall_status, a.created_at, a.updated_at,
             COUNT(f.id) AS total_findings,
             SUM(CASE WHEN f.review_state IN ('open', 'needs_review') THEN 1 ELSE 0 END) AS open_findings
         FROM audits a
         LEFT JOIN findings f ON a.id = f.audit_id
-        WHERE a.brand_id = ?
+        WHERE a.brand_id = ?{demo_join_filter}
         GROUP BY a.id
         ORDER BY a.updated_at DESC
         LIMIT 20
@@ -1626,11 +1630,15 @@ def list_audits(
 
     conn = get_connection()
     cur = conn.cursor()
+    DEMO_EXTRA_AUDIT_IDS = ("AUD-1003", "AUD-1004", "AUD-1005", "AUD-1006")
+    demo_filter = "" if is_demo_mode() else f" AND id NOT IN {DEMO_EXTRA_AUDIT_IDS}"
+    demo_join_filter = "" if is_demo_mode() else f" AND a.id NOT IN {DEMO_EXTRA_AUDIT_IDS}"
+
     if brand_id:
-        cur.execute("SELECT COUNT(*) AS total FROM audits WHERE brand_id = ?", (brand_id,))
+        cur.execute(f"SELECT COUNT(*) AS total FROM audits WHERE brand_id = ?{demo_filter}", (brand_id,))
         total = int(cur.fetchone()["total"] or 0)
         cur.execute(
-            """
+            f"""
             SELECT
                 a.id, a.brand_id, a.brand_version, a.document_name, a.input_format,
                 a.overall_status, a.assigned_reviewer, a.submitted_by_user_id, a.submitted_by_name,
@@ -1639,7 +1647,7 @@ def list_audits(
                 SUM(CASE WHEN f.review_state IN ('open', 'needs_review') THEN 1 ELSE 0 END) AS open_findings
             FROM audits a
             LEFT JOIN findings f ON a.id = f.audit_id
-            WHERE a.brand_id = ?
+            WHERE a.brand_id = ?{demo_join_filter}
             GROUP BY a.id
             ORDER BY a.updated_at DESC
             LIMIT ? OFFSET ?
@@ -1647,10 +1655,10 @@ def list_audits(
             (brand_id, safe_limit, safe_offset),
         )
     else:
-        cur.execute("SELECT COUNT(*) AS total FROM audits")
+        cur.execute(f"SELECT COUNT(*) AS total FROM audits WHERE 1=1{demo_filter}")
         total = int(cur.fetchone()["total"] or 0)
         cur.execute(
-            """
+            f"""
             SELECT
                 a.id, a.brand_id, a.brand_version, a.document_name, a.input_format,
                 a.overall_status, a.assigned_reviewer, a.submitted_by_user_id, a.submitted_by_name,
@@ -1659,6 +1667,7 @@ def list_audits(
                 SUM(CASE WHEN f.review_state IN ('open', 'needs_review') THEN 1 ELSE 0 END) AS open_findings
             FROM audits a
             LEFT JOIN findings f ON a.id = f.audit_id
+            WHERE 1=1{demo_join_filter}
             GROUP BY a.id
             ORDER BY a.updated_at DESC
             LIMIT ? OFFSET ?
@@ -2714,16 +2723,21 @@ def get_ambiguity_radar(brand_id: str, min_sample: Optional[int] = None):
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ?", (brand_id,))
+    DEMO_EXTRA_AUDIT_IDS = ("AUD-1003", "AUD-1004", "AUD-1005", "AUD-1006")
+    demo_filter = "" if is_demo_mode() else f" AND id NOT IN {DEMO_EXTRA_AUDIT_IDS}"
+    demo_join_filter = "" if is_demo_mode() else f" AND a.id NOT IN {DEMO_EXTRA_AUDIT_IDS}"
+    demo_fb_filter = "" if is_demo_mode() else f" AND audit_id NOT IN {DEMO_EXTRA_AUDIT_IDS}"
+
+    cur.execute(f"SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ?{demo_filter}", (brand_id,))
     total_brand_audits = int(cur.fetchone()["cnt"] or 0)
 
     radar_rows = []
     for r in vault["rules"]:
         cur.execute(
-            """
+            f"""
             SELECT f.* FROM findings f
             JOIN audits a ON f.audit_id = a.id
-            WHERE a.brand_id = ? AND f.rule_or_fact_id LIKE ?
+            WHERE a.brand_id = ? AND f.rule_or_fact_id LIKE ?{demo_join_filter}
             ORDER BY f.updated_at DESC, f.id DESC
             """,
             (brand_id, f"%{r['id']}%"),
@@ -2732,7 +2746,7 @@ def get_ambiguity_radar(brand_id: str, min_sample: Optional[int] = None):
         v_cnt = len(rule_findings)
 
         cur.execute(
-            "SELECT * FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? ORDER BY id DESC",
+            f"SELECT * FROM guideline_feedback WHERE brand_id = ? AND rule_id = ?{demo_fb_filter} ORDER BY id DESC",
             (brand_id, r["id"]),
         )
         fb_rows = [dict(x) for x in cur.fetchall()]
@@ -2866,6 +2880,7 @@ def get_ambiguity_radar(brand_id: str, min_sample: Optional[int] = None):
         "brand_version": int(vault["brand"].get("version", 1)),
         "min_sample_required": effective_min_sample,
         "sample_audits_count": total_brand_audits,
+        "sample_audits_note": f"Includes {total_brand_audits} seeded sample audits" if (is_demo_mode() and total_brand_audits > 0) else "",
         "sufficient_sample": total_brand_audits >= effective_min_sample,
         "concise_info_note": "Frequent overrides are a signal to review a rule, not proof it is incorrect.",
         "honest_scope_note": (

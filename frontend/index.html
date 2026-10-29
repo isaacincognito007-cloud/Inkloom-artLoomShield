@@ -809,8 +809,11 @@
                 <li><strong>Server-Enforced Roles &amp; Permissions:</strong> Least-privilege server enforcement (Content Creator, Reviewer, Brand Administrator) with CAS concurrency protection. Client role header override is strictly isolated to demo mode.</li>
                 <li><strong>Honest Processing Architecture:</strong> Honest labels distinguishing <code>Hosted verification engine</code> vs <code>Local processing</code> with zero third-party AI APIs.</li>
                 <li><strong>Atomic Finding Corrections &amp; Lock:</strong> Compare-and-swap concurrency guards on finding decisions; approved audits are permanently locked against drift.</li>
-                <li><strong>Per-IP Rate Limiting &amp; Reverse Proxy Security:</strong> Sliding-window rate limiter with reverse proxy hop resolution (trusted Vercel edge header, multi-hop XFF), global request ceilings, and bounded memory tracking.</li>
+                <li><strong>Per-IP Rate Limiting &amp; Reverse Proxy Security:</strong> Sliding-window rate limiter with trusted proxy hop counting, anti-spoofing client IP resolution, global request ceilings, and bounded memory tracking.</li>
                 <li><strong>Multi-Format Ingestion:</strong> Local extraction and page/paragraph mapping across 8 formats: <code>.pdf</code>, <code>.docx</code>, <code>.md</code>, <code>.html</code>, <code>.txt</code>, <code>.svg</code>, <code>.png</code>, and <code>.jpg</code>.</li>
+                <li><strong>Guideline Clarity Rewriter:</strong> Ambiguity scorer and candidate rewriter analyzing reviewer override patterns to clarify subjective guidelines into deterministic rules with human sign-off loop closure.</li>
+                <li><strong>Heatmap Inspector:</strong> Visual NxN grid inspector computing logo clear space (logo located by explicit markers) and relative luminance contrast (contrast for SVG text only) alongside dominant palette matches.</li>
+                <li><strong>Cryptographically Signed Compliance Certificate:</strong> Ed25519 tamper-evident audit certificates proving marketing content was verified against an immutable Brand guidelines version and content hash.</li>
               </ul>
             </div>
 
@@ -820,19 +823,12 @@
               <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px;">The following architectural enhancements are formally scheduled for upcoming release delivery:</p>
               <div style="display: grid; gap: 12px;">
                 <div style="padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
-                  <strong style="font-size: 13.5px; color: var(--primary-ink);">1. Guideline Clarity Rewriter</strong>
-                  <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;">Interactive rewriter analyzing reviewer override patterns to clarify subjective rules into deterministic check logic.</div>
+                  <strong style="font-size: 13.5px; color: var(--primary-ink);">1. Streaming Uploads (100 MB)</strong>
+                  <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;">True chunked streaming ingestion pipeline for large production media and enterprise campaign archives up to 100 MB.</div>
                 </div>
                 <div style="padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
-                  <strong style="font-size: 13.5px; color: var(--primary-ink);">2. 4x4 Clear-Space &amp; Accessibility Heatmap</strong>
-                  <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;">Pixel-level canvas scanner visualizing logo clear-space perimeters and real-time WCAG 2.2 color contrast ratios.</div>
-                </div>
-                <div style="padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
-                  <strong style="font-size: 13.5px; color: var(--primary-ink);">3. Cryptographically Signed Compliance Certificate</strong>
-                  <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;">Exportable SHA-256 signed audit certificate proving marketing content verified against an immutable Brand guidelines version.</div>
-                </div>
-                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
-                  <em>Also scheduled for upcoming releases: 100 MB streaming uploads and non-destructive preset application to existing brands with one-click undo.</em>
+                  <strong style="font-size: 13.5px; color: var(--primary-ink);">2. Non-Destructive Presets</strong>
+                  <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 2px;">Non-destructive compliance preset application to existing brands with preview comparison and one-click undo.</div>
                 </div>
               </div>
             </div>
