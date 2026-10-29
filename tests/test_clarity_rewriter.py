@@ -1,4 +1,6 @@
 import os
+
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.clarity_rewriter import (
@@ -15,10 +17,13 @@ from backend.main import app
 client = TestClient(app)
 
 
-def setup_function():
-    os.environ["LOOMSHIELD_WORKSPACE_MODE"] = "demo"
+@pytest.fixture(autouse=True)
+def demo_workspace(monkeypatch):
+    # F11: scoped via monkeypatch so demo mode never leaks into other test modules.
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
     init_db()
     reset_demo_workspace()
+    yield
 
 
 def test_b1_scorer_determinism_with_golden_fixtures():
@@ -325,3 +330,267 @@ def test_b7_idempotent_migration_and_ui_escaping():
     assert "escapeHtml(text.slice(cursor, start))" in js_code
     assert "escapeHtml(text.slice(start, end))" in js_code
     assert "suggestion for human sign-off" in js_code.lower()
+
+
+# ============================================================================
+# DAY 3 HARDENING: F4, F5, F6
+# ============================================================================
+
+import re
+
+import backend.main as main_mod
+from backend.main import get_brand_vault_bundle
+
+
+def _token(user_id):
+    return client.post("/api/demo/login", json={"user_id": user_id}).json()["token"]
+
+
+def test_f4_rule_tone_02_never_receives_fact_101_article_agreement_and_nonzero_ambiguity_after():
+    vault = get_brand_vault_bundle("novapay")
+    facts = vault["verified_facts"]
+    assert any(f["id"] == "FACT-101" for f in facts)
+    tone02 = next(r for r in vault["rules"] if r["id"] == "RULE-TONE-02")
+
+    # (a) Generator level: a tone rule is not quantity-type, so no Verified Fact is cited.
+    cand = generate_candidate_rewrite(rule=tone02, verified_facts=facts, past_findings=[])
+    assert cand["cited_fact_id"] is None
+    assert "FACT-101" not in cand["new_text"]
+    assert cand["threshold_source"] == "placeholder"
+    assert "[SET THRESHOLD: unit]" in cand["new_text"]
+
+    # (a) API level: the proposal stored for RULE-TONE-02 never cites FACT-101.
+    ava = _token("usr_ava")
+    prop = client.post(
+        "/api/ambiguity-radar/novapay/rules/RULE-TONE-02/propose",
+        headers={"Authorization": f"Bearer {ava}"},
+        json={},
+    )
+    assert prop.status_code == 200
+    assert "FACT-101" not in prop.json()["new_text"]
+    assert "64" not in extract_numeric_tokens(prop.json()["new_text"])
+
+    # (b) "Use an appropriate amount..." never produces "an a"; the article agrees with the replacement.
+    art = generate_candidate_rewrite(
+        rule={"id": "RULE-ART", "title": "Detail", "pillar": "Tone and Voice",
+              "description": "Use an appropriate amount of technical detail."},
+        verified_facts=facts,
+    )
+    low = art["new_text"].lower()
+    assert "an a " not in low
+    assert not re.search(r"\ban\s+[bcdfgjklmnpqrstvwxyz]", low)
+    assert not re.search(r"\ba\s+[aeio]", low)
+    assert art["new_text"].startswith("Use a ")
+
+    # (b) Prepositional replacement consumes "in a ... manner" instead of producing "in a within".
+    msg = generate_candidate_rewrite(
+        rule={"id": "RULE-PREP", "title": "Notices", "pillar": "Messaging",
+              "description": "Operational status updates must be sent in a timely manner."},
+        verified_facts=[],
+    )
+    assert "in a within" not in msg["new_text"].lower()
+    assert "manner" not in msg["new_text"].lower()
+
+    # (c) An unrelated fact must not be appended just to drive ambiguity_after to 0.
+    unrelated = [{
+        "id": "FACT-UNRELATED",
+        "statement": "Office cafeteria serves 250 lunches per day.",
+        "numeric_value": "250",
+        "numeric_units": "lunches",
+        "product_context": "Cafeteria catering",
+        "applicable_conditions": "Weekdays",
+        "verification_status": "Verified",
+    }]
+    for rule in (tone02, {"id": "RULE-Q", "title": "Notices", "pillar": "Messaging",
+                          "description": "Send timely notices with adequate explanation."}):
+        c = generate_candidate_rewrite(rule=rule, verified_facts=unrelated)
+        assert c["cited_fact_id"] is None
+        assert "250" not in extract_numeric_tokens(c["new_text"])
+        assert c["ambiguity_after"] > 0
+
+
+def test_f5_approve_revision_409_when_rule_changed_and_atomic_status_transition(monkeypatch):
+    ava = _token("usr_ava")
+    auth = {"Authorization": f"Bearer {ava}"}
+
+    # 1. Stale proposal: rule edited after the proposal -> 409, edited wording kept.
+    prop = client.post("/api/ambiguity-radar/novapay/rules/RULE-TONE-02/propose", headers=auth, json={}).json()
+    vault = client.get("/api/vault/novapay").json()
+    rule = next(r for r in vault["rules"] if r["id"] == "RULE-TONE-02")
+    edited = "Limit each paragraph to at most 2 API endpoint names and define each on first use."
+    put = client.put(
+        "/api/vault/novapay/rules/RULE-TONE-02",
+        headers=auth,
+        json={
+            "pillar": rule["pillar"],
+            "title": rule["title"],
+            "description": edited,
+            "severity": rule.get("severity") or "medium",
+            "do_example": rule.get("do_example") or "",
+            "dont_example": rule.get("dont_example") or "",
+            "pattern_regex": "",
+        },
+    )
+    assert put.status_code == 200
+    ver_before = client.get("/api/vault/novapay").json()["brand"]["version"]
+    stale = client.post(f"/api/ambiguity-radar/novapay/revisions/{prop['id']}/approve", headers=auth)
+    assert stale.status_code == 409
+    after = client.get("/api/vault/novapay").json()
+    assert next(r for r in after["rules"] if r["id"] == "RULE-TONE-02")["description"] == edited
+    assert after["brand"]["version"] == ver_before
+
+    # 2. Atomic transition: simulate a concurrent approver that already moved the revision out of
+    #    'proposed' after our read. The conditional UPDATE must hit 0 rows -> 409, nothing applied.
+    prop2 = client.post("/api/ambiguity-radar/novapay/rules/RULE-TONE-03/propose", headers=auth, json={}).json()
+    conn = get_connection()
+    conn.execute("UPDATE guideline_revisions SET status = 'approved' WHERE id = ?", (prop2["id"],))
+    conn.commit()
+    conn.close()
+    real_hydrate = main_mod._hydrate_revision_row
+
+    def stale_read(row):
+        out = real_hydrate(row)
+        if out.get("id") == prop2["id"]:
+            out["status"] = "proposed"
+        return out
+
+    monkeypatch.setattr(main_mod, "_hydrate_revision_row", stale_read)
+    v_before = client.get("/api/vault/novapay").json()
+    rule3_before = next(r for r in v_before["rules"] if r["id"] == "RULE-TONE-03")
+    race = client.post(f"/api/ambiguity-radar/novapay/revisions/{prop2['id']}/approve", headers=auth)
+    assert race.status_code == 409
+    assert "no longer 'proposed'" in race.json()["detail"]
+    v_after = client.get("/api/vault/novapay").json()
+    assert v_after["brand"]["version"] == v_before["brand"]["version"]
+    assert next(r for r in v_after["rules"] if r["id"] == "RULE-TONE-03")["description"] == rule3_before["description"]
+
+    # Reject uses the same conditional UPDATE.
+    race_rej = client.post(f"/api/ambiguity-radar/novapay/revisions/{prop2['id']}/reject", headers=auth, json={})
+    assert race_rej.status_code == 409
+    monkeypatch.setattr(main_mod, "_hydrate_revision_row", real_hydrate)
+
+    # 3. A normal proposal still approves exactly once; the second approval is 409.
+    prop3 = client.post("/api/ambiguity-radar/novapay/rules/RULE-MSG-02/propose", headers=auth, json={}).json()
+    assert client.post(f"/api/ambiguity-radar/novapay/revisions/{prop3['id']}/approve", headers=auth).status_code == 200
+    assert client.post(f"/api/ambiguity-radar/novapay/revisions/{prop3['id']}/approve", headers=auth).status_code == 409
+
+
+def test_f6_demo_mode_seeds_at_least_6_sample_audits_and_3_extra_vague_rules_with_high_medium_priorities(monkeypatch):
+    audits = client.get("/api/audits?brand_id=novapay").json()["audits"]
+    sample = [a for a in audits if "sample data" in a["document_name"].lower()]
+    assert len(sample) >= 6
+
+    rule_ids = {r["id"] for r in client.get("/api/vault/novapay").json()["rules"]}
+    assert {"RULE-TONE-03", "RULE-MSG-02", "RULE-CLAIM-02"}.issubset(rule_ids)
+
+    radar = client.get("/api/ambiguity-radar/novapay").json()
+    assert radar["sufficient_sample"] is True
+    by_id = {r["rule_id"]: r for r in radar["rules_analysis"]}
+    priorities = {r["priority"] for r in radar["rules_analysis"]}
+    assert {"High", "Medium"}.issubset(priorities)
+    high_vague = [r for r in radar["rules_analysis"] if r["priority"] == "High" and r["is_vague"]]
+    assert high_vague and all(r["override_rate"] > 20 for r in high_vague)
+    # Exactly-20% stays out of High (the rule is "> 20%", not ">= 20%").
+    assert by_id["RULE-MSG-02"]["override_rate"] == 20.0
+    assert by_id["RULE-MSG-02"]["priority"] == "Medium"
+
+    # Idempotent: repeated init_db() does not duplicate sample rows.
+    conn = get_connection()
+    counts_before = (
+        conn.execute("SELECT COUNT(*) FROM audits").fetchone()[0],
+        conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0],
+        conn.execute("SELECT COUNT(*) FROM guideline_feedback").fetchone()[0],
+        conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0],
+    )
+    conn.close()
+    init_db()
+    init_db()
+    conn = get_connection()
+    counts_after = (
+        conn.execute("SELECT COUNT(*) FROM audits").fetchone()[0],
+        conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0],
+        conn.execute("SELECT COUNT(*) FROM guideline_feedback").fetchone()[0],
+        conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0],
+    )
+    conn.close()
+    assert counts_after == counts_before
+
+    # Production mode: sample audits are not re-seeded and never counted in the overview.
+    monkeypatch.setenv("LOOMSHIELD_WORKSPACE_MODE", "production")
+    conn = get_connection()
+    conn.execute("DELETE FROM guideline_feedback WHERE audit_id IN ('AUD-1003','AUD-1004','AUD-1005','AUD-1006')")
+    conn.execute("DELETE FROM findings WHERE audit_id IN ('AUD-1003','AUD-1004','AUD-1005','AUD-1006')")
+    conn.execute("DELETE FROM audits WHERE id IN ('AUD-1003','AUD-1004','AUD-1005','AUD-1006')")
+    conn.commit()
+    conn.close()
+    init_db()
+    conn = get_connection()
+    assert conn.execute(
+        "SELECT COUNT(*) FROM audits WHERE id IN ('AUD-1003','AUD-1004','AUD-1005','AUD-1006')"
+    ).fetchone()[0] == 0
+    conn.close()
+
+def test_f9_every_emitted_finding_detection_method_starts_with_tier_prefix():
+    # 1. Check all findings currently seeded in the database
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, detection_method FROM findings")
+    db_findings = cur.fetchall()
+    conn.close()
+    assert len(db_findings) > 0
+    for fid, dm in db_findings:
+        dm_str = str(dm or "").strip()
+        assert dm_str.startswith("Tier 1:") or dm_str.startswith("Tier 2:"), (
+            f"Database finding {fid} detection_method '{dm}' does not start with Tier prefix"
+        )
+
+    # 2. Check dynamically generated findings from run_six_pillar_audit
+    from backend.engine import run_six_pillar_audit
+    vault = get_brand_vault_bundle("novapay")
+    sample_text = (
+        "NovaPay AI Engine provides 95% faster settlement with zero human oversight. "
+        "Use an appropriate amount of technical detail."
+    )
+    res = run_six_pillar_audit(
+        content=sample_text,
+        brand=vault["brand"],
+        rules=vault["rules"],
+        terminology_rows=vault["terminology"],
+        facts=vault["verified_facts"],
+        brand_colors=vault["colors"],
+        fg_color="#000000",
+        bg_color="#FFFFFF",
+    )
+    findings = res.get("findings", [])
+    assert len(findings) >= 3
+    for f in findings:
+        dm = str(f.get("detection_method") or "").strip()
+        assert dm.startswith("Tier 1:") or dm.startswith("Tier 2:"), (
+            f"Emitted finding {f.get('id')} detection_method '{dm}' does not start with Tier prefix"
+        )
+
+
+def test_f10_readme_traceability_backticked_test_names_exist_in_pytest_collection():
+    import subprocess
+    from pathlib import Path
+    readme_path = Path(__file__).resolve().parent.parent / "README.md"
+    assert readme_path.exists(), "README.md not found"
+    readme_text = readme_path.read_text(encoding="utf-8")
+
+    backticked_tests = set(re.findall(r"`(test_[a-zA-Z0-9_]+)`", readme_text))
+    assert len(backticked_tests) >= 30, f"Expected at least 30 test names in README, found {len(backticked_tests)}"
+
+    proc = subprocess.run(
+        ["python", "-m", "pytest", "--collect-only", "-q"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"pytest --collect-only failed: {proc.stderr}"
+    collected_tests = set()
+    for line in proc.stdout.splitlines():
+        if "::" in line:
+            name = line.split("::")[-1].split("[")[0].strip()
+            collected_tests.add(name)
+
+    missing = backticked_tests - collected_tests
+    assert not missing, f"README references tests not found in pytest collection: {missing}"

@@ -373,6 +373,18 @@ def init_db() -> None:
     _ensure_column(cur, "approvals", "approver_name", "TEXT DEFAULT ''")
     _ensure_column(cur, "audit_events", "actor_user_id", "TEXT DEFAULT ''")
 
+    # F9: Ensure every finding detection_method starts with a consistent 'Tier 1: ' or 'Tier 2: ' prefix
+    cur.execute(
+        """
+        UPDATE findings
+        SET detection_method = CASE
+            WHEN detection_method LIKE '%NLP%' THEN 'Tier 2: ' || detection_method
+            ELSE 'Tier 1: ' || detection_method
+        END
+        WHERE detection_method NOT LIKE 'Tier 1%' AND detection_method NOT LIKE 'Tier 2%'
+        """
+    )
+
     # Ensure demo_users are seeded when in demo or test workspace
     if _should_seed_workspace():
         cur.executemany(
@@ -391,6 +403,9 @@ def init_db() -> None:
     cur.execute("SELECT COUNT(*) AS cnt FROM brands")
     if cur.fetchone()["cnt"] == 0 and _should_seed_workspace():
         seed_default_workspace(cur)
+    elif _is_demo_mode():
+        # F6: idempotent top-up of demo-only sample data (INSERT OR IGNORE).
+        ensure_demo_sample_data(cur)
 
     conn.commit()
     conn.close()
@@ -901,7 +916,7 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
             "AUD-1001",
             "novapay",
             2,
-            "Q4 Settlement Launch Brief (Demo)",
+            "Q4 Settlement Launch Brief (Demo — sample data)",
             "html",
             aud1_orig,
             aud1_rev,
@@ -922,7 +937,7 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
             "AUD-1002",
             "novapay",
             2,
-            "Q3 Institutional Performance Note (Demo)",
+            "Q3 Institutional Performance Note (Demo — sample data)",
             "markdown",
             aud2_orig,
             aud2_rev,
@@ -974,7 +989,7 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
             "[FACT-101 — Verified] \"Processing and cross-border settlement is up to 64% faster under the conditions stated in the approved performance report.\" | Conditions: Measured across 42 supported clearing corridors compared to legacy correspondent SWIFT baselines. | Source: NovaPay Q3 2026 Institutional Performance Report, Section 2.4",
             "The submitted numerical claim ('95') is inconsistent with approved fact FACT-101 (approved value: '64% faster'). Ask the creator to verify or revise the claim.",
             "Our platform delivers up to 64% faster processing under the verified conditions.",
-            "Local NLP (TF-IDF Fact Retrieval + Numerical Comparison)",
+            "Tier 2: Local NLP (TF-IDF Fact Retrieval + Numerical Comparison)",
             "Tier 2: Embedded NLP Engine",
             0.38,
             "open",
@@ -995,7 +1010,7 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
             "Preferred term: 'Local Governance Engine' | Prohibited/Deprecated: 'AI Engine'. Note: Never refer to the deterministic + embedded NLP system as a generic 'AI Engine'; use 'Local Governance Engine'.",
             "Detected 'AI Engine'. Never refer to the deterministic + embedded NLP system as a generic 'AI Engine'; use 'Local Governance Engine'.",
             "Local Governance Engine",
-            "Exact Lexicon & Case-Sensitivity Dictionary Match",
+            "Tier 1: Exact Lexicon & Case-Sensitivity Dictionary Match",
             "Tier 1: Deterministic Engine",
             None,
             "accepted",
@@ -1016,7 +1031,7 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
             "Preferred term: 'NovaPay' | Prohibited/Deprecated: 'Novapay'. Note: Brand spelling requires capital 'N' and capital 'P' ('NovaPay').",
             "Detected 'Novapay'. Brand spelling requires capital 'N' and capital 'P' ('NovaPay').",
             "NovaPay",
-            "Exact Lexicon & Case-Sensitivity Dictionary Match",
+            "Tier 1: Exact Lexicon & Case-Sensitivity Dictionary Match",
             "Tier 1: Deterministic Engine",
             None,
             "accepted",
@@ -1177,6 +1192,367 @@ def seed_default_workspace(cur: sqlite3.Cursor) -> None:
         """,
         feedback_rows,
     )
+    if _is_demo_mode():
+        ensure_demo_sample_data(cur, now)
+
+
+DEMO_EXTRA_AUDIT_IDS = ("AUD-1003", "AUD-1004", "AUD-1005", "AUD-1006")
+
+
+def ensure_demo_sample_data(cur: sqlite3.Cursor, now: str = "") -> None:
+    """
+    F6: In demo mode only, seed 3 additional realistically vague NovaPay rules and 4 additional
+    sample audits (bringing the total to 6 sample audits, all labelled 'sample data') with realistic
+    findings and override feedback so Guideline insights demonstrates High/Medium/Low priorities and
+    the >20% override correlation out of the box.
+    """
+    if not _is_demo_mode():
+        return
+    if not now:
+        now = datetime.now(timezone.utc).isoformat()
+
+    extra_vague_rules = [
+        (
+            "RULE-TONE-03",
+            "novapay",
+            "Tone and Voice",
+            "Keep Executive Summaries Reasonably Concise and Intuitive",
+            "Executive summaries should be reasonably concise, intuitive for non-technical stakeholders, and use suitable terminology where possible.",
+            json.dumps({"patterns": [], "sample_data": True}),
+            "medium",
+            "",
+            "",
+            1,
+            1,
+            now,
+        ),
+        (
+            "RULE-MSG-02",
+            "novapay",
+            "Messaging",
+            "Provide Timely Corridor Maintenance Notices",
+            "Operational status updates must be sent in a timely manner with an adequate explanation of settlement window changes when appropriate.",
+            json.dumps({"prohibited_patterns": [], "sample_data": True}),
+            "medium",
+            "Notify treasury administrators at least 14 days before scheduled clearing window changes.",
+            "",
+            1,
+            1,
+            now,
+        ),
+        (
+            "RULE-CLAIM-02",
+            "novapay",
+            "Promotional Claims",
+            "Ensure Efficiency Comparisons Are Significantly Substantiated",
+            "Cross-border fee and throughput comparisons must be significantly better than legacy banking baselines and sufficiently documented where suitable.",
+            json.dumps({"source": "verified_facts_and_claim_engine", "sample_data": True}),
+            "high",
+            "",
+            "",
+            1,
+            1,
+            now,
+        ),
+    ]
+    cur.executemany(
+        """
+        INSERT OR IGNORE INTO rules (
+            id, brand_id, pillar, title, description, rule_config_json,
+            severity, do_example, dont_example, active, version, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        extra_vague_rules,
+    )
+
+    default_pillars = json.dumps({
+        "Tone and Voice": "Findings",
+        "Terminology": "Passed",
+        "Messaging": "Findings",
+        "Promotional Claims": "Passed",
+        "Visual and Logo Consistency": "Not Checked",
+        "Accessibility": "Passed",
+    })
+    extra_audits = [
+        (
+            "AUD-1003",
+            "novapay",
+            2,
+            "APAC Corridor Liquidity Playbook (Sample data)",
+            "markdown",
+            "# APAC Liquidity Playbook\n\nUse our payout API endpoints for T+0 multi-currency treasury sweeps across Singapore and Tokyo.",
+            "# APAC Liquidity Playbook\n\nUse our payout API endpoints for T+0 multi-currency treasury sweeps across Singapore and Tokyo.",
+            "",
+            "",
+            "",
+            0,
+            json.dumps({"deterministic_ms": 1.5, "nlp_retrieval_ms": 2.6, "sample_data": True}),
+            1,
+            "Approved",
+            "Editorial & Brand Reviewer",
+            default_pillars,
+            4.1,
+            now,
+            now,
+        ),
+        (
+            "AUD-1004",
+            "novapay",
+            2,
+            "ISO 20022 Migration Datasheet (Sample data)",
+            "html",
+            "<h1>ISO 20022 Migration Guide</h1><p>Configure pacs.008 and camt.053 message schemas with automated reconciliation rules.</p>",
+            "<h1>ISO 20022 Migration Guide</h1><p>Configure pacs.008 and camt.053 message schemas with automated reconciliation rules.</p>",
+            "",
+            "",
+            "",
+            0,
+            json.dumps({"deterministic_ms": 1.6, "nlp_retrieval_ms": 2.8, "sample_data": True}),
+            1,
+            "In Review",
+            "Editorial & Brand Reviewer",
+            default_pillars,
+            4.4,
+            now,
+            now,
+        ),
+        (
+            "AUD-1005",
+            "novapay",
+            2,
+            "EMEA SEPA Instant Maintenance Notice (Sample data)",
+            "plain_text",
+            "Scheduled SEPA Instant corridor maintenance will occur this Sunday with updated settlement cut-off windows.",
+            "Scheduled SEPA Instant corridor maintenance will occur this Sunday with updated settlement cut-off windows.",
+            "",
+            "",
+            "",
+            0,
+            json.dumps({"deterministic_ms": 1.2, "nlp_retrieval_ms": 2.1, "sample_data": True}),
+            1,
+            "Approved",
+            "Editorial & Brand Reviewer",
+            default_pillars,
+            3.3,
+            now,
+            now,
+        ),
+        (
+            "AUD-1006",
+            "novapay",
+            2,
+            "CFO Quarterly Automation Executive Brief (Sample data)",
+            "markdown",
+            "# Quarterly Treasury Brief\n\nNovaPay Core streamlines multi-subsidiary cash pooling with role-based CFO sign-off.",
+            "# Quarterly Treasury Brief\n\nNovaPay Core streamlines multi-subsidiary cash pooling with role-based CFO sign-off.",
+            "",
+            "",
+            "",
+            0,
+            json.dumps({"deterministic_ms": 1.3, "nlp_retrieval_ms": 2.4, "sample_data": True}),
+            1,
+            "Approved",
+            "Editorial & Brand Reviewer",
+            default_pillars,
+            3.7,
+            now,
+            now,
+        ),
+    ]
+    cur.executemany(
+        """
+        INSERT OR IGNORE INTO audits (
+            id, brand_id, brand_version, document_name, input_format,
+            original_content, current_content, fg_color, bg_color,
+            image_alt_text, has_visual_asset, visual_metadata_json,
+            confidential_mode, overall_status, assigned_reviewer,
+            pillar_states_json, runtime_ms, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        extra_audits,
+    )
+
+    extra_findings = [
+        # RULE-TONE-02 findings (3 findings across sample audits, 2 overrides -> 66.7% > 20% -> High Priority)
+        (
+            "AUD-1003-F01", "AUD-1003", "Tone and Voice",
+            "Use an Appropriate Amount of Technical Detail", "medium",
+            "Use our payout API endpoints for T+0 multi-currency treasury sweeps",
+            "P1", 0, 66, "RULE-TONE-02",
+            "Rule RULE-TONE-02 requires an appropriate amount of technical detail.",
+            "Flagged under subjective technical-detail threshold in RULE-TONE-02.",
+            "Explain the primary business benefit in plain language before introducing API endpoint names.",
+            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            None, "dismissed", "Dismissed (sample data): API playbook targets integration engineers.", now,
+        ),
+        (
+            "AUD-1004-F01", "AUD-1004", "Tone and Voice",
+            "Use an Appropriate Amount of Technical Detail", "medium",
+            "Configure pacs.008 and camt.053 message schemas",
+            "P1", 0, 47, "RULE-TONE-02",
+            "Rule RULE-TONE-02 requires an appropriate amount of technical detail.",
+            "Flagged ISO 20022 schema identifiers as high technical density.",
+            "Define pacs.008 (Customer Credit Transfer) and camt.053 (Bank-to-Customer Statement) on first use.",
+            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            None, "accepted", "Define pacs.008 (Customer Credit Transfer) and camt.053 on first use.", now,
+        ),
+        (
+            "AUD-1005-F01", "AUD-1005", "Tone and Voice",
+            "Use an Appropriate Amount of Technical Detail", "medium",
+            "updated settlement cut-off windows",
+            "P1", 0, 34, "RULE-TONE-02",
+            "Rule RULE-TONE-02 requires an appropriate amount of technical detail.",
+            "Flagged under subjective technical-detail wording.",
+            "Specify exact UTC cut-off timestamps for each clearing corridor.",
+            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            None, "dismissed", "Dismissed (sample data): maintenance alert links to status table.", now,
+        ),
+        # RULE-TONE-03 findings (3 findings, 2 overrides -> 66.7% > 20% -> High Priority)
+        (
+            "AUD-1003-F02", "AUD-1003", "Tone and Voice",
+            "Keep Executive Summaries Reasonably Concise and Intuitive", "medium",
+            "multi-currency treasury sweeps across Singapore and Tokyo",
+            "P1", 0, 57, "RULE-TONE-03",
+            "Rule RULE-TONE-03 requires summaries to be reasonably concise and intuitive.",
+            "Subjective conciseness trigger on executive summary paragraph.",
+            "Keep executive summary paragraphs under 40 words with a 1-sentence takeaway.",
+            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            None, "dismissed", "Dismissed (sample data): 'reasonably concise' has no word count threshold.", now,
+        ),
+        (
+            "AUD-1004-F02", "AUD-1004", "Tone and Voice",
+            "Keep Executive Summaries Reasonably Concise and Intuitive", "medium",
+            "automated reconciliation rules",
+            "P1", 0, 30, "RULE-TONE-03",
+            "Rule RULE-TONE-03 requires summaries to be reasonably concise and intuitive.",
+            "Subjective intuitiveness check triggered.",
+            "State the reconciliation workflow in plain language before listing schema tags.",
+            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            None, "dismissed", "Dismissed (sample data): 'intuitive' is interpreted differently by reviewers.", now,
+        ),
+        (
+            "AUD-1006-F01", "AUD-1006", "Tone and Voice",
+            "Keep Executive Summaries Reasonably Concise and Intuitive", "medium",
+            "NovaPay Core streamlines multi-subsidiary cash pooling",
+            "P1", 0, 54, "RULE-TONE-03",
+            "Rule RULE-TONE-03 requires summaries to be reasonably concise and intuitive.",
+            "Summary phrasing reviewed for executive clarity.",
+            "Lead with measurable cash-visibility benefits for CFOs.",
+            "Tier 1: Configured Tone Pattern & Polarity Heuristic", "Tier 1: Deterministic Engine",
+            None, "accepted", "Lead with measurable cash-visibility benefits for CFOs.", now,
+        ),
+        # RULE-MSG-02 findings (5 findings, 1 override -> 20.0% <= 20% -> Medium Priority: Vague (low override rate))
+        (
+            "AUD-1003-F03", "AUD-1003", "Messaging",
+            "Provide Timely Corridor Maintenance Notices", "medium",
+            "T+0 multi-currency treasury sweeps",
+            "P1", 0, 34, "RULE-MSG-02",
+            "Rule RULE-MSG-02 requires timely notification and adequate explanation.",
+            "Maintenance notice lead-time not quantified in notice copy.",
+            "State explicit notice window (at least 14 calendar days prior to maintenance).",
+            "Tier 2: Messaging Principle Contradiction Check", "Tier 2: Embedded NLP Engine",
+            None, "accepted", "State 14-day advance notice window.", now,
+        ),
+        (
+            "AUD-1004-F03", "AUD-1004", "Messaging",
+            "Provide Timely Corridor Maintenance Notices", "medium",
+            "automated reconciliation rules",
+            "P1", 0, 30, "RULE-MSG-02",
+            "Rule RULE-MSG-02 requires timely notification and adequate explanation.",
+            "Cut-off schedule delta not specified.",
+            "Include UTC start/end timestamps for scheduled maintenance.",
+            "Tier 2: Messaging Principle Contradiction Check", "Tier 2: Embedded NLP Engine",
+            None, "accepted", "Include UTC start/end timestamps.", now,
+        ),
+        (
+            "AUD-1005-F02", "AUD-1005", "Messaging",
+            "Provide Timely Corridor Maintenance Notices", "medium",
+            "Scheduled SEPA Instant corridor maintenance will occur this Sunday",
+            "P1", 0, 66, "RULE-MSG-02",
+            "Rule RULE-MSG-02 requires timely notification and adequate explanation.",
+            "Phrase 'this Sunday' does not state how many days in advance notice was issued.",
+            "Provide notice at least 14 days in advance per SLA-2026-v3.",
+            "Tier 2: Messaging Principle Contradiction Check", "Tier 2: Embedded NLP Engine",
+            None, "dismissed", "Dismissed (sample data): 'timely' is not quantified in RULE-MSG-02.", now,
+        ),
+        (
+            "AUD-1005-F03", "AUD-1005", "Messaging",
+            "Provide Timely Corridor Maintenance Notices", "medium",
+            "updated settlement cut-off windows",
+            "P1", 0, 34, "RULE-MSG-02",
+            "Rule RULE-MSG-02 requires timely notification and adequate explanation.",
+            "Fee impact statement omitted.",
+            "Confirm that standard SEPA Instant fee schedules remain unchanged during maintenance.",
+            "Tier 2: Messaging Principle Contradiction Check", "Tier 2: Embedded NLP Engine",
+            None, "accepted", "Confirm fee schedules remain unchanged.", now,
+        ),
+        (
+            "AUD-1006-F02", "AUD-1006", "Messaging",
+            "Provide Timely Corridor Maintenance Notices", "medium",
+            "multi-subsidiary cash pooling",
+            "P1", 0, 29, "RULE-MSG-02",
+            "Rule RULE-MSG-02 requires timely notification and adequate explanation.",
+            "Settlement window notice period unspecified.",
+            "Reference the 14-day advance maintenance notification SLA.",
+            "Tier 2: Messaging Principle Contradiction Check", "Tier 2: Embedded NLP Engine",
+            None, "accepted", "Reference 14-day advance maintenance notification SLA.", now,
+        ),
+    ]
+    cur.executemany(
+        """
+        INSERT OR IGNORE INTO findings (
+            id, audit_id, pillar, issue_type, severity, flagged_text,
+            paragraph_ref, start_index, end_index, rule_or_fact_id,
+            source_evidence, explanation, suggested_correction, detection_method,
+            engine_source, similarity_score, review_state, decision_note, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        extra_findings,
+    )
+
+    # Ensure demo feedback rows exist without duplicating on repeated calls
+    cur.execute("SELECT COUNT(*) AS cnt FROM guideline_feedback WHERE finding_id LIKE 'AUD-100%-F%'")
+    if int(cur.fetchone()["cnt"] or 0) == 0:
+        extra_feedback = [
+            (
+                "novapay",
+                "RULE-TONE-03",
+                "AUD-1003",
+                "AUD-1003-F02",
+                "Sample data: 'reasonably concise' and 'intuitive' have no word-count or grade-level threshold, leading to inconsistent reviewer overrides.",
+                "Subjective qualifier ('reasonably concise', 'intuitive') without numeric limit",
+                "Recommended for Clarification",
+                now,
+            ),
+            (
+                "novapay",
+                "RULE-TONE-03",
+                "AUD-1004",
+                "AUD-1004-F02",
+                "Sample data: Technical datasheet readers expect protocol identifiers; 'suitable terminology where possible' is too vague to enforce consistently.",
+                "Subjective qualifier ('suitable', 'where possible') without channel threshold",
+                "Recommended for Clarification",
+                now,
+            ),
+            (
+                "novapay",
+                "RULE-MSG-02",
+                "AUD-1005",
+                "AUD-1005-F02",
+                "Sample data: Rule requires 'timely' notification and 'adequate' explanation without citing the 14-day SLA window.",
+                "Missing numeric lead-time threshold in guideline wording",
+                "Open",
+                now,
+            ),
+        ]
+        cur.executemany(
+            """
+            INSERT INTO guideline_feedback
+            (brand_id, rule_id, audit_id, finding_id, override_reason, suspected_cause, admin_review_state, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            extra_feedback,
+        )
 
 
 def reset_demo_workspace() -> None:

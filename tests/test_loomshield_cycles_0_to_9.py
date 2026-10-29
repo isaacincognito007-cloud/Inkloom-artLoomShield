@@ -21,10 +21,8 @@ from PIL import Image
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Cycle 0: Configure isolated SQLite test database before importing backend modules
+# (get_db_path() reads LOOMSHIELD_DB_PATH at call time; the module fixture below sets it via MonkeyPatch.)
 ISOLATED_TEST_DB = os.path.abspath(os.path.join(os.path.dirname(__file__), "test_loomshield_isolated.db"))
-os.environ["LOOMSHIELD_DB_PATH"] = ISOLATED_TEST_DB
-if "LOOMSHIELD_CLOUD_API_KEY" in os.environ:
-    del os.environ["LOOMSHIELD_CLOUD_API_KEY"]
 
 from backend.database import get_connection, get_db_path, init_db
 from backend.engine import (
@@ -41,11 +39,14 @@ from backend.main import app, get_brand_vault_bundle
 @pytest.fixture(scope="module", autouse=True)
 def isolated_test_environment():
     """Cycle 0: Prepare a repeatable, isolated test database and clean up after the suite."""
-    os.environ["LOOMSHIELD_DB_PATH"] = ISOLATED_TEST_DB
+    mp = pytest.MonkeyPatch()
+    mp.setenv("LOOMSHIELD_DB_PATH", ISOLATED_TEST_DB)
+    mp.delenv("LOOMSHIELD_CLOUD_API_KEY", raising=False)
     if os.path.exists(ISOLATED_TEST_DB):
         os.remove(ISOLATED_TEST_DB)
     init_db()
     yield
+    mp.undo()
     if os.path.exists(ISOLATED_TEST_DB):
         try:
             os.remove(ISOLATED_TEST_DB)
@@ -951,19 +952,13 @@ def test_cycle6_privacy_and_security_tests_1_to_7():
             "content": "NovaPay Core is compliant.",
         },
     ).json()
-    old_role = os.environ.get("LOOMSHIELD_USER_ROLE")
-    os.environ["LOOMSHIELD_USER_ROLE"] = "Content Creator"
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("LOOMSHIELD_USER_ROLE", "Content Creator")
         creator_approve = client.post(
             f"/api/audits/{aud['id']}/workflow",
             json={"new_state": "Approved", "comment": "Self-approving"},
         )
         assert creator_approve.status_code == 403
-    finally:
-        if old_role is None:
-            os.environ.pop("LOOMSHIELD_USER_ROLE", None)
-        else:
-            os.environ["LOOMSHIELD_USER_ROLE"] = old_role
 
 
 # ============================================================================
@@ -1136,16 +1131,10 @@ def test_saas_ui_remediation_checklist_p0_p1_p2():
     assert len(rerun_audit["revisions"]) >= 2
 
     # 5. Verify Demo Workspace Reset endpoint (POST /api/demo/reset) and Overview consistency
-    old_mode = os.environ.get("LOOMSHIELD_WORKSPACE_MODE")
-    os.environ["LOOMSHIELD_WORKSPACE_MODE"] = "demo"
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
         reset_res = client.post("/api/demo/reset")
         assert reset_res.status_code == 200
-    finally:
-        if old_mode is None:
-            os.environ.pop("LOOMSHIELD_WORKSPACE_MODE", None)
-        else:
-            os.environ["LOOMSHIELD_WORKSPACE_MODE"] = old_mode
     ov_res = client.get("/api/overview/novapay")
     assert ov_res.status_code == 200
     ov_data = ov_res.json()

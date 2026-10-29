@@ -386,6 +386,37 @@ def test_loomshield_ui_viewports_soft_glass_and_e2e_flow(live_server_url):
         if axe_js:
             assert len(_run_axe(page, axe_js)) == 0
 
+        # F11: Playwright check: rule text with <img src=x onerror=...> renders as text in Guideline insights
+        page.evaluate("""async () => {
+            const avaRes = await fetch('/api/demo/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: 'usr_ava' })
+            });
+            const avaTok = (await avaRes.json()).token;
+            await fetch('/api/vault/novapay/rules', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + avaTok
+                },
+                body: JSON.stringify({
+                    pillar: 'Tone and Voice',
+                    title: 'XSS Test Rule',
+                    description: 'Use an appropriate amount of technical detail <img src=x onerror=window.__xss_triggered=true>',
+                    severity: 'medium',
+                    do_example: '',
+                    dont_example: '',
+                    pattern_regex: ''
+                })
+            });
+            await renderAmbiguityRadarView();
+        }""")
+        page.wait_for_selector(".clarity-rewriter-box", state="visible", timeout=5000)
+        expect(page.locator("#ambiguityRadarContainer")).to_contain_text("<img src=x onerror=")
+        assert page.evaluate("document.querySelector('#ambiguityRadarContainer img[src=\"x\"]') === null")
+        assert page.evaluate("window.__xss_triggered === undefined")
+
         # Upload a synthetic SVG with a logo and text element to open the Heatmap Inspector in the workspace
         page.evaluate("""async () => {
             const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160"><title>Heatmap E2E Asset</title><rect x="0" y="0" width="240" height="160" fill="#FFFFFF"/><rect id="logo" data-loomshield-logo="true" x="24" y="24" width="60" height="30" fill="#17191C"/><text x="24" y="100" fill="#17191C" font-size="16">Compliant SVG Text</text></svg>';

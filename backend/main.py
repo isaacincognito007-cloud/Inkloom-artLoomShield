@@ -59,10 +59,12 @@ from .database import (
     reset_demo_workspace,
 )
 from .engine import (
+    ImageTooLargeError,
     get_engine_status,
     inspect_raster_image,
     is_valid_hex,
     parse_uploaded_file,
+    probe_and_decode_raster_image,
     run_engine_selftest,
     run_six_pillar_audit,
 )
@@ -169,6 +171,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# F2: multipart form fields are parsed (and spooled) by Starlette before the route handler runs, so the
+# in-handler chunked read alone cannot stop a large body from being received. Reject declared oversize
+# bodies on the upload route up-front from Content-Length. MULTIPART_OVERHEAD_ALLOWANCE covers the form
+# fields and multipart boundaries around a file of at most 5 MB.
+UPLOAD_ROUTE_PATHS = ("/api/audits/upload",)
+MULTIPART_OVERHEAD_ALLOWANCE = 64 * 1024
+
+
+@app.middleware("http")
+async def upload_size_guard_middleware(request: Request, call_next):
+    if request.method == "POST" and request.url.path in UPLOAD_ROUTE_PATHS:
+        declared = request.headers.get("content-length", "").strip()
+        if declared.isdigit() and int(declared) > (5 * 1024 * 1024) + MULTIPART_OVERHEAD_ALLOWANCE:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "BAD_REQUEST", "message": "File size exceeds the 5 MB safety limit."}, "detail": "File size exceeds the 5 MB safety limit."},
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -823,37 +845,41 @@ def get_overview_dashboard(brand_id: str):
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ?", (brand_id,))
+    # F6: demo-only sample audits never count towards a non-demo overview.
+    demo_filter = "" if is_demo_mode() else " AND id NOT IN ('AUD-1003', 'AUD-1004', 'AUD-1005', 'AUD-1006')"
+    demo_join_filter = "" if is_demo_mode() else " AND a.id NOT IN ('AUD-1003', 'AUD-1004', 'AUD-1005', 'AUD-1006')"
+
+    cur.execute(f"SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ?{demo_filter}", (brand_id,))
     docs_audited = int(cur.fetchone()["cnt"])
 
     cur.execute(
-        """
+        f"""
         SELECT COUNT(*) AS cnt
         FROM findings f
         JOIN audits a ON f.audit_id = a.id
-        WHERE a.brand_id = ? AND f.review_state IN ('open', 'needs_review')
+        WHERE a.brand_id = ? AND f.review_state IN ('open', 'needs_review'){demo_join_filter}
         """,
         (brand_id,),
     )
     findings_requiring_attention = int(cur.fetchone()["cnt"])
 
     cur.execute(
-        "SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ? AND overall_status = 'Approved'",
+        f"SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ? AND overall_status = 'Approved'{demo_filter}",
         (brand_id,),
     )
     approved_content = int(cur.fetchone()["cnt"])
 
     cur.execute(
-        "SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ? AND overall_status != 'Approved'",
+        f"SELECT COUNT(*) AS cnt FROM audits WHERE brand_id = ? AND overall_status != 'Approved'{demo_filter}",
         (brand_id,),
     )
     awaiting_review = int(cur.fetchone()["cnt"])
 
     cur.execute(
-        """
+        f"""
         SELECT COUNT(DISTINCT a.id) AS cnt
         FROM audits a JOIN findings f ON f.audit_id = a.id
-        WHERE a.brand_id = ? AND f.review_state IN ('open', 'needs_review')
+        WHERE a.brand_id = ? AND f.review_state IN ('open', 'needs_review'){demo_join_filter}
         """,
         (brand_id,),
     )
@@ -1393,6 +1419,30 @@ def create_and_run_audit(
     return get_audit_detail(audit_id)
 
 
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 64 * 1024
+
+
+async def _read_upload_in_chunks(
+    upload_file: UploadFile,
+    max_bytes: int = MAX_UPLOAD_BYTES,
+    chunk_size: int = UPLOAD_CHUNK_BYTES,
+) -> bytes:
+    """F2: Read uploaded stream in chunks and abort at 5 MB + 1 byte without buffering the remaining body."""
+    chunks: List[bytes] = []
+    total_read = 0
+    while True:
+        # Never request more than (max_bytes + 1 - total_read), so the abort happens exactly at 5 MB + 1 byte.
+        chunk = await upload_file.read(min(chunk_size, max_bytes + 1 - total_read))
+        if not chunk:
+            break
+        total_read += len(chunk)
+        if total_read > max_bytes:
+            raise HTTPException(status_code=400, detail="File size exceeds the 5 MB safety limit.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @app.post("/api/audits/upload")
 async def create_audit_from_upload(
     request: Request,
@@ -1413,9 +1463,7 @@ async def create_audit_from_upload(
     client_ip = get_client_ip(request)
     if not audit_rate_limiter.is_allowed(client_ip):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a moment before uploading another file.")
-    raw_bytes = await file.read()
-    if len(raw_bytes) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File size exceeds the 5 MB safety limit.")
+    raw_bytes = await _read_upload_in_chunks(file)
 
     raw_fname = (file.filename or "uploaded_file").replace("\\", "/")
     fname = os.path.basename(raw_fname).replace("..", "") or "uploaded_file"
@@ -1436,7 +1484,14 @@ async def create_audit_from_upload(
                 parsed_text_regions = json.loads(text_regions)
             except Exception:
                 parsed_text_regions = None
-        legacy_vis = inspect_raster_image(raw_bytes, vault["colors"])
+        try:
+            shared_rgba = probe_and_decode_raster_image(raw_bytes)
+        except ImageTooLargeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception:
+            shared_rgba = None
+
+        legacy_vis = inspect_raster_image(raw_bytes, vault["colors"], decoded_image=shared_rgba)
         vis_info = inspect_visual_heatmap(
             raw_bytes,
             vault["colors"],
@@ -1446,6 +1501,7 @@ async def create_audit_from_upload(
             logo_only=logo_only,
             logo_rect=parsed_logo_rect,
             text_regions=parsed_text_regions,
+            decoded_image=shared_rgba,
         )
         if vis_info.get("inspect_ok"):
             vis_info["swatches"] = legacy_vis.get("swatches", [])
@@ -2948,9 +3004,38 @@ def _execute_approve_revision(
         if not r_row:
             raise HTTPException(status_code=404, detail=f"Rule '{rule_id}' not found in brand '{brand_id}'.")
 
+        # F5: Stale-proposal guard. If the rule wording changed after this revision was proposed,
+        # approving would silently overwrite a newer edit.
+        current_desc = str(r_row["description"] or "").strip()
+        proposed_old = str(rev.get("old_text") or "").strip()
+        if current_desc != proposed_old:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Rule '{rule_id}' has changed since revision '{revision_id}' was proposed. "
+                    "Reject this revision and propose a new one against the current wording."
+                ),
+            )
+
         cur.execute("SELECT version FROM brands WHERE id = ?", (brand_id,))
         b_row = cur.fetchone()
         old_brand_ver = int(b_row["version"]) if b_row else 1
+
+        # F5: Atomic status transition. Only one caller can move a revision out of 'proposed';
+        # a concurrent or repeated approval sees rowcount 0 and gets a 409 (transaction rolls back).
+        cur.execute(
+            """
+            UPDATE guideline_revisions
+            SET brand_id = ?, status = 'approved', decided_by = ?, decided_at = ?
+            WHERE id = ? AND status = 'proposed'
+            """,
+            (brand_id, decider_name, now, revision_id),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Guideline revision '{revision_id}' is no longer 'proposed' and cannot be approved.",
+            )
 
         do_list = rev.get("do_examples") or []
         dont_list = rev.get("dont_examples") or []
@@ -2970,11 +3055,10 @@ def _execute_approve_revision(
         cur.execute(
             """
             UPDATE guideline_revisions
-            SET brand_id = ?, status = 'approved', decided_by = ?, decided_at = ?,
-                brand_version_before = ?, brand_version_after = ?
-            WHERE id = ?
+            SET brand_version_before = ?, brand_version_after = ?
+            WHERE id = ? AND status = 'approved'
             """,
-            (brand_id, decider_name, now, old_brand_ver, new_brand_ver, revision_id),
+            (old_brand_ver, new_brand_ver, revision_id),
         )
 
         cur.execute(
@@ -3107,10 +3191,15 @@ def reject_guideline_revision(
             UPDATE guideline_revisions
             SET brand_id = ?, status = 'rejected', rejection_reason = ?, decided_by = ?, decided_at = ?,
                 brand_version_after = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'proposed'
             """,
             (brand_id, reason_str, decider_name, now, curr_brand_ver, revision_id),
         )
+        if cur.rowcount != 1:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Guideline revision '{revision_id}' is no longer 'proposed' and cannot be rejected.",
+            )
         cur.execute("SELECT * FROM guideline_revisions WHERE id = ?", (revision_id,))
         updated_rev = _hydrate_revision_row(dict(cur.fetchone()))
 
@@ -3125,10 +3214,15 @@ def reject_guideline_revision(
 
 @app.post("/api/audits/{audit_id}/heatmap")
 def update_audit_heatmap_inspector(
+    request: Request,
     audit_id: str,
     req: HeatmapInspectUpdateRequest,
     actor: Dict[str, str] = Depends(current_actor),
 ):
+    require_permission(actor["role"], "run_audits", "Your role is not authorized to run heatmap inspections")
+    client_ip = get_client_ip(request)
+    if not audit_rate_limiter.is_allowed(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a moment before running another inspection.")
     detail = get_audit_detail(audit_id)
     vault = get_brand_vault_bundle(detail["brand_id"])
 
@@ -3146,6 +3240,8 @@ def update_audit_heatmap_inspector(
 
     if not raw_bytes:
         raise HTTPException(status_code=400, detail="No visual raster or SVG asset is stored on this audit for heatmap inspection.")
+    if len(raw_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="File size exceeds the 5 MB safety limit.")
 
     hm_vis = inspect_visual_heatmap(
         raw_bytes=raw_bytes,
@@ -3157,6 +3253,8 @@ def update_audit_heatmap_inspector(
         logo_rect=req.logo_rect,
         text_regions=req.text_regions,
     )
+    if hm_vis.get("too_large"):
+        raise HTTPException(status_code=400, detail=hm_vis.get("error", "Image exceeds the 25 megapixel limit."))
     old_meta = detail.get("visual_metadata") or {}
     for k in ("swatches", "off_palette_swatches", "has_transparency", "all_transparent", "limitation_note"):
         if k in old_meta and k not in hm_vis:
@@ -3177,142 +3275,10 @@ def update_audit_heatmap_inspector(
     }
 
 
-@app.post("/api/heatmap/inspect")
-async def standalone_heatmap_inspect(
-    brand_id: str = Form("novapay"),
-    grid_size: int = Form(4),
-    logo_only: bool = Form(False),
-    logo_rect: str = Form(""),
-    text_regions: str = Form(""),
-    file: UploadFile = File(...),
-):
-    raw_bytes = await file.read()
-    if len(raw_bytes) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File size exceeds the 5 MB safety limit.")
-    vault = get_brand_vault_bundle(brand_id)
-    parsed_logo_rect = None
-    if logo_rect and logo_rect.strip():
-        try:
-            parsed_logo_rect = json.loads(logo_rect)
-        except Exception:
-            parsed_logo_rect = None
-    parsed_text_regions = None
-    if text_regions and text_regions.strip():
-        try:
-            parsed_text_regions = json.loads(text_regions)
-        except Exception:
-            parsed_text_regions = None
-    return inspect_visual_heatmap(
-        raw_bytes=raw_bytes,
-        brand_colors=vault["colors"],
-        brand=vault["brand"],
-        filename=file.filename or "asset.png",
-        grid_size=grid_size,
-        logo_only=logo_only,
-        logo_rect=parsed_logo_rect,
-        text_regions=parsed_text_regions,
-    )
-def _legacy_get_ambiguity_radar_unused(brand_id: str):
-    vault = get_brand_vault_bundle(brand_id)
-    conn = get_connection()
-    cur = conn.cursor()
-
-    radar_rows = []
-    for r in vault["rules"]:
-        cur.execute(
-            """
-            SELECT COUNT(*) AS cnt FROM findings f
-            JOIN audits a ON f.audit_id = a.id
-            WHERE a.brand_id = ? AND f.rule_or_fact_id LIKE ?
-            """,
-            (brand_id, f"%{r['id']}%"),
-        )
-        v_cnt = int(cur.fetchone()["cnt"] or 0)
-
-        cur.execute(
-            "SELECT * FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? ORDER BY id DESC",
-            (brand_id, r["id"]),
-        )
-        fb_rows = [dict(x) for x in cur.fetchall()]
-        o_cnt = len(fb_rows)
-
-        # Detect subjective qualifiers in rule text
-        vague_matches = re.findall(
-            r"\b(?:appropriate\s+amount|reasonably|when\s+appropriate|where\s+suitable|generally)\b",
-            f"{r['title']} {r['description']}",
-            re.IGNORECASE,
-        )
-        potential_causes = []
-        if vague_matches:
-            potential_causes.append(f"Subjective wording in guideline ({', '.join(set(vague_matches))})")
-        for fb in fb_rows[:3]:
-            if fb["suspected_cause"] not in potential_causes:
-                potential_causes.append(fb["suspected_cause"])
-
-        recommendation_status = (
-            "Recommended for Review"
-            if (o_cnt >= 2 or len(vague_matches) > 0)
-            else ("Monitor" if o_cnt == 1 else "No Action Needed")
-        )
-
-        likely_signal = (
-            "Subjective qualifier & recurring overrides"
-            if (o_cnt >= 2 and len(vague_matches) > 0)
-            else (
-                "Recurring reviewer overrides"
-                if o_cnt >= 2
-                else (
-                    "Channel-length exception logged"
-                    if o_cnt == 1
-                    else ("Subjective qualifier detected" if len(vague_matches) > 0 else "Consistent enforcement")
-                )
-            )
-        )
-        next_action = (
-            "Review wording in Brand Vault"
-            if recommendation_status == "Recommended for Review"
-            else ("Monitor channel exceptions" if recommendation_status == "Monitor" else "Keep current rule")
-        )
-
-        suggested_clarification = ""
-        if r["id"] == "RULE-TONE-02":
-            suggested_clarification = (
-                "Explain the primary business benefit in plain language before introducing specialist terminology. "
-                "Define protocol acronyms on first use."
-            )
-        elif r["id"] == "RULE-MSG-01":
-            suggested_clarification = (
-                "Require the human-approval guardrail clause in body copy exceeding 30 words; "
-                "exempt short display headlines (<15 words) provided they do not claim 'zero human oversight'."
-            )
-
-        radar_rows.append({
-            "rule_id": r["id"],
-            "pillar": r["pillar"],
-            "title": r["title"],
-            "description": r["description"],
-            "version": r["version"],
-            "violations_recorded": v_cnt,
-            "overrides_recorded": o_cnt,
-            "likely_signal": likely_signal,
-            "next_action": next_action,
-            "potential_causes": potential_causes or ["No recurring override pattern observed yet"],
-            "recorded_feedback": fb_rows,
-            "recommendation_status": recommendation_status,
-            "suggested_clarification": suggested_clarification,
-        })
-
-    conn.close()
-    return {
-        "brand_id": brand_id,
-        "concise_info_note": "Frequent overrides are a signal to review a rule, not proof it is incorrect.",
-        "honest_scope_note": (
-            "Frequent overrides do not automatically prove a rule is defective; potential causes include "
-            "missing channel context, legitimate exceptions, or overly broad detection patterns. "
-            "All rule revisions require explicit Brand Administrator inspection."
-        ),
-        "rules_analysis": radar_rows,
-    }
+# F3: The standalone POST /api/heatmap/inspect route was removed. The UI never called it (heatmap
+# inspection runs through POST /api/audits/upload and POST /api/audits/{audit_id}/heatmap), and it had
+# no permission check or rate limit.
+# F11: _legacy_get_ambiguity_radar_unused was deleted (superseded by get_ambiguity_radar).
 
 
 # ============================================================================
