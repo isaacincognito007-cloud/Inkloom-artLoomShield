@@ -422,13 +422,15 @@ def parse_uploaded_file(filename: str, raw_bytes: bytes) -> Dict[str, Any]:
                 "page_spans": [],
             }
 
-        if len(raw_bytes) > 5 * 1024 * 1024:
+        max_upload_mb = int(os.environ.get("LOOMSHIELD_MAX_UPLOAD_MB", "25" if os.environ.get("RENDER") else "5"))
+        max_upload_bytes = max_upload_mb * 1024 * 1024
+        if len(raw_bytes) > max_upload_bytes:
             return {
                 "parse_ok": False,
                 "input_format": "pdf",
                 "extracted_text": "",
                 "structural_findings": [],
-                "error": f"PDF file size ({len(raw_bytes)} bytes) exceeds the 5 MB safety limit.",
+                "error": f"PDF file size ({len(raw_bytes)} bytes) exceeds the {max_upload_mb} MB safety limit.",
                 "page_count": 0,
                 "page_spans": [],
             }
@@ -1573,6 +1575,56 @@ def run_six_pillar_audit(
                     "review_state": "open",
                 })
                 vis_findings_count += 1
+
+        # Typography & Font Family Rule Enforcement
+        typo_specs = (brand.get("typography_specs") or "").strip()
+        if visual_inspection and isinstance(visual_inspection.get("text_elements"), list):
+            for tel in visual_inspection["text_elements"]:
+                ff = (tel.get("font_family") or "").strip().lower()
+                fs = tel.get("font_size")
+                t_txt = tel.get("text", "")
+                el_id = tel.get("id") or "svg-text"
+                prohibited_fonts = ["comic sans", "papyrus", "curlz", "impact"]
+                if any(pf in ff for pf in prohibited_fonts):
+                    findings.append({
+                        "id": next_finding_id(),
+                        "pillar": "Visual and Logo Consistency",
+                        "issue_type": "Prohibited Font Family Detected",
+                        "severity": "medium",
+                        "flagged_text": f"font-family='{tel.get('font_family')}' on '{t_txt[:30]}'",
+                        "paragraph_ref": el_id,
+                        "start_index": -1,
+                        "end_index": -1,
+                        "rule_or_fact_id": "RULE-TYPO-01",
+                        "source_evidence": f"Brand typography specifies: {typo_specs}",
+                        "explanation": f"Element uses prohibited non-brand font family '{tel.get('font_family')}'. Approved brand typography: {typo_specs}.",
+                        "suggested_correction": "Inter, system-ui, sans-serif",
+                        "detection_method": "Tier 1: SVG Typography Attribute Verification",
+                        "engine_source": "Tier 1: Deterministic Engine",
+                        "similarity_score": None,
+                        "review_state": "open",
+                    })
+                    vis_findings_count += 1
+                if fs is not None and fs < 9.0 and t_txt:
+                    findings.append({
+                        "id": next_finding_id(),
+                        "pillar": "Visual and Logo Consistency",
+                        "issue_type": "Sub-Threshold Font Size (Legibility Risk)",
+                        "severity": "low",
+                        "flagged_text": f"font-size='{fs}px' on '{t_txt[:30]}'",
+                        "paragraph_ref": el_id,
+                        "start_index": -1,
+                        "end_index": -1,
+                        "rule_or_fact_id": "RULE-TYPO-02",
+                        "source_evidence": "Minimum legible text size for digital brand assets is 9px.",
+                        "explanation": f"Text size of {fs}px is below the 9px minimum legibility threshold.",
+                        "suggested_correction": "12px",
+                        "detection_method": "Tier 1: SVG Font Size Evaluation",
+                        "engine_source": "Tier 1: Deterministic Engine",
+                        "similarity_score": None,
+                        "review_state": "open",
+                    })
+                    vis_findings_count += 1
 
         if vis_findings_count > 0:
             pillar_states["Visual and Logo Consistency"] = "Findings"

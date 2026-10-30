@@ -546,6 +546,10 @@ def _parse_svg_for_heatmap(raw_svg: str) -> Dict[str, Any]:
             ):
                 effective_bg = rfill
 
+        raw_font = _extract_style_prop(t_el, "font-family") or t_el.get("font-family") or ""
+        font_sz_str = _extract_style_prop(t_el, "font-size") or t_el.get("font-size") or ""
+        font_sz = _parse_svg_length(font_sz_str, 16.0) if font_sz_str else None
+
         text_elements.append({
             "id": t_el.get("id") or f"svg-text-{idx}",
             "text": txt_str,
@@ -556,6 +560,8 @@ def _parse_svg_for_heatmap(raw_svg: str) -> Dict[str, Any]:
             "y": round(tbbox[1], 2),
             "width": round(tbbox[2], 2),
             "height": round(tbbox[3], 2),
+            "font_family": str(raw_font).strip(),
+            "font_size": font_sz,
             "source": "svg_text",
         })
 

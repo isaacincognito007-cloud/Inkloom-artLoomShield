@@ -4,7 +4,9 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Generator
+from typing import Any, Dict, Generator, List, Optional
+import contextvars
+import re
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "loomshield.db")
 DEMO_DB_PATH = os.path.join(os.path.dirname(__file__), "loomshield_demo.db")
@@ -18,16 +20,55 @@ def _should_seed_workspace() -> bool:
     return _is_demo_mode() or "test" in os.path.basename(get_db_path()).lower() or bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
-def get_db_path() -> str:
-    """Production and the sample (demo) workspace always use separate database files."""
+_SESSION_ID_CTX: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("loomshield_session_id", default=None)
+
+
+def set_current_session_id(session_id: Optional[str]) -> None:
+    """Set the active per-visitor session identifier for SQLite isolation."""
+    _SESSION_ID_CTX.set(session_id)
+
+
+def get_current_session_id() -> Optional[str]:
+    """Get the active per-visitor session identifier."""
+    return _SESSION_ID_CTX.get()
+
+
+def _init_isolated_session_db(sess_db_path: str) -> None:
+    """Initialize an isolated per-visitor demo database with complete tables and sample workspace."""
+    conn = sqlite3.connect(sess_db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    init_db(conn=conn)
+    conn.close()
+
+
+def get_db_path(session_id: Optional[str] = None) -> str:
+    """Production and the sample (demo) workspace always use separate database files.
+    
+    In demo workspace mode, requests carrying a visitor session ID (via X-LoomShield-Session
+    or session_id query param) are dynamically routed to isolated session databases.
+    """
+    target_sess = session_id or get_current_session_id()
+    if target_sess and (_is_demo_mode() or bool(os.environ.get("PYTEST_CURRENT_TEST"))):
+        safe_sess = re.sub(r"[^a-zA-Z0-9_\-]", "", target_sess)[:64]
+        if safe_sess:
+            override = os.environ.get("LOOMSHIELD_DB_PATH")
+            base_dir = os.path.dirname(override) if override else os.path.join(os.path.dirname(__file__), "sessions")
+            os.makedirs(base_dir, exist_ok=True)
+            sess_db = os.path.join(base_dir, f"sess_{safe_sess}.db")
+            if not os.path.exists(sess_db):
+                _init_isolated_session_db(sess_db)
+            return sess_db
+
     override = os.environ.get("LOOMSHIELD_DB_PATH")
     if override:
         return override
+
     return DEMO_DB_PATH if _is_demo_mode() else DB_PATH
 
 
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(get_db_path())
+def get_connection(session_id: Optional[str] = None) -> sqlite3.Connection:
+    conn = sqlite3.connect(get_db_path(session_id=session_id))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
@@ -125,8 +166,11 @@ def _ensure_column(cur: sqlite3.Cursor, table: str, column: str, col_def: str) -
 
 
 
-def init_db() -> None:
-    conn = get_connection()
+def init_db(conn: Optional[sqlite3.Connection] = None) -> None:
+    should_close = False
+    if conn is None:
+        conn = get_connection()
+        should_close = True
     cur = conn.cursor()
 
     cur.executescript(
@@ -428,13 +472,15 @@ def init_db() -> None:
     # G1: A fresh clone creates and seeds the default Brand Vault workspace on first start in demo and production mode.
     cur.execute("SELECT COUNT(*) AS cnt FROM brands")
     if cur.fetchone()["cnt"] == 0:
-        seed_default_workspace(cur)
+        if not restore_database_snapshot(conn=conn):
+            seed_default_workspace(cur)
     if _is_demo_mode():
         # F6: idempotent top-up of demo-only sample data (INSERT OR IGNORE).
         ensure_demo_sample_data(cur)
 
     conn.commit()
-    conn.close()
+    if should_close:
+        conn.close()
 
 
 def record_audit_event(
@@ -1613,3 +1659,346 @@ def reset_demo_workspace() -> None:
     seed_default_workspace(cur)
     conn.commit()
     conn.close()
+
+
+TABLES_FOR_SNAPSHOT = [
+    "brands",
+    "brand_colors",
+    "rules",
+    "guideline_revisions",
+    "terminology",
+    "verified_facts",
+    "audits",
+    "findings",
+    "revisions",
+    "review_decisions",
+    "approvals",
+    "guideline_feedback",
+    "certificates",
+    "certificate_revocations",
+    "audit_events",
+]
+
+
+def export_database_snapshot(snapshot_path: Optional[str] = None, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
+    """Serializes core database tables to JSON to survive redeploys on ephemeral hosting."""
+    path = snapshot_path or os.path.join(os.path.dirname(__file__), "db_snapshot.json")
+    should_close = False
+    if conn is None:
+        conn = get_connection()
+        should_close = True
+    try:
+        cur = conn.cursor()
+        snapshot_data: Dict[str, Any] = {
+            "version": 1,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "tables": {},
+        }
+        for tbl in TABLES_FOR_SNAPSHOT:
+            try:
+                cur.execute(f"SELECT * FROM {tbl}")
+                cols = [desc[0] for desc in cur.description] if cur.description else []
+                rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+                snapshot_data["tables"][tbl] = rows
+            except sqlite3.OperationalError:
+                snapshot_data["tables"][tbl] = []
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(snapshot_data, f, indent=2, sort_keys=True)
+        return snapshot_data
+    finally:
+        if should_close:
+            conn.close()
+
+
+def restore_database_snapshot(snapshot_path: Optional[str] = None, conn: Optional[sqlite3.Connection] = None) -> bool:
+    """Restores database tables from JSON snapshot if database is empty on container startup."""
+    path = snapshot_path or os.path.join(os.path.dirname(__file__), "db_snapshot.json")
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            snapshot_data = json.load(f)
+    except Exception as exc:
+        print("RESTORE ERROR:", repr(exc))
+        return False
+
+    tables = snapshot_data.get("tables", {})
+    if not tables:
+        return False
+
+    should_close = False
+    if conn is None:
+        conn = get_connection()
+        should_close = True
+    try:
+        cur = conn.cursor()
+        conn.execute("PRAGMA foreign_keys = OFF;")
+        for tbl in TABLES_FOR_SNAPSHOT:
+            rows = tables.get(tbl, [])
+            if not rows:
+                continue
+            cols = list(rows[0].keys())
+            placeholders = ", ".join(["?"] * len(cols))
+            col_names = ", ".join(cols)
+            sql = f"INSERT OR REPLACE INTO {tbl} ({col_names}) VALUES ({placeholders})"
+            for r in rows:
+                cur.execute(sql, [r[c] for c in cols])
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return True
+    except Exception as exc:
+        return False
+    finally:
+        if should_close:
+            conn.close()
+
+
+# ============================================================================
+# PRE-BAKED BRAND PRESETS (Round 1 Commitment Taxonomy)
+# ============================================================================
+
+BRAND_PRESETS: Dict[str, Dict[str, Any]] = {
+    "novapay": {
+        "brand": {
+            "id": "novapay",
+            "name": "NovaPay Enterprise",
+            "industry": "B2B Treasury & Cross-Border Settlement",
+            "description": "Institutional settlement and treasury automation platform for regulated enterprises.",
+            "tone_principles": "Calm, evidence-backed, precise, and transparent. Avoid alarmist urgency, panic-inducing claims, or unverified superlatives.",
+            "writing_style": "Use clear active prose. Define technical terms on first use. Keep sentences direct and accessible.",
+            "messaging_principles": "Every automation claim must acknowledge configurable human approval controls and institutional compliance boundaries.",
+            "do_examples": json.dumps([
+                "NovaPay Core delivers up to 64% faster settlement under the conditions stated in the Q3 benchmark report.",
+                "Automate recurring vendor payouts with role-based CFO sign-off above configured thresholds."
+            ]),
+            "dont_examples": json.dumps([
+                "Our platform guarantees 95% faster processing with zero latency!",
+                "Legacy banks are destroying your margins—fire your finance ops team today!"
+            ]),
+            "typography_specs": "Primary UI & Headings: Inter / Geist (600-700 weight). Body: Inter (400-500 weight, 14-16px).",
+            "spacing_rules": "Maintain minimum 16px clear space around the primary wordmark on digital banners and 8px base grid alignment.",
+            "logo_placement_constraints": "Place primary wordmark in top-left or bottom-left lockup zones; never stretch, skew, or place over low-contrast busy imagery.",
+            "min_contrast_normal": 4.5,
+            "min_contrast_large": 3.0,
+            "require_alt_text": 1,
+            "enforce_heading_order": 1,
+            "target_reading_ease": 50.0,
+            "version": 2,
+        },
+        "colors": [
+            ("COL-01", "novapay", "Primary Charcoal", "#17191C", "Primary Brand Surface & Typography", 12.0),
+            ("COL-02", "novapay", "Signal Accent Orange", "#EA633F", "Primary Interactive Accent & Highlights", 14.0),
+            ("COL-03", "novapay", "Compliance Emerald", "#188568", "Verified & Passed Status", 14.0),
+            ("COL-04", "novapay", "Workspace Surface", "#F7F8FA", "Light Background Surface", 10.0),
+            ("COL-05", "novapay", "Institutional Slate", "#202124", "Body Copy Typography", 12.0),
+        ],
+        "rules": [
+            ("RULE-TONE-01", "novapay", "Tone and Voice", "Prohibit Alarmist or Fear-Mongering Language", "Marketing content must not use alarmist phrasing, panic-inducing rhetoric, or sensationalist exclamations to pressure buyers.", json.dumps({"patterns": [r"\b(?:crush(?:ing|es)?|destroy(?:ing|s)?|catastroph(?:e|ic)|disaster|panic|obsolete|death sentence)\b"]}), "high", "Transition legacy systems predictably with managed cutover schedules.", "Legacy payment infrastructure will destroy your business within six months!", 1, 1, "2026-01-01T00:00:00Z"),
+            ("RULE-CLAIM-01", "novapay", "Promotional Claims", "Substantiate Promotional, Superlative & Numerical Claims Against Verified Facts", "All numerical claims, speed comparisons, uptime figures, and fee statements must match a Verified Fact in the Brand Vault and include applicable conditions.", json.dumps({"source": "verified_facts"}), "high", "NovaPay Core achieves up to 64% faster settlement for EUR/USD corridors under standard SLA terms.", "Our platform delivers 10x faster settlement with zero latency or fees across the globe!", 1, 1, "2026-01-01T00:00:00Z"),
+        ],
+        "facts": [
+            ("FACT-101", "novapay", "Processing and cross-border settlement is up to 64% faster under the conditions stated in the approved performance report.", "64", "% faster", "NovaPay Core settlement & processing speed", "NovaPay Q3 2026 Institutional Performance Report, Section 2.4", "Measured across 42 supported clearing corridors compared to legacy correspondent SWIFT baselines.", "2026-Q3", "Verified", "2026-01-01T00:00:00Z"),
+        ],
+    },
+    "verdant": {
+        "brand": {
+            "id": "verdant",
+            "name": "Verdant Clinical Systems",
+            "industry": "Healthcare Diagnostic Decision Support",
+            "description": "Clinician-assisted radiology triage and workflow prioritization software.",
+            "tone_principles": "Empathetic, clinically objective, cautious, and human-centered. Never imply autonomous medical diagnosis.",
+            "writing_style": "Plain clinical English with explicit study citations and sample conditions.",
+            "messaging_principles": "Always emphasize that software outputs assist board-certified clinicians rather than replacing medical judgment.",
+            "do_examples": json.dumps([
+                "Verdant Triage Assist demonstrated 94.2% sensitivity in assisting radiologists across 18,400 chest radiographs."
+            ]),
+            "dont_examples": json.dumps([
+                "Verdant AI guarantees 100% diagnostic accuracy and replaces radiologists."
+            ]),
+            "typography_specs": "Headings: Inter SemiBold. Body: Inter Regular (minimum 14px).",
+            "spacing_rules": "Minimum clear space equal to the cap-height of the 'V' mark around all sides.",
+            "logo_placement_constraints": "Use horizontal lockup on clinical reports; never overlay on low-contrast scan regions.",
+            "min_contrast_normal": 4.5,
+            "min_contrast_large": 3.0,
+            "require_alt_text": 1,
+            "enforce_heading_order": 1,
+            "target_reading_ease": 45.0,
+            "version": 1,
+        },
+        "colors": [
+            ("COL-06", "verdant", "Clinical Teal", "#188568", "Primary Clinical Accent", 14.0),
+            ("COL-07", "verdant", "Deep Charcoal", "#17191C", "Primary Text", 12.0),
+        ],
+        "rules": [
+            ("RULE-VRD-TONE-01", "verdant", "Tone and Voice", "Prohibit Autonomous Diagnosis Assertions", "Never claim software autonomously diagnoses patient pathology without physician review.", json.dumps({"patterns": [r"\b(?:autonomous diagnosis|replaces radiologists|100% cure)\b"]}), "high", "Assists radiologists in prioritizing critical findings.", "Replaces hospital radiologists with automated instant diagnosis.", 1, 1, "2026-01-01T00:00:00Z"),
+        ],
+        "facts": [
+            ("FACT-VRD-01", "verdant", "Verdant Triage Assist demonstrated 94.2% sensitivity in assisting radiologists across 18,400 chest radiographs under IRB study #8491.", "94.2", "% sensitivity", "Chest radiograph triage assist", "Journal of Clinical Imaging 2025, Vol 42", "Assisting board-certified radiologists", "2025-Q1", "Verified", "2026-01-01T00:00:00Z"),
+        ],
+    },
+    "acmecorp": {
+        "brand": {
+            "id": "acmecorp",
+            "name": "Acme Cloud Infrastructure",
+            "industry": "Cloud Infrastructure & DevOps",
+            "description": "High-reliability distributed container execution and serverless orchestration platform for enterprise engineering.",
+            "tone_principles": "Engineering-first, precise, metrics-driven, and transparent. Avoid unbacked marketing superlatives.",
+            "writing_style": "Concise technical English with benchmark parameters and reproducible system requirements.",
+            "messaging_principles": "All SLA and latency claims must specify measurement percentiles and network topologies.",
+            "do_examples": json.dumps([
+                "Acme Mesh achieves sub-5ms packet routing under VPC benchmark conditions with 99.999% SLA on enterprise plans."
+            ]),
+            "dont_examples": json.dumps([
+                "Acme is infinitely fast and cheaper than all other cloud providers combined!"
+            ]),
+            "typography_specs": "Headings: JetBrains Mono / Inter (600-700 weight). Body: Inter / system-ui (400-500 weight, 14-16px).",
+            "spacing_rules": "Maintain minimum 24px clear space around Acme wordmark; minimum 12px padding between layout cards.",
+            "logo_placement_constraints": "Top-left header navigation or centered footer banner. Never invert logo colors on dark backgrounds.",
+            "min_contrast_normal": 4.5,
+            "min_contrast_large": 3.0,
+            "require_alt_text": 1,
+            "enforce_heading_order": 1,
+            "target_reading_ease": 55.0,
+            "version": 1,
+        },
+        "colors": [
+            ("COL-ACM-01", "acmecorp", "Acme Slate Dark", "#0F172A", "Primary Text & Headers", 12.0),
+            ("COL-ACM-02", "acmecorp", "Acme Blue Primary", "#2563EB", "Primary Interactive Brand Accent", 14.0),
+            ("COL-ACM-03", "acmecorp", "Acme Sky Highlight", "#38BDF8", "System Status & Metrics", 14.0),
+            ("COL-ACM-04", "acmecorp", "Acme Cloud Surface", "#F8FAFC", "Light Background Surface", 10.0),
+        ],
+        "rules": [
+            ("RULE-ACM-CLAIM-01", "acmecorp", "Promotional Claims", "Substantiate Latency and SLA Claims", "Require benchmark parameters and SLA tier citations on all latency and uptime claims.", json.dumps({"source": "verified_facts"}), "high", "Acme Mesh achieves sub-5ms packet routing under VPC benchmark conditions.", "Acme is infinitely fast with zero latency!", 1, 1, "2026-01-01T00:00:00Z"),
+            ("RULE-ACM-TONE-01", "acmecorp", "Tone and Voice", "Prohibit Exaggerated Superlatives", "Marketing content must use evidence-based technical descriptions rather than exaggerated adjectives.", json.dumps({"patterns": [r"\b(?:miraculous|infinitely|game-changer|flawless)\b"]}), "medium", "Acme Mesh scales horizontally across Kubernetes nodes.", "Acme is a miraculous game-changer that crushes other tools.", 1, 1, "2026-01-01T00:00:00Z"),
+        ],
+        "facts": [
+            ("FACT-ACM-01", "acmecorp", "Acme Mesh achieves sub-5ms packet routing under VPC benchmark conditions with 99.999% SLA on enterprise plans.", "5", "ms", "Packet routing latency", "Engineering Benchmark Report Q4 2025, Section 3.2", "Measured on AWS VPC cross-AZ connections", "2025-Q4", "Verified", "2026-01-01T00:00:00Z"),
+        ],
+    },
+    "finsafe": {
+        "brand": {
+            "id": "finsafe",
+            "name": "FinSafe Wealth Management",
+            "industry": "Consumer Wealth & Investment",
+            "description": "Fiduciary automated portfolio rebalancing and retirement wealth management platform.",
+            "tone_principles": "Prudent, fiduciary, transparent, and encouraging. Never promise guaranteed returns or risk-free profits.",
+            "writing_style": "Clear financial literacy English. Define compound interest, expense ratios, and historical volatility.",
+            "messaging_principles": "All performance projections must include past-performance disclaimers and explicit tax assumptions.",
+            "do_examples": json.dumps([
+                "FinSafe automated tax-loss harvesting improved simulated net returns by up to 1.8% annually across 10-year historical backtests."
+            ]),
+            "dont_examples": json.dumps([
+                "Double your retirement savings risk-free in 12 months with FinSafe AI!"
+            ]),
+            "typography_specs": "Headings: Merriweather / Georgia (600-700 weight). Body: Source Sans 3 / Inter (400-500 weight, 15-18px).",
+            "spacing_rules": "Generous breathing room: 32px clear space around primary crest logo and 16px section margins.",
+            "logo_placement_constraints": "Center top on quarterly statements, upper left on mobile dashboard.",
+            "min_contrast_normal": 4.5,
+            "min_contrast_large": 3.0,
+            "require_alt_text": 1,
+            "enforce_heading_order": 1,
+            "target_reading_ease": 60.0,
+            "version": 1,
+        },
+        "colors": [
+            ("COL-FIN-01", "finsafe", "FinSafe Emerald Dark", "#064E3B", "Primary Brand Tone & Headers", 12.0),
+            ("COL-FIN-02", "finsafe", "FinSafe Mint Primary", "#10B981", "Interactive Buttons & Accents", 14.0),
+            ("COL-FIN-03", "finsafe", "FinSafe Gold Accent", "#D97706", "Wealth Tier Highlights", 14.0),
+            ("COL-FIN-04", "finsafe", "FinSafe Off-White", "#F9FAFB", "Document Background", 10.0),
+        ],
+        "rules": [
+            ("RULE-FIN-CLAIM-01", "finsafe", "Promotional Claims", "Past Performance and Return Substantiation", "All returns and yield statements must carry past performance disclaimers and match verified facts.", json.dumps({"source": "verified_facts"}), "high", "Automated tax-loss harvesting improved simulated returns by up to 1.8% annually across 10-year backtests.", "Guaranteed 20% annual returns with zero risk!", 1, 1, "2026-01-01T00:00:00Z"),
+            ("RULE-FIN-TONE-01", "finsafe", "Tone and Voice", "Prohibit Guaranteed Return Claims", "Fiduciary guidelines prohibit guaranteeing investment returns, profits, or capital preservation.", json.dumps({"patterns": [r"\b(?:guaranteed returns?|zero risk|risk-free profits?)\b"]}), "high", "Investment portfolios involve risk of capital loss.", "Earn guaranteed risk-free profits every month.", 1, 1, "2026-01-01T00:00:00Z"),
+        ],
+        "facts": [
+            ("FACT-FIN-01", "finsafe", "FinSafe automated tax-loss harvesting improved simulated net returns by up to 1.8% annually across 10-year historical backtests.", "1.8", "% annually", "Automated tax-loss harvesting returns", "Quantitative Research Whitepaper 2025-Q2", "Based on 10-year historical backtests", "2025-Q2", "Verified", "2026-01-01T00:00:00Z"),
+        ],
+    },
+}
+
+
+def list_brand_presets() -> List[Dict[str, Any]]:
+    """Returns available pre-baked brand presets."""
+    return [
+        {
+            "id": p["brand"]["id"],
+            "name": p["brand"]["name"],
+            "industry": p["brand"]["industry"],
+            "description": p["brand"]["description"],
+            "rules_count": len(p.get("rules", [])),
+            "facts_count": len(p.get("facts", [])),
+            "colors_count": len(p.get("colors", [])),
+        }
+        for p in BRAND_PRESETS.values()
+    ]
+
+
+def apply_brand_preset(preset_id: str, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
+    """Applies a pre-configured brand preset into the database, creating brand profile, colors, rules and facts."""
+    preset = BRAND_PRESETS.get(preset_id)
+    if not preset:
+        raise ValueError(f"Unknown preset_id '{preset_id}'. Available presets: {list(BRAND_PRESETS.keys())}")
+
+    b = preset["brand"]
+    now = datetime.now(timezone.utc).isoformat()
+    should_close = False
+    if conn is None:
+        conn = get_connection()
+        should_close = True
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO brands (
+                id, name, industry, description, tone_principles, writing_style,
+                messaging_principles, do_examples, dont_examples, typography_specs,
+                spacing_rules, logo_placement_constraints, min_contrast_normal,
+                min_contrast_large, require_alt_text, enforce_heading_order,
+                target_reading_ease, version, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                b["id"], b["name"], b["industry"], b["description"],
+                b["tone_principles"], b["writing_style"], b["messaging_principles"],
+                b["do_examples"], b["dont_examples"], b["typography_specs"],
+                b["spacing_rules"], b["logo_placement_constraints"],
+                b["min_contrast_normal"], b["min_contrast_large"],
+                b["require_alt_text"], b["enforce_heading_order"],
+                b["target_reading_ease"], b.get("version", 1), now,
+            ),
+        )
+        for col in preset.get("colors", []):
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO brand_colors (
+                    id, brand_id, name, hex_code, usage_role, max_delta_e
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                col,
+            )
+        for rule in preset.get("rules", []):
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO rules (
+                    id, brand_id, pillar, title, description, rule_config_json,
+                    severity, do_example, dont_example, active, version, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rule,
+            )
+        for fact in preset.get("facts", []):
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO verified_facts (
+                    id, brand_id, statement, numeric_value, numeric_units, product_context,
+                    source_reference, applicable_conditions, date_version, verification_status,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                fact,
+            )
+        conn.commit()
+        return b
+    finally:
+        if should_close:
+            conn.close()

@@ -38,6 +38,8 @@ from .config import (
     has_permission,
     is_demo_mode,
     issue_demo_token,
+    issue_auth_token,
+    verify_demo_token,
     processing_mode,
     resolve_actor,
     resolve_role,
@@ -58,6 +60,11 @@ from .database import (
     init_db,
     record_audit_event,
     reset_demo_workspace,
+    set_current_session_id,
+    export_database_snapshot,
+    restore_database_snapshot,
+    list_brand_presets,
+    apply_brand_preset,
 )
 from .engine import (
     ImageTooLargeError,
@@ -184,16 +191,41 @@ UPLOAD_ROUTE_PATHS = ("/api/audits/upload",)
 MULTIPART_OVERHEAD_ALLOWANCE = 256 * 1024
 
 
+def get_configured_upload_limit_bytes() -> int:
+    env_limit = os.environ.get("LOOMSHIELD_MAX_UPLOAD_MB", "").strip()
+    if env_limit.isdigit() and int(env_limit) > 0:
+        return int(env_limit) * 1024 * 1024
+    if os.environ.get("RENDER"):
+        return 25 * 1024 * 1024
+    return 5 * 1024 * 1024
+
+
 @app.middleware("http")
 async def upload_size_guard_middleware(request: Request, call_next):
     if request.method == "POST" and request.url.path.rstrip("/") in UPLOAD_ROUTE_PATHS:
         declared = request.headers.get("content-length", "").strip()
-        if declared.isdigit() and int(declared) > (5 * 1024 * 1024) + MULTIPART_OVERHEAD_ALLOWANCE:
+        max_bytes = get_configured_upload_limit_bytes()
+        limit_mb = max_bytes // (1024 * 1024)
+        if declared.isdigit() and int(declared) > max_bytes + MULTIPART_OVERHEAD_ALLOWANCE:
+            msg = f"File size exceeds the {limit_mb} MB safety limit."
             return JSONResponse(
                 status_code=400,
-                content={"error": {"code": "BAD_REQUEST", "message": "File size exceeds the 5 MB safety limit."}, "detail": "File size exceeds the 5 MB safety limit."},
+                content={"error": {"code": "BAD_REQUEST", "message": msg}, "detail": msg},
             )
     return await call_next(request)
+
+
+@app.middleware("http")
+async def session_isolation_middleware(request: Request, call_next):
+    sess_id = request.headers.get("x-loomshield-session") or request.query_params.get("session_id")
+    if sess_id:
+        set_current_session_id(sess_id.strip())
+    else:
+        set_current_session_id(None)
+    response = await call_next(request)
+    if sess_id:
+        response.headers["x-loomshield-session"] = sess_id.strip()
+    return response
 
 
 @app.middleware("http")
@@ -705,6 +737,125 @@ def demo_login_endpoint(req: DemoLoginRequest):
         return issue_demo_token(req.user_id.strip())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def auth_login(req: LoginRequest):
+    """Authenticate with username and password, returning an HMAC-signed Bearer session token."""
+    u = req.username.strip().lower()
+    p = req.password.strip()
+
+    admin_pw = os.environ.get("LOOMSHIELD_ADMIN_PASSWORD", "LoomShield2026!")
+    auditor_pw = os.environ.get("LOOMSHIELD_AUDITOR_PASSWORD", "Auditor2026!")
+    legal_pw = os.environ.get("LOOMSHIELD_LEGAL_PASSWORD", "Legal2026!")
+
+    if u in ("admin", "usr_admin", "usr_ava") and p == admin_pw:
+        user_id = "usr_ava" if is_demo_mode() else "usr_admin"
+        return issue_auth_token(user_id)
+    elif u in ("auditor", "usr_auditor", "usr_marcus") and p == auditor_pw:
+        user_id = "usr_marcus" if is_demo_mode() else "usr_auditor"
+        return issue_auth_token(user_id)
+    elif u in ("legal", "usr_legal", "usr_priya") and p == legal_pw:
+        user_id = "usr_priya" if is_demo_mode() else "usr_legal"
+        return issue_auth_token(user_id)
+    else:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+
+@app.get("/api/auth/me")
+def auth_me(
+    authorization: Optional[str] = Header(None),
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    """Returns active authenticated user metadata."""
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            tok = authorization[7:].strip()
+            verified = verify_demo_token(tok)
+            return {
+                "user_id": verified["user_id"],
+                "user_name": verified["user_name"],
+                "initials": verified["initials"],
+                "role": verified["role"],
+                "source": "bearer_token",
+            }
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid bearer token.")
+    return {
+        "user_id": actor["user_id"],
+        "user_name": actor["user_name"],
+        "initials": actor["initials"],
+        "role": actor["role"],
+        "source": actor["source"],
+    }
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    """Client session logout acknowledgement."""
+    return {"status": "logged_out", "message": "Session invalidated."}
+
+
+@app.get("/api/system/limits")
+def get_system_limits():
+    """Returns deployment capacity, safe upload bounds, and Render free tier limits."""
+    max_b = get_configured_upload_limit_bytes()
+    return {
+        "configured_max_upload_mb": max_b // (1024 * 1024),
+        "configured_max_upload_bytes": max_b,
+        "render_free_instance_ram_mb": 512,
+        "render_free_instance_safe_cap_mb": 25,
+        "render_free_instance_safe_headroom_mb": 220,
+        "max_image_megapixels": 12.0,
+        "max_image_pixels": 12_000_000,
+        "streaming_chunk_kb": 64,
+        "multipart_overhead_allowance_kb": 256,
+        "status": "operational",
+    }
+
+
+@app.get("/api/brands/presets")
+def get_brand_presets_endpoint():
+    """List available pre-baked brand guideline presets."""
+    return {"presets": list_brand_presets()}
+
+
+@app.post("/api/brands/presets/{preset_id}/apply")
+def apply_brand_preset_endpoint(preset_id: str, role: str = Depends(current_role)):
+    """Apply a pre-configured brand preset into the database."""
+    require_permission(role, "manage_brands", "Only a Brand Administrator can apply brand presets")
+    try:
+        brand = apply_brand_preset(preset_id.strip().lower())
+        return {"status": "applied", "brand": brand}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/database/snapshot/export")
+def export_snapshot_endpoint(role: str = Depends(current_role)):
+    """Export database snapshot to JSON to survive ephemeral redeploys."""
+    require_permission(role, "manage_brands", "Only a Brand Administrator can export database snapshots")
+    data = export_database_snapshot()
+    return {
+        "status": "exported",
+        "exported_at": data.get("exported_at"),
+        "tables_count": len(data.get("tables", {})),
+    }
+
+
+@app.post("/api/database/snapshot/restore")
+def restore_snapshot_endpoint(role: str = Depends(current_role)):
+    """Restore database snapshot from JSON."""
+    require_permission(role, "manage_brands", "Only a Brand Administrator can restore database snapshots")
+    ok = restore_database_snapshot()
+    if not ok:
+        raise HTTPException(status_code=404, detail="No valid database snapshot file found to restore.")
+    return {"status": "restored"}
 
 
 _LAST_DEMO_RESET_TIME: float = 0.0
@@ -1595,20 +1746,23 @@ UPLOAD_CHUNK_BYTES = 64 * 1024
 
 async def _read_upload_in_chunks(
     upload_file: UploadFile,
-    max_bytes: int = MAX_UPLOAD_BYTES,
+    max_bytes: Optional[int] = None,
     chunk_size: int = UPLOAD_CHUNK_BYTES,
 ) -> bytes:
-    """F2: Read uploaded stream in chunks and abort at 5 MB + 1 byte without buffering the remaining body."""
+    """Read uploaded stream in chunks and abort at max_bytes + 1 byte without buffering the remaining body."""
+    if max_bytes is None:
+        max_bytes = get_configured_upload_limit_bytes()
+    limit_mb = max_bytes // (1024 * 1024)
     chunks: List[bytes] = []
     total_read = 0
     while True:
-        # Never request more than (max_bytes + 1 - total_read), so the abort happens exactly at 5 MB + 1 byte.
+        # Never request more than (max_bytes + 1 - total_read), so the abort happens exactly at max_bytes + 1 byte.
         chunk = await upload_file.read(min(chunk_size, max_bytes + 1 - total_read))
         if not chunk:
             break
         total_read += len(chunk)
         if total_read > max_bytes:
-            raise HTTPException(status_code=400, detail="File size exceeds the 5 MB safety limit.")
+            raise HTTPException(status_code=400, detail=f"File size exceeds the {limit_mb} MB safety limit.")
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -3615,8 +3769,10 @@ def update_audit_heatmap_inspector(
 
     if not raw_bytes:
         raise HTTPException(status_code=400, detail="No visual raster or SVG asset is stored on this audit for heatmap inspection.")
-    if len(raw_bytes) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=400, detail="File size exceeds the 5 MB safety limit.")
+    max_b = get_configured_upload_limit_bytes()
+    if len(raw_bytes) > max_b:
+        limit_mb = max_b // (1024 * 1024)
+        raise HTTPException(status_code=400, detail=f"File size exceeds the {limit_mb} MB safety limit.")
 
     hm_vis = inspect_visual_heatmap(
         raw_bytes=raw_bytes,

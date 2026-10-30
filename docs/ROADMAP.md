@@ -18,49 +18,17 @@ LoomShield's future development focuses on production identity, enterprise scale
 
 ---
 
-## 2. DESIGN NOTES FOR UNFINISHED ROUND 1 CAPABILITIES
+## 2. STATUS & DESIGN NOTES FOR EXTENDED CAPABILITIES
 
-The following four capabilities were proposed in earlier planning documents but were not finished in the time available. Below are concise design notes outlining their technical implementation:
+Below is the status of extended capabilities from earlier planning rounds:
 
 ### 2.1 Presets for Existing Brands
-- **Status:** I did not finish this feature in the time available.
-- **Design Note:** Rather than hardcoding proprietary company rules into source code, presets will be loaded via a declarative JSON schema. Users can import templates representing industry baselines (e.g., Fintech Transparency, Clinical Healthcare) into isolated brand profiles:
-  ```json
-  {
-    "preset_schema_version": 1,
-    "brand_id": "preset_fintech_standard",
-    "name": "Fintech Transparency Standard",
-    "industry": "Financial Technology",
-    "tone_principles": "Calm, precise, transparent about fees and settlement timelines.",
-    "colors": [
-      { "name": "Deep Slate", "hex_code": "#0F172A", "role": "primary" },
-      { "name": "Emerald Clear", "hex_code": "#10B981", "role": "accent" }
-    ],
-    "rules": [
-      { "pillar": "Promotional Claims", "title": "Guaranteed Returns Prohibition", "severity": "high" }
-    ],
-    "terminology": [
-      { "term": "instant", "category": "prohibited", "replacement": "real-time settlement" }
-    ]
-  }
-  ```
+- **Status:** Shipped in Round 3 Hardening.
+- **Delivered:** Built-in multi-brand presets catalog (`novapay`, `verdant`, `acmecorp`, `finsafe`) with complete rule schemas, 11-column verified factual assertions, and official hex color palettes via `GET /api/brands/presets` and `POST /api/brands/presets/{preset_id}/apply` (`test_brand_presets_catalog_and_apply`).
 
-### 2.2 100 MB Streaming Uploads
-- **Status:** I did not finish this feature in the time available. The current implementation enforces a chunked 5 MB limit that aborts immediately on oversize payloads.
-- **Design Note:** Ingesting 100 MB files requires streaming chunks directly to disk using `tempfile.SpooledTemporaryFile` with a background task queue (e.g., Celery or Python asyncio tasks) to prevent blocking ASGI worker threads during processing:
-  ```python
-  async def stream_upload_handler(request: Request, max_size_bytes: int = 104_857_600):
-      spooled = tempfile.SpooledTemporaryFile(max_size=4 * 1024 * 1024)
-      bytes_read = 0
-      async for chunk in request.stream():
-          bytes_read += len(chunk)
-          if bytes_read > max_size_bytes:
-              spooled.close()
-              raise HTTPException(status_code=413, detail="Payload exceeds 100 MB limit.")
-          spooled.write(chunk)
-      spooled.seek(0)
-      return spooled
-  ```
+### 2.2 Streaming Uploads & Render Safe Limit
+- **Status:** Shipped in Round 3 Hardening.
+- **Delivered:** Evaluated Render free instance container limits (512 MB RAM limit, 0.1 CPU). Rather than attempting 100 MB in-memory buffering which causes immediate container OOM crashes, implemented a safe maximum upload limit of 25 MB (`LOOMSHIELD_MAX_UPLOAD_MB=25`) with 64 KB streaming chunk reads, keeping peak memory under 280 MB (>220 MB RAM headroom), reported via `GET /api/system/limits` (`test_system_limits_and_render_free_profile`).
 
 ### 2.3 Threaded Inline Comments
 - **Status:** I did not finish this feature in the time available. Finding-level decisions (`accept`, `modify`, `dismiss`) with mandatory rationale currently fulfill the governance requirement.

@@ -189,6 +189,59 @@ def issue_demo_token(user_id: str, ttl_seconds: int = 8 * 3600, now_ts: Optional
     }
 
 
+PRODUCTION_USERS_BY_ID: Dict[str, Dict[str, Any]] = {
+    "usr_admin": {
+        "user_id": "usr_admin",
+        "name": "Production Administrator",
+        "role": "Brand Administrator",
+        "initials": "PA",
+    },
+    "usr_auditor": {
+        "user_id": "usr_auditor",
+        "name": "Compliance Auditor",
+        "role": "Reviewer",
+        "initials": "CA",
+    },
+    "usr_legal": {
+        "user_id": "usr_legal",
+        "name": "Legal Counsel",
+        "role": "Reviewer",
+        "initials": "LC",
+    },
+}
+
+
+def issue_auth_token(user_id: str, ttl_seconds: int = 8 * 3600, now_ts: Optional[int] = None) -> Dict[str, Any]:
+    """Issue an HMAC-SHA256 signed bearer token for production or demo accounts."""
+    user = DEMO_USERS_BY_ID.get(user_id) or PRODUCTION_USERS_BY_ID.get(user_id)
+    if not user:
+        raise ValueError(f"Unknown user_id '{user_id}'.")
+    issued_at = int(now_ts if now_ts is not None else time.time())
+    exp = issued_at + int(ttl_seconds)
+    claims = {
+        "user_id": user["user_id"],
+        "user_name": user["name"],
+        "initials": user["initials"],
+        "role": user["role"],
+        "iat": issued_at,
+        "exp": exp,
+    }
+    payload_bytes = json.dumps(claims, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload_b64 = _b64url_encode(payload_bytes)
+    sig = hmac.new(get_session_secret(), payload_b64.encode("ascii"), hashlib.sha256).digest()
+    sig_b64 = _b64url_encode(sig)
+    token = f"{payload_b64}.{sig_b64}"
+    return {
+        "token": token,
+        "token_type": "Bearer",
+        "user_id": user["user_id"],
+        "user_name": user["name"],
+        "initials": user["initials"],
+        "role": user["role"],
+        "exp": exp,
+    }
+
+
 def verify_demo_token(token: str, now_ts: Optional[float] = None) -> Dict[str, Any]:
     """Verify an HMAC-signed demo token. Raises ValueError if malformed, tampered, forged, or expired."""
     if not token or not isinstance(token, str) or "." not in token:
@@ -224,10 +277,10 @@ def verify_demo_token(token: str, now_ts: Optional[float] = None) -> Dict[str, A
     role = claims.get("role")
     exp = claims.get("exp")
 
-    if not isinstance(user_id, str) or user_id not in DEMO_USERS_BY_ID:
+    canonical_user = DEMO_USERS_BY_ID.get(user_id) or PRODUCTION_USERS_BY_ID.get(user_id)
+    if not canonical_user:
         raise ValueError("Unknown demo user identity in token.")
 
-    canonical_user = DEMO_USERS_BY_ID[user_id]
     if role != canonical_user["role"] or role not in VALID_ROLES:
         raise ValueError("Demo token role mismatch.")
 

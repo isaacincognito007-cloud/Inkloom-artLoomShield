@@ -9,9 +9,18 @@ from fastapi.testclient import TestClient
 import pytest
 from PIL import Image
 
-from backend.main import app
-from backend.config import is_demo_mode
-from backend.database import get_connection, init_db
+from backend.main import app, _read_upload_in_chunks
+from backend.config import is_demo_mode, issue_auth_token, verify_demo_token
+from backend.database import (
+    get_connection,
+    init_db,
+    get_db_path,
+    list_brand_presets,
+    apply_brand_preset,
+    export_database_snapshot,
+    restore_database_snapshot,
+    set_current_session_id,
+)
 from backend.engine import (
     MAX_IMAGE_PIXELS,
     ImageTooLargeError,
@@ -311,3 +320,229 @@ def test_g6b_all_unresolvable_svg_text_contrast_state_not_checked_never_passed()
     findings = res.get("findings", [])
     contrast_findings = [f for f in findings if "Insufficient SVG/Visual Text Contrast" in f.get("issue_type", "")]
     assert len(contrast_findings) == 0
+
+
+def test_system_limits_and_render_free_profile():
+    """Verify /api/system/limits returns 512 MB Render free tier profile and 25 MB max safe upload."""
+    client = TestClient(app)
+    res = client.get("/api/system/limits")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["render_free_instance_ram_mb"] == 512
+    assert data["render_free_instance_safe_cap_mb"] == 25
+    assert data["render_free_instance_safe_headroom_mb"] >= 200
+    assert data["max_image_megapixels"] == 12.0
+    assert data["streaming_chunk_kb"] == 64
+    assert data["status"] == "operational"
+
+
+def test_configurable_upload_size_env():
+    """Verify that when LOOMSHIELD_MAX_UPLOAD_MB is set to 25, the limit adapts accordingly."""
+    client = TestClient(app)
+    old_env = os.environ.get("LOOMSHIELD_MAX_UPLOAD_MB")
+    try:
+        os.environ["LOOMSHIELD_MAX_UPLOAD_MB"] = "25"
+        res = client.get("/api/system/limits")
+        assert res.status_code == 200
+        assert res.json()["configured_max_upload_mb"] == 25
+
+        class FakeChunkedUpload:
+            def __init__(self, total_bytes):
+                self.remaining = total_bytes
+
+            async def read(self, n):
+                if self.remaining <= 0:
+                    return b""
+                take = min(n, self.remaining)
+                self.remaining -= take
+                return b"X" * take
+
+        import asyncio
+        ten_mb = 10 * 1024 * 1024
+        result = asyncio.run(_read_upload_in_chunks(FakeChunkedUpload(ten_mb)))
+        assert len(result) == ten_mb
+
+        twenty_six_mb = 26 * 1024 * 1024
+        with pytest.raises(Exception) as excinfo:
+            asyncio.run(_read_upload_in_chunks(FakeChunkedUpload(twenty_six_mb)))
+        assert "25 MB" in str(excinfo.value)
+    finally:
+        if old_env is None:
+            os.environ.pop("LOOMSHIELD_MAX_UPLOAD_MB", None)
+        else:
+            os.environ["LOOMSHIELD_MAX_UPLOAD_MB"] = old_env
+
+
+def test_brand_presets_catalog_and_apply():
+    """Verify brand presets catalog contains benchmark brands and can be applied."""
+    client = TestClient(app)
+    res = client.get("/api/brands/presets")
+    assert res.status_code == 200
+    presets = res.json()["presets"]
+    ids = [p["id"] for p in presets]
+    assert "novapay" in ids
+    assert "verdant" in ids
+    assert "acmecorp" in ids
+    assert "finsafe" in ids
+
+    token_res = client.post("/api/auth/login", json={"username": "admin", "password": "LoomShield2026!"})
+    token = token_res.json()["token"]
+    apply_res = client.post(
+        "/api/brands/presets/acmecorp/apply",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert apply_res.status_code == 200
+    assert apply_res.json()["status"] == "applied"
+    assert apply_res.json()["brand"]["name"] == "Acme Cloud Infrastructure"
+
+    brands_res = client.get("/api/brands")
+    brand_ids = [b["id"] for b in brands_res.json()["brands"]]
+    assert "acmecorp" in brand_ids
+
+
+def test_typography_rule_enforcement_in_engine():
+    """Verify that typography rules detect prohibited fonts and sub-threshold font sizes."""
+    brand = {
+        "id": "novapay",
+        "typography_specs": "Primary UI & Headings: Inter / Geist (600-700 weight). Body: Inter (400-500 weight, 14-16px).",
+    }
+    vis_bad_font = {
+        "inspect_ok": True,
+        "palette_state": "Passed",
+        "text_elements": [
+            {
+                "id": "text-heading",
+                "text": "Instant Settlement Payouts",
+                "font_family": "Comic Sans MS",
+                "font_size": 16.0,
+            }
+        ],
+    }
+    audit_res = run_six_pillar_audit(
+        content="Instant Settlement Payouts",
+        brand=brand,
+        rules=[],
+        terminology_rows=[],
+        facts=[],
+        brand_colors=[],
+        visual_inspection=vis_bad_font,
+    )
+    typo_findings = [f for f in audit_res["findings"] if f["rule_or_fact_id"] == "RULE-TYPO-01"]
+    assert len(typo_findings) == 1
+    assert "Comic Sans MS" in typo_findings[0]["flagged_text"]
+    assert typo_findings[0]["pillar"] == "Visual and Logo Consistency"
+
+    vis_small_font = {
+        "inspect_ok": True,
+        "palette_state": "Passed",
+        "text_elements": [
+            {
+                "id": "text-disclaimer",
+                "text": "* Subject to terms and conditions",
+                "font_family": "Inter",
+                "font_size": 6.0,
+            }
+        ],
+    }
+    audit_res_small = run_six_pillar_audit(
+        content="Instant Settlement Payouts",
+        brand=brand,
+        rules=[],
+        terminology_rows=[],
+        facts=[],
+        brand_colors=[],
+        visual_inspection=vis_small_font,
+    )
+    size_findings = [f for f in audit_res_small["findings"] if f["rule_or_fact_id"] == "RULE-TYPO-02"]
+    assert len(size_findings) == 1
+    assert "6.0px" in size_findings[0]["flagged_text"]
+    assert size_findings[0]["pillar"] == "Visual and Logo Consistency"
+
+    vis_ok = {
+        "inspect_ok": True,
+        "palette_state": "Passed",
+        "text_elements": [
+            {
+                "id": "text-ok",
+                "text": "Instant Settlement Payouts",
+                "font_family": "Inter, sans-serif",
+                "font_size": 16.0,
+            }
+        ],
+    }
+    audit_res_ok = run_six_pillar_audit(
+        content="Instant Settlement Payouts",
+        brand=brand,
+        rules=[],
+        terminology_rows=[],
+        facts=[],
+        brand_colors=[],
+        visual_inspection=vis_ok,
+    )
+    typo_f = [f for f in audit_res_ok["findings"] if f["rule_or_fact_id"] in ("RULE-TYPO-01", "RULE-TYPO-02")]
+    assert len(typo_f) == 0
+
+
+def test_per_visitor_demo_isolation():
+    """Verify that X-LoomShield-Session routes requests to isolated SQLite databases."""
+    client = TestClient(app)
+    old_mode = os.environ.get("LOOMSHIELD_WORKSPACE_MODE")
+    try:
+        os.environ["LOOMSHIELD_WORKSPACE_MODE"] = "demo"
+        sess1 = "test_sess_user_alpha"
+        sess2 = "test_sess_user_beta"
+
+        res1 = client.get("/api/brands", headers={"X-LoomShield-Session": sess1})
+        assert res1.status_code == 200
+        assert res1.headers.get("x-loomshield-session") == sess1
+
+        res2 = client.get("/api/brands", headers={"X-LoomShield-Session": sess2})
+        assert res2.status_code == 200
+        assert res2.headers.get("x-loomshield-session") == sess2
+
+        p1 = get_db_path(session_id=sess1)
+        p2 = get_db_path(session_id=sess2)
+        assert p1 != p2
+        assert os.path.exists(p1)
+        assert os.path.exists(p2)
+    finally:
+        set_current_session_id(None)
+        if old_mode is None:
+            os.environ.pop("LOOMSHIELD_WORKSPACE_MODE", None)
+        else:
+            os.environ["LOOMSHIELD_WORKSPACE_MODE"] = old_mode
+
+
+def test_database_snapshot_export_and_restore(tmp_path):
+    """Verify database snapshot exports to JSON and restores correctly."""
+    snap_file = str(tmp_path / "test_snapshot.json")
+    exported = export_database_snapshot(snapshot_path=snap_file)
+    assert os.path.exists(snap_file)
+    assert "tables" in exported
+    assert "brands" in exported["tables"]
+    assert len(exported["tables"]["brands"]) > 0
+
+    restored = restore_database_snapshot(snapshot_path=snap_file)
+    assert restored is True
+
+
+def test_production_user_authentication():
+    """Verify /api/auth/login, /api/auth/me, and /api/auth/logout."""
+    client = TestClient(app)
+    bad_res = client.post("/api/auth/login", json={"username": "admin", "password": "wrong_password"})
+    assert bad_res.status_code == 401
+
+    good_res = client.post("/api/auth/login", json={"username": "admin", "password": "LoomShield2026!"})
+    assert good_res.status_code == 200
+    auth_data = good_res.json()
+    token = auth_data["token"]
+    assert token and "." in token
+
+    me_res = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_res.status_code == 200
+    me_data = me_res.json()
+    assert me_data["role"] in ("Brand Administrator", "admin")
+
+    logout_res = client.post("/api/auth/logout")
+    assert logout_res.status_code == 200
+    assert logout_res.json()["status"] == "logged_out"
