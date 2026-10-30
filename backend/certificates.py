@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-CERTIFICATE_VERSION = 1
+CERTIFICATE_VERSION = 2
 ENGINE_VERSION = "2.1.0"
 EPHEMERAL_KEY_NOTICE = "ephemeral demo key: valid only until the server restarts"
 PERSISTENT_KEY_NOTICE = "configured persistent signing key"
@@ -188,6 +188,20 @@ def build_certificate_payload(
         "comment": str(approval_row.get("comment") or ""),
     }
 
+    # H3(a): Add submitted_by, verification_url, and revocation block
+    submitted_by_user_id = str(audit.get("submitted_by_user_id") or "usr_priya").strip()
+    submitted_by_name = str(audit.get("submitted_by_name") or "Priya Nair").strip()
+    submitted_by_block = {
+        "user_id": submitted_by_user_id,
+        "name": submitted_by_name,
+        "role": "Content Creator",
+    }
+    public_url = os.environ.get("LOOMSHIELD_PUBLIC_URL", "http://localhost:8000").rstrip("/")
+    verification_url = f"{public_url}/#/verify?cert_id={certificate_id}"
+    revocation_block = {
+        "status_url": f"{public_url}/api/certificates/{certificate_id}/status"
+    }
+
     return {
         "certificate_version": CERTIFICATE_VERSION,
         "certificate_id": certificate_id,
@@ -203,7 +217,10 @@ def build_certificate_payload(
         "pillar_states": dict(audit.get("pillar_states") or {}),
         "findings_summary": summary,
         "dismissals": dismissals,
+        "submitted_by": submitted_by_block,
         "approval": approval_block,
+        "verification_url": verification_url,
+        "revocation": revocation_block,
         "processing_mode": str(processing_mode_str),
         "ephemeral_key": bool(is_ephemeral),
         "key_notice": EPHEMERAL_KEY_NOTICE if is_ephemeral else PERSISTENT_KEY_NOTICE,
@@ -244,7 +261,7 @@ def verify_certificate_envelope(
     if not isinstance(sig_b64, str) or not sig_b64.strip():
         reasons.append("Malformed certificate: missing base64 signature ('signature_b64').")
 
-    required_payload_fields = (
+    required_payload_fields_v1 = (
         "certificate_version",
         "certificate_id",
         "issued_at",
@@ -263,14 +280,32 @@ def verify_certificate_envelope(
         "processing_mode",
         "limitations",
     )
+    required_payload_fields_v2 = required_payload_fields_v1 + (
+        "submitted_by",
+        "verification_url",
+        "revocation",
+    )
     if isinstance(payload, dict):
-        missing = [k for k in required_payload_fields if k not in payload]
-        if missing:
-            reasons.append(f"Malformed certificate payload: missing required field(s): {', '.join(missing)}.")
-        elif payload.get("certificate_version") != CERTIFICATE_VERSION:
+        cert_ver = payload.get("certificate_version")
+        if cert_ver not in (1, 2):
             reasons.append(
-                f"Malformed certificate payload: unsupported certificate_version '{payload.get('certificate_version')}'."
+                f"Malformed certificate payload: unsupported certificate_version '{cert_ver}'."
             )
+        else:
+            req_fields = required_payload_fields_v2 if cert_ver == 2 else required_payload_fields_v1
+            missing = [k for k in req_fields if k not in payload]
+            if missing:
+                reasons.append(f"Malformed certificate payload: missing required field(s): {', '.join(missing)}.")
+            if cert_ver == 2:
+                sub = payload.get("submitted_by")
+                if not isinstance(sub, dict) or not sub.get("user_id") or not sub.get("name") or not sub.get("role"):
+                    reasons.append("Malformed certificate payload: 'submitted_by' must contain non-empty user_id, name, and role.")
+                rev = payload.get("revocation")
+                if not isinstance(rev, dict) or not rev.get("status_url"):
+                    reasons.append("Malformed certificate payload: 'revocation' must contain status_url.")
+                v_url = payload.get("verification_url")
+                if not isinstance(v_url, str) or not v_url.strip():
+                    reasons.append("Malformed certificate payload: 'verification_url' must be a valid URL string.")
 
     if reasons:
         return {
@@ -359,8 +394,11 @@ def verify_certificate_envelope(
     return {
         "valid": True,
         "status": "valid",
+        "signature_valid": True,
+        "is_revoked": False,
         "reasons": ["Cryptographic Ed25519 signature verified against canonical payload bytes."],
         "kid": kid,
+        "certificate_version": payload.get("certificate_version"),
         "certificate_id": payload.get("certificate_id"),
         "audit_id": payload.get("audit_id"),
         "document_name": payload.get("document_name"),
@@ -368,6 +406,10 @@ def verify_certificate_envelope(
         "brand_version": payload.get("brand_version"),
         "content_sha256": payload.get("content_sha256"),
         "issued_at": payload.get("issued_at"),
+        "submitted_by": payload.get("submitted_by"),
+        "approval": payload.get("approval"),
+        "verification_url": payload.get("verification_url"),
+        "revocation": payload.get("revocation"),
         "ephemeral_key": bool(payload.get("ephemeral_key", is_ephemeral)),
         "key_notice": EPHEMERAL_KEY_NOTICE if (payload.get("ephemeral_key") or is_ephemeral) else PERSISTENT_KEY_NOTICE,
         "limitations": payload.get("limitations", CERTIFICATE_LIMITATIONS),

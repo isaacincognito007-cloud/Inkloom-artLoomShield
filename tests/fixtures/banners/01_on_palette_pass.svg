@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" width="400" height="240">
+  <rect x="0" y="0" width="400" height="240" fill="#FFFFFF"/>
+  <rect x="20" y="20" width="360" height="200" fill="#EEF4F8" rx="8"/>
+  <rect id="logo" data-loomshield-logo="true" x="40" y="40" width="80" height="36" fill="#17191C"/>
+  <text x="40" y="120" fill="#0B2545" font-size="20" font-family="sans-serif">NovaPay Global Settlement</text>
+  <text x="40" y="160" fill="#134074" font-size="14" font-family="sans-serif">Compliant with configured palette tokens.</text>
+</svg>

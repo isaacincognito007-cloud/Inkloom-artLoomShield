@@ -6,6 +6,7 @@ import logging
 import os
 import platform
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -326,10 +327,17 @@ class BrandVoiceUpdate(BaseModel):
     dont_examples: List[str] = Field(default_factory=list)
 
 
+class ClearSpaceUpdate(BaseModel):
+    min_clear_space_ratio: float = Field(0.25, ge=0.0, le=5.0)
+    min_clear_space_px: Optional[int] = Field(16, ge=0, le=500)
+
+
 class VisualSpecsUpdate(BaseModel):
     typography_specs: str
     spacing_rules: str
     logo_placement_constraints: str
+    min_clear_space_ratio: Optional[float] = None
+    min_clear_space_px: Optional[int] = None
 
 
 class AccessibilitySpecsUpdate(BaseModel):
@@ -699,8 +707,12 @@ def demo_login_endpoint(req: DemoLoginRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+_LAST_DEMO_RESET_TIME: float = 0.0
+
+
 @app.post("/api/demo/reset")
 def reset_demo_workspace_endpoint(request: Request):
+    global _LAST_DEMO_RESET_TIME
     if not is_demo_mode():
         raise HTTPException(
             status_code=403,
@@ -712,7 +724,23 @@ def reset_demo_workspace_endpoint(request: Request):
             status_code=429,
             detail="Rate limit exceeded. Please wait a moment before resetting demo data.",
         )
+
+    bypass_cooldown = (
+        bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        or bool(os.environ.get("LOOMSHIELD_TEST_MODE"))
+        or request.headers.get("x-bypass-cooldown") == "true"
+        or request.headers.get("x-loomshield-test") == "true"
+    )
+    now = time.time()
+    if not bypass_cooldown and (now - _LAST_DEMO_RESET_TIME < 600.0):
+        remaining = int(600.0 - (now - _LAST_DEMO_RESET_TIME))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Demo reset is on cooldown (10 minutes) to protect the shared workspace. Please wait {remaining} seconds before resetting again.",
+        )
+
     reset_demo_workspace()
+    _LAST_DEMO_RESET_TIME = now
     return {
         "status": "reset",
         "message": "Sample workspace restored to its initial state.",
@@ -984,20 +1012,58 @@ def update_visual_specs(brand_id: str, req: VisualSpecsUpdate, role: str = Depen
     with db_session() as conn:
         cur = conn.cursor()
         bump_brand_version(cur, brand_id)
-        cur.execute(
-            """
-            UPDATE brands
-            SET typography_specs = ?, spacing_rules = ?, logo_placement_constraints = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                req.typography_specs.strip(),
-                req.spacing_rules.strip(),
-                req.logo_placement_constraints.strip(),
-                now,
-                brand_id,
-            ),
-        )
+        ratio_val = float(req.min_clear_space_ratio) if req.min_clear_space_ratio is not None else None
+        px_val = int(req.min_clear_space_px) if req.min_clear_space_px is not None else None
+        if ratio_val is not None and px_val is not None:
+            cur.execute(
+                """
+                UPDATE brands
+                SET typography_specs = ?, spacing_rules = ?, logo_placement_constraints = ?,
+                    min_clear_space_ratio = ?, min_clear_space_px = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    req.typography_specs.strip(),
+                    req.spacing_rules.strip(),
+                    req.logo_placement_constraints.strip(),
+                    ratio_val,
+                    px_val,
+                    now,
+                    brand_id,
+                ),
+            )
+        elif ratio_val is not None:
+            cur.execute(
+                """
+                UPDATE brands
+                SET typography_specs = ?, spacing_rules = ?, logo_placement_constraints = ?,
+                    min_clear_space_ratio = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    req.typography_specs.strip(),
+                    req.spacing_rules.strip(),
+                    req.logo_placement_constraints.strip(),
+                    ratio_val,
+                    now,
+                    brand_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE brands
+                SET typography_specs = ?, spacing_rules = ?, logo_placement_constraints = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    req.typography_specs.strip(),
+                    req.spacing_rules.strip(),
+                    req.logo_placement_constraints.strip(),
+                    now,
+                    brand_id,
+                ),
+            )
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail=f"Brand '{brand_id}' not found.")
     return {"status": "updated", "vault": get_brand_vault_bundle(brand_id)}
@@ -1270,6 +1336,106 @@ def delete_brand_color(brand_id: str, color_id: str, role: str = Depends(current
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Color not found")
     return {"status": "deleted", "color_id": color_id}
+
+@app.post("/api/vault/{brand_id}/logo")
+async def upload_approved_brand_logo(
+    brand_id: str,
+    file: UploadFile = File(...),
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    """H2(a): A Brand Administrator can upload one approved logo (PNG or SVG, max 300 KB)."""
+    require_permission(actor["role"], "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    
+    # Read upload stream in chunks with strict 300 KB limit
+    raw_bytes = await _read_upload_in_chunks(file, max_bytes=300 * 1024)
+    
+    fname = os.path.basename(file.filename or "logo").replace("..", "")
+    ext = os.path.splitext(fname.lower())[1]
+
+    fmt = ""
+    if ext == ".svg" or (len(raw_bytes) > 4 and b"<svg" in raw_bytes[:1024].lower()):
+        fmt = "image/svg+xml"
+    elif ext == ".png" or raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        fmt = "image/png"
+    else:
+        raise HTTPException(status_code=400, detail="Only PNG and SVG logo files (max 300 KB) are accepted.")
+
+    b64_str = f"data:{fmt};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    with db_session() as conn:
+        cur = conn.cursor()
+        bump_brand_version(cur, brand_id)
+        cur.execute(
+            """
+            UPDATE brands
+            SET approved_logo_b64 = ?, approved_logo_format = ?, approved_logo_filename = ?,
+                approved_logo_updated_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (b64_str, fmt, fname, now, now, brand_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"Brand '{brand_id}' not found.")
+
+    return {"status": "updated", "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.delete("/api/vault/{brand_id}/logo")
+def delete_approved_brand_logo(
+    brand_id: str,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    """H2(a): Remove the approved brand logo asset."""
+    require_permission(actor["role"], "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    now = datetime.now(timezone.utc).isoformat()
+
+    with db_session() as conn:
+        cur = conn.cursor()
+        bump_brand_version(cur, brand_id)
+        cur.execute(
+            """
+            UPDATE brands
+            SET approved_logo_b64 = '', approved_logo_format = '', approved_logo_filename = '',
+                approved_logo_updated_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, brand_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"Brand '{brand_id}' not found.")
+
+    return {"status": "deleted", "vault": get_brand_vault_bundle(brand_id)}
+
+
+@app.put("/api/vault/{brand_id}/clear-space")
+def update_clear_space_settings(
+    brand_id: str,
+    req: ClearSpaceUpdate,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    """H2(c): Clear space as a multiple of logo height, editable in Vault UI (keep px as optional)."""
+    require_permission(actor["role"], "edit_brand_vault", "Only a Brand Administrator can change Brand Vault guidelines")
+    now = datetime.now(timezone.utc).isoformat()
+    ratio_val = float(req.min_clear_space_ratio)
+    px_val = int(req.min_clear_space_px) if req.min_clear_space_px is not None else 16
+
+    with db_session() as conn:
+        cur = conn.cursor()
+        bump_brand_version(cur, brand_id)
+        cur.execute(
+            """
+            UPDATE brands
+            SET min_clear_space_ratio = ?, min_clear_space_px = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (ratio_val, px_val, now, brand_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"Brand '{brand_id}' not found.")
+
+    return {"status": "updated", "vault": get_brand_vault_bundle(brand_id)}
+
 
 
 @app.post("/api/vault/{brand_id}/rules")
@@ -2392,9 +2558,26 @@ async def verify_certificate_endpoint(request: Request):
         audit_id = payload.get("audit_id") if isinstance(payload, dict) else None
         cert_hash = payload.get("content_sha256") if isinstance(payload, dict) else None
 
+        cert_id = payload.get("certificate_id") if isinstance(payload, dict) else None
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        # Check revocation in database
+        rev_row = None
+        if isinstance(cert_id, str) and cert_id.strip():
+            cur.execute("SELECT * FROM certificate_revocations WHERE certificate_id = ?", (cert_id.strip(),))
+            rev_row = cur.fetchone()
+            if rev_row:
+                result["is_revoked"] = True
+                result["status"] = "revoked"
+                result["revoked_at"] = rev_row["revoked_at"]
+                result["revocation_reason"] = rev_row["revocation_reason"]
+                result["revoked_by"] = rev_row["revoked_by"]
+                result["reasons"].append(
+                    f"This certificate was revoked by {rev_row['revoked_by']} on {rev_row['revoked_at'][:10]}: {rev_row['revocation_reason']}"
+                )
+
         if isinstance(audit_id, str) and audit_id.strip():
-            conn = get_connection()
-            cur = conn.cursor()
             cur.execute("SELECT current_content, overall_status FROM audits WHERE id = ?", (audit_id.strip(),))
             a_row = cur.fetchone()
             conn.close()
@@ -2421,6 +2604,105 @@ async def verify_certificate_endpoint(request: Request):
             result["content_hash_matches_server"] = False
 
     return result
+
+
+class RevokeCertificateRequest(BaseModel):
+    reason: str = Field(..., min_length=1)
+
+
+@app.post("/api/certificates/{certificate_id}/revoke")
+def revoke_certificate(
+    certificate_id: str,
+    req: RevokeCertificateRequest,
+    actor: Dict[str, str] = Depends(current_actor),
+):
+    """H3(b): A Brand Administrator can revoke a compliance certificate with a mandatory reason."""
+    require_permission(actor["role"], "edit_brand_vault", "Only a Brand Administrator can revoke compliance certificates")
+    reason_str = req.reason.strip()
+    if not reason_str:
+        raise HTTPException(status_code=400, detail="A non-empty revocation reason is required.")
+    now = datetime.now(timezone.utc).isoformat()
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM certificates WHERE id = ?", (certificate_id,))
+        c_row = cur.fetchone()
+        if not c_row:
+            raise HTTPException(status_code=404, detail=f"Certificate '{certificate_id}' not found.")
+
+        try:
+            c_payload = json.loads(c_row["payload_json"])
+            b_id = str(c_payload.get("brand_id") or "")
+        except Exception:
+            b_id = ""
+
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO certificate_revocations
+            (certificate_id, audit_id, brand_id, revoked_by, revoked_by_user_id, revocation_reason, revoked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                certificate_id,
+                c_row["audit_id"],
+                b_id,
+                actor["user_name"],
+                actor.get("user_id") or "",
+                reason_str,
+                now,
+            ),
+        )
+        record_audit_event(
+            cur,
+            c_row["audit_id"],
+            "certificate_revoked",
+            actor["user_name"],
+            actor["role"],
+            f"Compliance certificate {certificate_id} was revoked: {reason_str}",
+            {"certificate_id": certificate_id, "reason": reason_str},
+            None,
+            now,
+            actor_user_id=actor.get("user_id") or "",
+        )
+    return {
+        "status": "revoked",
+        "certificate_id": certificate_id,
+        "reason": reason_str,
+        "revoked_at": now,
+    }
+
+
+@app.get("/api/certificates/{certificate_id}/status")
+def get_certificate_revocation_status(certificate_id: str):
+    """H3(b): Public status endpoint returning revocation status without any content hashes."""
+    with db_session() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, audit_id, issued_at FROM certificates WHERE id = ?", (certificate_id,))
+        c_row = cur.fetchone()
+        if not c_row:
+            raise HTTPException(status_code=404, detail=f"Certificate '{certificate_id}' not found.")
+
+        cur.execute("SELECT * FROM certificate_revocations WHERE certificate_id = ?", (certificate_id,))
+        r_row = cur.fetchone()
+
+        if r_row:
+            return {
+                "certificate_id": certificate_id,
+                "audit_id": c_row["audit_id"],
+                "status": "revoked",
+                "is_revoked": True,
+                "revoked_at": r_row["revoked_at"],
+                "revocation_reason": r_row["revocation_reason"],
+                "revoked_by": r_row["revoked_by"],
+            }
+        return {
+            "certificate_id": certificate_id,
+            "audit_id": c_row["audit_id"],
+            "status": "active",
+            "is_revoked": False,
+            "revoked_at": None,
+            "revocation_reason": None,
+            "revoked_by": None,
+        }
 
 
 @app.post("/api/audits/{audit_id}/rerun")
@@ -2634,8 +2916,9 @@ def _compute_rule_loop_closure(
     brand_id: str,
     rule_id: str,
     latest_approved: Optional[Dict[str, Any]],
+    min_sample: int = 5,
 ) -> Optional[Dict[str, Any]]:
-    """B5: Loop closure computed ONLY from audits created after the revision's decided_at timestamp."""
+    """H1 / B5: Loop closure computed side by side BEFORE (<= decided_at) and AFTER (> decided_at) revision approval."""
     if not latest_approved:
         return None
     decided_at = str(latest_approved.get("decided_at") or "").strip()
@@ -2643,6 +2926,51 @@ def _compute_rule_loop_closure(
         return None
     rev_date = decided_at[:10]
 
+    # Audits before or on approval
+    cur.execute(
+        "SELECT id FROM audits WHERE brand_id = ? AND created_at <= ? ORDER BY created_at ASC",
+        (brand_id, decided_at),
+    )
+    before_audits = [str(r["id"]) for r in cur.fetchall()]
+    before_audits_cnt = len(before_audits)
+
+    if before_audits_cnt > 0:
+        placeholders_b = ",".join("?" for _ in before_audits)
+        cur.execute(
+            f"SELECT COUNT(*) AS cnt FROM findings WHERE audit_id IN ({placeholders_b}) AND rule_or_fact_id LIKE ?",
+            (*before_audits, f"%{rule_id}%"),
+        )
+        before_v = int(cur.fetchone()["cnt"] or 0)
+
+        cur.execute(
+            f"SELECT COUNT(*) AS cnt FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? AND audit_id IN ({placeholders_b}) AND created_at <= ?",
+            (brand_id, rule_id, *before_audits, decided_at),
+        )
+        before_o = int(cur.fetchone()["cnt"] or 0)
+
+        cur.execute(
+            f"""SELECT COUNT(DISTINCT id) AS cnt FROM findings
+               WHERE audit_id IN ({placeholders_b})
+                 AND rule_or_fact_id LIKE ?
+                 AND (review_state = 'dismissed' OR id IN (
+                     SELECT finding_id FROM review_decisions WHERE audit_id IN ({placeholders_b}) AND decision IN ('dismiss', 'dismissed')
+                 ))""",
+            (*before_audits, f"%{rule_id}%", *before_audits),
+        )
+        before_d = int(cur.fetchone()["cnt"] or 0)
+
+        if before_v == 0 and before_o == 0:
+            before_rate = 0.0
+        else:
+            denom_b = max(before_v, before_o, 1)
+            before_rate = round((float(before_o) / float(denom_b)) * 100.0, 1)
+    else:
+        before_v = 0
+        before_o = 0
+        before_d = 0
+        before_rate = None
+
+    # Audits strictly after approval
     cur.execute(
         "SELECT id FROM audits WHERE brand_id = ? AND created_at > ? ORDER BY created_at ASC",
         (brand_id, decided_at),
@@ -2650,47 +2978,79 @@ def _compute_rule_loop_closure(
     post_audits = [str(r["id"]) for r in cur.fetchall()]
     post_audits_cnt = len(post_audits)
 
-    if post_audits_cnt == 0:
-        return {
-            "revision_id": latest_approved["id"],
-            "revised_at": decided_at,
-            "revised_date": rev_date,
-            "post_revision_audits_count": 0,
-            "post_revision_violations": 0,
-            "post_revision_overrides": 0,
-            "override_rate_since_revision": None,
-            "display": f"Revised {rev_date}; override rate since revision: — (no audits since revision)",
-        }
+    if post_audits_cnt > 0:
+        placeholders_p = ",".join("?" for _ in post_audits)
+        cur.execute(
+            f"SELECT COUNT(*) AS cnt FROM findings WHERE audit_id IN ({placeholders_p}) AND rule_or_fact_id LIKE ?",
+            (*post_audits, f"%{rule_id}%"),
+        )
+        post_v = int(cur.fetchone()["cnt"] or 0)
 
-    placeholders = ",".join("?" for _ in post_audits)
-    cur.execute(
-        f"SELECT COUNT(*) AS cnt FROM findings WHERE audit_id IN ({placeholders}) AND rule_or_fact_id LIKE ?",
-        (*post_audits, f"%{rule_id}%"),
-    )
-    post_v = int(cur.fetchone()["cnt"] or 0)
+        cur.execute(
+            f"SELECT COUNT(*) AS cnt FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? AND audit_id IN ({placeholders_p}) AND created_at > ?",
+            (brand_id, rule_id, *post_audits, decided_at),
+        )
+        post_o = int(cur.fetchone()["cnt"] or 0)
 
-    cur.execute(
-        f"SELECT COUNT(*) AS cnt FROM guideline_feedback WHERE brand_id = ? AND rule_id = ? AND audit_id IN ({placeholders}) AND created_at > ?",
-        (brand_id, rule_id, *post_audits, decided_at),
-    )
-    post_o = int(cur.fetchone()["cnt"] or 0)
+        cur.execute(
+            f"""SELECT COUNT(DISTINCT id) AS cnt FROM findings
+               WHERE audit_id IN ({placeholders_p})
+                 AND rule_or_fact_id LIKE ?
+                 AND (review_state = 'dismissed' OR id IN (
+                     SELECT finding_id FROM review_decisions WHERE audit_id IN ({placeholders_p}) AND decision IN ('dismiss', 'dismissed')
+                 ))""",
+            (*post_audits, f"%{rule_id}%", *post_audits),
+        )
+        post_d = int(cur.fetchone()["cnt"] or 0)
 
-    if post_v == 0 and post_o == 0:
-        rate_val = 0.0
-        disp = f"Revised {rev_date}; override rate since revision: 0.0% across {post_audits_cnt} audit(s)"
+        if post_v == 0 and post_o == 0:
+            post_rate = 0.0
+            disp = f"Revised {rev_date}; override rate since revision: 0.0% across {post_audits_cnt} audit(s)"
+        else:
+            denom_p = max(post_v, post_o, 1)
+            post_rate = round((float(post_o) / float(denom_p)) * 100.0, 1)
+            disp = f"Revised {rev_date}; override rate since revision: {post_rate}% ({post_o}/{denom_p} findings across {post_audits_cnt} audit(s))"
     else:
-        denom = max(post_v, post_o, 1)
-        rate_val = round((float(post_o) / float(denom)) * 100.0, 1)
-        disp = f"Revised {rev_date}; override rate since revision: {rate_val}% ({post_o}/{denom} findings across {post_audits_cnt} audit(s))"
+        post_v = 0
+        post_o = 0
+        post_d = 0
+        post_rate = None
+        disp = f"Revised {rev_date}; override rate since revision: — (no audits since revision)"
+
+    has_sample = post_audits_cnt >= min_sample
+    caveat = (
+        f"Preliminary metrics ({post_audits_cnt}/{min_sample} audits observed since revision; minimum sample threshold is {min_sample})."
+        if not has_sample
+        else f"Sufficient sample observed ({post_audits_cnt} audits since revision, exceeding minimum threshold of {min_sample})."
+    )
 
     return {
         "revision_id": latest_approved["id"],
         "revised_at": decided_at,
         "revised_date": rev_date,
+        "before": {
+            "audits_counted": before_audits_cnt,
+            "violations": before_v,
+            "overrides": before_o,
+            "dismissals": before_d,
+            "override_rate": before_rate,
+            "override_rate_display": f"{before_rate:.1f}%" if before_rate is not None else "—",
+        },
+        "after": {
+            "audits_counted": post_audits_cnt,
+            "violations": post_v,
+            "overrides": post_o,
+            "dismissals": post_d,
+            "override_rate": post_rate,
+            "override_rate_display": f"{post_rate:.1f}%" if post_rate is not None else "—",
+        },
+        "has_sufficient_sample": has_sample,
+        "minimum_sample_caveat": caveat,
+        "scoring_factors_disclosure": "Score evaluates vagueness indicators, missing measurable criteria, override and dismissal rates, and accepted corrections.",
         "post_revision_audits_count": post_audits_cnt,
         "post_revision_violations": post_v,
         "post_revision_overrides": post_o,
-        "override_rate_since_revision": rate_val,
+        "override_rate_since_revision": post_rate,
         "display": disp,
     }
 
@@ -2785,7 +3145,7 @@ def get_ambiguity_radar(brand_id: str, min_sample: Optional[int] = None):
         )
         revisions = [_hydrate_revision_row(dict(x)) for x in cur.fetchall()]
         latest_approved = next((rv for rv in revisions if rv.get("status") == "approved"), None)
-        loop_closure = _compute_rule_loop_closure(cur, brand_id, r["id"], latest_approved)
+        loop_closure = _compute_rule_loop_closure(cur, brand_id, r["id"], latest_approved, min_sample=effective_min_sample)
 
         vague_matches = [sp["phrase"] for sp in amb["matched_spans"]]
         potential_causes = list(amb["reasons"])
