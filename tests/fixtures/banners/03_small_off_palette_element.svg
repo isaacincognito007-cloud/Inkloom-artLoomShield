@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" width="400" height="240">
+  <rect x="0" y="0" width="400" height="240" fill="#FFFFFF"/>
+  <rect id="logo" data-loomshield-logo="true" x="40" y="40" width="80" height="36" fill="#17191C"/>
+  <text x="40" y="120" fill="#17191C" font-size="16">Enterprise Payouts</text>
+  <!-- Small unapproved lime green badge icon -->
+  <circle cx="350" cy="50" r="12" fill="#39FF14"/>
+</svg>

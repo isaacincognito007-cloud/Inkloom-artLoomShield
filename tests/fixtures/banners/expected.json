@@ -1,0 +1,69 @@
+{
+  "01_on_palette_pass.svg": {
+    "description": "On-palette pass banner with compliant brand colors and marked logo",
+    "palette_status": "pass",
+    "flagged_cells_count": 0,
+    "clear_space_state": "Passed",
+    "contrast_state": "Passed"
+  },
+  "02_one_off_palette_cell.svg": {
+    "description": "One off-palette neon magenta block flagging exactly one cell",
+    "palette_status": "fail",
+    "flagged_cells_count": 1
+  },
+  "03_small_off_palette_element.svg": {
+    "description": "Small lime green badge icon flagging the top-right cell",
+    "palette_status": "fail",
+    "flagged_cells_count": 1
+  },
+  "04_low_contrast_svg_text.svg": {
+    "description": "SVG text with insufficient contrast #94A3B8 on #FFFFFF",
+    "contrast_state": "Findings",
+    "contrast_measured_count": 1
+  },
+  "05_inherited_fill_text.svg": {
+    "description": "SVG text inheriting fill #0B2545 from enclosing <g> group",
+    "contrast_state": "Passed",
+    "contrast_measured_count": 1
+  },
+  "06_unresolvable_fill.svg": {
+    "description": "SVG text using gradient fill url(#grad1) unresolvable to static color",
+    "contrast_measured_count": 0
+  },
+  "07_crowded_logo.svg": {
+    "description": "Logo crowded too close to edge and sibling element",
+    "clear_space_state": "Findings",
+    "clear_space_passed": false,
+    "located_method": "SVG marker"
+  },
+  "08_ample_clear_space.svg": {
+    "description": "Logo placed in canvas center with generous clearance on all sides",
+    "clear_space_state": "Passed",
+    "clear_space_passed": true,
+    "located_method": "SVG marker"
+  },
+  "09_transformed_logo_group.svg": {
+    "description": "Logo inside <g> element with translate() transform matrix",
+    "clear_space_state": "Passed",
+    "clear_space_passed": true,
+    "located_method": "SVG marker"
+  },
+  "10_template_match_positive.png": {
+    "description": "Raster PNG containing approved logo template at 1.0x scale",
+    "template_match": true,
+    "min_score": 0.8,
+    "clear_space_state": "Passed",
+    "located_method_prefix": "Template match"
+  },
+  "11_template_match_negative.png": {
+    "description": "Raster PNG with no logo mark, template match should fail",
+    "template_match": false,
+    "clear_space_state": "Not Checked",
+    "reason_contains": "Not Checked: approved logo not found"
+  },
+  "12_no_logo.svg": {
+    "description": "SVG banner with no logo element or marker at all",
+    "clear_space_state": "Not Checked",
+    "located_method": "None"
+  }
+}

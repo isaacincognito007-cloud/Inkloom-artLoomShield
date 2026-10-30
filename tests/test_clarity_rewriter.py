@@ -573,12 +573,12 @@ def test_f9_every_emitted_finding_detection_method_starts_with_tier_prefix():
 def test_f10_readme_traceability_backticked_test_names_exist_in_pytest_collection():
     import subprocess
     from pathlib import Path
-    readme_path = Path(__file__).resolve().parent.parent / "README.md"
+    root = Path(__file__).resolve().parent.parent
+    readme_path = root / "README.md"
     assert readme_path.exists(), "README.md not found"
-    readme_text = readme_path.read_text(encoding="utf-8")
 
-    backticked_tests = set(re.findall(r"`(test_[a-zA-Z0-9_]+)`", readme_text))
-    assert len(backticked_tests) >= 30, f"Expected at least 30 test names in README, found {len(backticked_tests)}"
+    doc_paths = [readme_path] + list((root / "docs").glob("*.md"))
+    assert len(doc_paths) >= 6, f"Expected at least 6 documentation files, found {len(doc_paths)}"
 
     proc = subprocess.run(
         ["python", "-m", "pytest", "--collect-only", "-q"],
@@ -592,5 +592,75 @@ def test_f10_readme_traceability_backticked_test_names_exist_in_pytest_collectio
             name = line.split("::")[-1].split("[")[0].strip()
             collected_tests.add(name)
 
-    missing = backticked_tests - collected_tests
-    assert not missing, f"README references tests not found in pytest collection: {missing}"
+    all_missing = {}
+    total_found = 0
+    for doc in doc_paths:
+        text = doc.read_text(encoding="utf-8")
+        backticked = set(re.findall(r"`(test_[a-zA-Z0-9_]+)`", text))
+        total_found += len(backticked)
+        missing = backticked - collected_tests
+        if missing:
+            all_missing[doc.name] = sorted(missing)
+
+    assert total_found >= 50, f"Expected at least 50 test references across docs, found {total_found}"
+    assert not all_missing, f"Docs reference tests not found in pytest collection: {all_missing}"
+
+
+def test_h1_clarity_rewriter_before_after_loop_closure_metrics():
+    """H1: For every approved revision, show side by side for that rule: BEFORE and AFTER metrics with caveat."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("LOOMSHIELD_WORKSPACE_MODE", "demo")
+        init_db()
+        reset_demo_workspace()
+        client = TestClient(app)
+
+        # 1. Propose and approve revision for RULE-TONE-02
+        prop_res = client.post(
+            "/api/ambiguity-radar/novapay/rules/RULE-TONE-02/propose",
+            json={},
+            headers={"X-Test-Role": "Brand Administrator"},
+        )
+        assert prop_res.status_code == 200, prop_res.text
+        rev_id = prop_res.json()["id"]
+
+        appr_res = client.post(
+            f"/api/ambiguity-radar/novapay/revisions/{rev_id}/approve",
+            headers={"X-Test-Role": "Brand Administrator"},
+        )
+        assert appr_res.status_code == 200, appr_res.text
+
+        # 2. Query radar endpoint and check loop closure side by side structure
+        radar = client.get("/api/ambiguity-radar/novapay").json()
+        r_tone = next(r for r in radar["rules_analysis"] if r["rule_id"] == "RULE-TONE-02")
+        lc = r_tone.get("loop_closure")
+        assert lc is not None, "loop_closure must be present for approved revision"
+        assert lc["revision_id"] == rev_id
+
+        # BEFORE metrics
+        before = lc.get("before")
+        assert before is not None, "before metrics must be present"
+        assert "audits_counted" in before
+        assert "violations" in before
+        assert "overrides" in before
+        assert "dismissals" in before
+        assert "override_rate" in before
+        assert "override_rate_display" in before
+        assert before["audits_counted"] >= 2
+        assert before["overrides"] >= 2
+
+        # AFTER metrics
+        after = lc.get("after")
+        assert after is not None, "after metrics must be present"
+        assert "audits_counted" in after
+        assert "violations" in after
+        assert "overrides" in after
+        assert "dismissals" in after
+        assert "override_rate" in after
+        assert "override_rate_display" in after
+
+        # Caveat and scoring disclosure
+        assert "has_sufficient_sample" in lc
+        assert "minimum_sample_caveat" in lc
+        assert "Preliminary" in lc["minimum_sample_caveat"] or "Sufficient" in lc["minimum_sample_caveat"]
+        assert "scoring_factors_disclosure" in lc
+        assert "Score evaluates vagueness indicators" in lc["scoring_factors_disclosure"]

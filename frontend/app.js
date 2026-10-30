@@ -528,6 +528,7 @@ async function apiFetch(url, options = {}, timeoutMs = 45000) {
       AppState.userName = 'Sample workspace user';
       AppState.userInitials = 'SW';
       AppState.activeRole = (AppState.session && AppState.session.configured_role) || 'Content Creator';
+      try { sessionStorage.removeItem('loomshield_demo_session'); } catch (_e) {}
       updateTopbarContext();
       if (AppState.activeView === 'new-audit' && AppState.auditStage === 'results') {
         updateWorkspaceApprovalGuard();
@@ -843,24 +844,25 @@ function bindNavigationEvents() {
     }
   });
 
-  document.getElementById('resultsCertificateBtn')?.addEventListener('click', () => {
-    if (AppState.currentAudit && AppState.currentAudit.id) {
-      openCertificateModal(AppState.currentAudit.id);
-    }
-  });
+  const resultsCertBtn = document.getElementById('resultsCertificateBtn');
+  if (resultsCertBtn) {
+    resultsCertBtn.addEventListener('click', async () => {
+      if (resultsCertBtn.disabled || resultsCertBtn.dataset.busy === '1') return;
+      resultsCertBtn.dataset.busy = '1';
+      resultsCertBtn.disabled = true;
+      try {
+        if (AppState.currentAudit && AppState.currentAudit.id) {
+          await openCertificateModal(AppState.currentAudit.id);
+        }
+      } finally {
+        resultsCertBtn.disabled = false;
+        resultsCertBtn.dataset.busy = '0';
+      }
+    });
+  }
 
   window.addEventListener('hashchange', async () => {
-    const h = window.location.hash;
-    if (h === '#verify') {
-      await switchView('verify-certificate');
-    } else if (h === '#new-audit') {
-      AppState.auditStage = 'input';
-      AppState.wizardMode = false;
-      await switchView('new-audit');
-    } else if (h === '#results') {
-      const firstId = AppState.overviewData?.recent_audits?.[0]?.id || 'AUD-1001';
-      await openAuditById(firstId);
-    }
+    await handleHashRouting();
   });
 
   document.getElementById('overviewNewAuditBtn').addEventListener('click', () => {
@@ -929,20 +931,31 @@ function bindNavigationEvents() {
     }
   });
 
-  document.getElementById('resetDemoBtn').addEventListener('click', () => {
+  document.getElementById('resetDemoBtn')?.addEventListener('click', () => {
+    const btn = document.getElementById('resetDemoBtn');
+    if (btn && (btn.disabled || btn.dataset.busy === '1')) return;
     openModalDialog({
-      title: 'Reset demo workspace',
-      bodyHtml: 'This will restore the seeded NovaPay Enterprise and Verdant Clinical Systems demo guidelines, verified facts, and initial sample audits. Continue?',
-      confirmLabel: 'Reset demo data',
+      title: 'Reset demo workspace?',
+      bodyHtml: '<p><strong>Notice:</strong> This workspace is shared by everyone using this demo link. Resetting will restore seeded sample audits, guidelines, and verified facts for all active visitors. Are you sure you want to reset?</p>',
+      confirmLabel: 'Reset shared demo workspace',
       onConfirm: async () => {
+        if (btn) {
+          btn.disabled = true;
+          btn.dataset.busy = '1';
+        }
         try {
           await apiFetch('/api/demo/reset', { method: 'POST' });
           AppState.currentAudit = null;
           AppState.selectedFindingId = null;
           await loadBrandsAndInit();
-          showToast('Demo workspace restored to initial state.');
+          showToast('Shared demo workspace restored to initial state.');
         } catch (err) {
           showToast(`Reset failed: ${err.message}`);
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.dataset.busy = '0';
+          }
         }
       },
     });
@@ -1038,11 +1051,88 @@ function bindNavigationEvents() {
   }
 }
 
-async function switchView(viewName) {
+let isNavigatingHash = false;
+
+async function handleHashRouting() {
+  if (isNavigatingHash) return;
+  isNavigatingHash = true;
+  try {
+    const rawHash = (window.location.hash || '').trim();
+    if (!rawHash || rawHash === '#' || rawHash === '#/') {
+      await switchView('overview', false);
+      return;
+    }
+    const auditMatch = rawHash.match(/^#\/?audit\/([A-Za-z0-9_-]+)$/);
+    if (auditMatch) {
+      await openAuditById(auditMatch[1], false);
+      return;
+    }
+    if (rawHash === '#results' || rawHash === '#/results') {
+      if (AppState.currentAudit && AppState.currentAudit.id) {
+        await openAuditById(AppState.currentAudit.id, false);
+      } else if (AppState.overviewData?.recent_audits?.length > 0) {
+        await openAuditById(AppState.overviewData.recent_audits[0].id, false);
+      } else {
+        AppState.auditStage = 'input';
+        AppState.wizardMode = false;
+        await switchView('new-audit', false);
+      }
+      return;
+    }
+    if (rawHash === '#/queue' || rawHash === '#queue') {
+      await switchView('review-queue', false);
+    } else if (rawHash === '#/insights' || rawHash === '#insights') {
+      await switchView('ambiguity-radar', false);
+    } else if (rawHash === '#/history' || rawHash === '#history') {
+      await switchView('audit-history', false);
+    } else if (rawHash === '#/vault' || rawHash === '#vault') {
+      await switchView('brand-vault', false);
+    } else if (rawHash === '#/settings' || rawHash === '#settings') {
+      await switchView('settings', false);
+    } else if (rawHash === '#/overview' || rawHash === '#overview') {
+      await switchView('overview', false);
+    } else if (rawHash === '#/verify' || rawHash === '#verify') {
+      await switchView('verify-certificate', false);
+    } else if (rawHash === '#/new-audit' || rawHash === '#new-audit') {
+      AppState.auditStage = 'input';
+      if (AppState.wizardMode !== true) {
+        AppState.wizardMode = false;
+      }
+      await switchView('new-audit', false);
+    } else if (rawHash === '#/about' || rawHash === '#about') {
+      await switchView('about-roadmap', false);
+    } else if (rawHash === '#/engine-status' || rawHash === '#engine-status') {
+      await switchView('engine-status', false);
+    }
+  } finally {
+    isNavigatingHash = false;
+  }
+}
+
+async function switchView(viewName, updateHash = true) {
   if (AppState.activeView !== viewName && !confirmDiscardUnsavedChanges()) {
     return;
   }
   AppState.activeView = viewName;
+  if (updateHash && !isNavigatingHash) {
+    const hashMap = {
+      'overview': '#/overview',
+      'review-queue': '#/queue',
+      'ambiguity-radar': '#/insights',
+      'audit-history': '#/history',
+      'brand-vault': '#/vault',
+      'settings': '#/settings',
+      'verify-certificate': '#/verify',
+      'new-audit': '#/new-audit',
+      'engine-status': '#/engine-status',
+      'about-roadmap': '#/about',
+    };
+    if (hashMap[viewName] && window.location.hash !== hashMap[viewName]) {
+      isNavigatingHash = true;
+      window.location.hash = hashMap[viewName];
+      setTimeout(() => { isNavigatingHash = false; }, 50);
+    }
+  }
   document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
     const isCurrent = btn.getAttribute('data-view') === viewName;
     btn.classList.toggle('active', isCurrent);
@@ -1081,6 +1171,20 @@ async function loadBrandsAndInit() {
       await loadBrandsAndInit();
     });
   }
+
+  try {
+    const savedSessionStr = sessionStorage.getItem('loomshield_demo_session');
+    if (savedSessionStr) {
+      const saved = JSON.parse(savedSessionStr);
+      if (saved && saved.token) {
+        AppState.demoToken = saved.token;
+        AppState.userId = saved.userId || '';
+        AppState.userName = saved.userName || 'Demo User';
+        AppState.userInitials = saved.userInitials || '';
+        AppState.activeRole = saved.activeRole || 'Content Creator';
+      }
+    }
+  } catch (_e) {}
 
   const timeoutMs = isInitialStartup ? 90000 : 45000;
   if (isInitialStartup && sessionBanner && sessionText) {
@@ -1135,16 +1239,7 @@ async function loadBrandsAndInit() {
     }
     await refreshAllBrandData();
     updateTopbarContext();
-    if (window.location.hash === '#verify') {
-      await switchView('verify-certificate');
-    } else if (window.location.hash === '#new-audit') {
-      AppState.auditStage = 'input';
-      AppState.wizardMode = false;
-      await switchView('new-audit');
-    } else if (window.location.hash === '#results') {
-      const firstId = AppState.overviewData?.recent_audits?.[0]?.id || 'AUD-1001';
-      await openAuditById(firstId);
-    }
+    await handleHashRouting();
   } catch (err) {
     isInitialStartup = false;
     showToast(`Failed to initialize workspace: ${err.message}`);
@@ -1354,7 +1449,7 @@ function renderRecentAuditsTable() {
   });
 }
 
-async function openAuditById(auditId) {
+async function openAuditById(auditId, updateHash = true) {
   try {
     const audit = await apiFetch(`/api/audits/${encodeURIComponent(auditId)}`);
     AppState.currentAudit = audit;
@@ -1364,7 +1459,12 @@ async function openAuditById(auditId) {
     AppState.selectedStatusFilter = 'ALL';
     AppState.findingSearchQuery = '';
     AppState.selectedFindingId = null;
-    await switchView('new-audit');
+    if (updateHash && !isNavigatingHash) {
+      isNavigatingHash = true;
+      window.location.hash = `#/audit/${encodeURIComponent(auditId)}`;
+      setTimeout(() => { isNavigatingHash = false; }, 50);
+    }
+    await switchView('new-audit', false);
   } catch (err) {
     showToast(`Could not load audit ${auditId}: ${err.message}`);
   }
@@ -1691,19 +1791,29 @@ function bindAuditWorkspaceEvents() {
     }
   });
 
-  document.getElementById('runAuditBtn').addEventListener('click', async () => {
-    const fInput = document.getElementById('auditFileUpload');
-    if (AppState.inputMethod === 'upload' && fInput.files && fInput.files.length > 0) {
-      await executeFileUploadAudit(fInput.files[0]);
-      fInput.value = '';
-      const fCard = document.getElementById('uploadFileCard');
-      if (fCard) fCard.style.display = 'none';
-      const previewBar = document.getElementById('uploadFilePreviewBar');
-      if (previewBar) previewBar.style.display = 'none';
-    } else if (AppState.inputMethod === 'upload' && (!fInput.files || fInput.files.length === 0)) {
-      showToast('Please select or drop a file to audit, or switch to "Paste content".');
-    } else {
-      await executeTextAudit();
+  const runAuditBtnEl = document.getElementById('runAuditBtn');
+  runAuditBtnEl.addEventListener('click', async () => {
+    if (runAuditBtnEl.disabled || runAuditBtnEl.dataset.busy === '1') return;
+    runAuditBtnEl.dataset.busy = '1';
+    runAuditBtnEl.disabled = true;
+    try {
+      const fInput = document.getElementById('auditFileUpload');
+      if (AppState.inputMethod === 'upload' && fInput.files && fInput.files.length > 0) {
+        await executeFileUploadAudit(fInput.files[0]);
+        fInput.value = '';
+        const fCard = document.getElementById('uploadFileCard');
+        if (fCard) fCard.style.display = 'none';
+        const previewBar = document.getElementById('uploadFilePreviewBar');
+        if (previewBar) previewBar.style.display = 'none';
+      } else if (AppState.inputMethod === 'upload' && (!fInput.files || fInput.files.length === 0)) {
+        showToast('Please select or drop a file to audit, or switch to "Paste content".');
+      } else {
+        await executeTextAudit();
+      }
+    } finally {
+      runAuditBtnEl.disabled = false;
+      runAuditBtnEl.dataset.busy = '0';
+      updateRunAuditBtnState();
     }
   });
 
@@ -1770,8 +1880,16 @@ function bindAuditWorkspaceEvents() {
   // Workflow transitions
   document.querySelectorAll('#workflowTransitionBox button[data-wf]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const targetState = btn.getAttribute('data-wf');
-      await transitionCurrentAuditWorkflow(targetState);
+      if (btn.disabled || btn.dataset.busy === '1') return;
+      const allBtns = document.querySelectorAll('#workflowTransitionBox button[data-wf]');
+      allBtns.forEach((b) => { b.disabled = true; b.dataset.busy = '1'; });
+      try {
+        const targetState = btn.getAttribute('data-wf');
+        await transitionCurrentAuditWorkflow(targetState);
+      } finally {
+        allBtns.forEach((b) => { b.disabled = false; b.dataset.busy = '0'; });
+        updateWorkspaceApprovalGuard();
+      }
     });
   });
 
@@ -4343,6 +4461,42 @@ function renderVaultVisualTab(container) {
 
     <div class="card">
       <div class="card-header">
+        <h2 class="card-title">Approved brand logo &amp; clear space</h2>
+      </div>
+      <div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 16px;">
+        <div style="flex: 1; min-width: 240px;">
+          <label style="font-size: 13px; font-weight: 600; display: block; margin-bottom: 6px;">Approved logo asset (PNG or SVG, max 300 KB)</label>
+          ${b.approved_logo_b64 ? `
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+              <img src="${b.approved_logo_b64}" alt="Approved brand logo" style="max-height: 48px; max-width: 140px; object-fit: contain; border: 1px solid var(--border-color); padding: 4px; border-radius: 4px; background: #FFFFFF;" />
+              <div>
+                <div class="mono-id" style="font-size: 12px; font-weight: 600;">${escapeHtml(b.approved_logo_filename || 'approved_logo')}</div>
+                <div style="font-size: 11px; color: var(--slate-600);">${escapeHtml(b.approved_logo_format || '')}</div>
+              </div>
+              <button type="button" class="btn btn-sm btn-danger-outline" id="vaultDeleteLogoBtn" style="margin-left: auto;">Remove</button>
+            </div>
+          ` : `
+            <div style="font-size: 12.5px; color: var(--slate-600); margin-bottom: 8px;">No approved logo asset configured. Upload an approved logo for template matching.</div>
+          `}
+          <input type="file" id="vaultApprovedLogoInput" accept=".png,.svg,image/png,image/svg+xml" class="form-control" style="font-size: 12px; padding: 4px 8px;" />
+        </div>
+        <div style="flex: 1; min-width: 240px;">
+          <div class="input-form-grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div class="form-group">
+              <label for="visClearSpaceRatio" style="font-size: 12.5px;">Clear space ratio (&times; logo height)</label>
+              <input type="number" id="visClearSpaceRatio" class="form-control vault-watch" step="0.05" min="0.1" max="2.0" value="${b.min_clear_space_ratio || 0.25}" />
+            </div>
+            <div class="form-group">
+              <label for="visClearSpacePx" style="font-size: 12.5px;">Fallback clearance (px, optional)</label>
+              <input type="number" id="visClearSpacePx" class="form-control vault-watch" step="1" min="0" max="200" value="${b.min_clear_space_px || 16}" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
         <h2 class="card-title">Typography, spacing &amp; logo usage guidelines</h2>
         <button type="button" class="btn btn-accent btn-sm" id="saveVisualSpecsBtn">Save visual guidelines</button>
       </div>
@@ -4452,17 +4606,62 @@ function renderVaultVisualTab(container) {
     });
   });
 
+
+  const logoInput = document.getElementById('vaultApprovedLogoInput');
+  if (logoInput) {
+    logoInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (file.size > 300 * 1024) {
+        showToast('Logo file exceeds 300 KB limit.');
+        return;
+      }
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await apiFetch(`/api/vault/${encodeURIComponent(AppState.activeBrandId)}/logo`, {
+          method: 'POST',
+          body: fd,
+        });
+        AppState.vaultData = res.vault || AppState.vaultData;
+        renderBrandVaultTab();
+        showToast('Approved brand logo uploaded and saved.');
+      } catch (err) {
+        showToast(`Logo upload failed: ${err.message}`);
+      }
+    });
+  }
+
+  const delLogoBtn = document.getElementById('vaultDeleteLogoBtn');
+  if (delLogoBtn) {
+    delLogoBtn.addEventListener('click', async () => {
+      try {
+        const res = await apiFetch(`/api/vault/${encodeURIComponent(AppState.activeBrandId)}/logo`, {
+          method: 'DELETE',
+        });
+        AppState.vaultData = res.vault || AppState.vaultData;
+        renderBrandVaultTab();
+        showToast('Approved brand logo removed.');
+      } catch (err) {
+        showToast(`Failed to remove logo: ${err.message}`);
+      }
+    });
+  }
+
   document.getElementById('saveVisualSpecsBtn').addEventListener('click', async () => {
     try {
-      AppState.vaultData = await apiFetch(`/api/vault/${encodeURIComponent(AppState.activeBrandId)}/visual-specs`, {
+      const res = await apiFetch(`/api/vault/${encodeURIComponent(AppState.activeBrandId)}/visual-specs`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           typography_specs: document.getElementById('visTypography').value,
           spacing_rules: document.getElementById('visSpacing').value,
           logo_placement_constraints: document.getElementById('visLogo').value,
+          min_clear_space_ratio: parseFloat(document.getElementById('visClearSpaceRatio').value) || 0.25,
+          min_clear_space_px: parseInt(document.getElementById('visClearSpacePx').value, 10) || 16,
         }),
       });
+      AppState.vaultData = res.vault || res;
       setUnsavedVaultChanges(false);
       showToast('Visual identity guidelines saved.');
     } catch (err) {
@@ -5023,6 +5222,11 @@ function renderVisualHeatmapInspector(viewer, audit, docHtml) {
         <span class="heatmap-legend-item"><span class="legend-swatch-fail" aria-hidden="true">///</span> FAIL: Diagonal hatch + FAIL label (&Delta;E above threshold)</span>
         <span class="heatmap-legend-item"><span class="legend-swatch-logo" aria-hidden="true">[ ]</span> Clear space: Dashed clearance boundary</span>
       </div>
+      ${cs.located_method && cs.located_method !== 'None' ? `
+        <div class="heatmap-logo-source-indicator" style="padding: 4px 12px; font-size: 11.5px; color: var(--slate-700); background: #F8FAFC; border-top: 1px solid var(--border-color);">
+          Logo located by: <strong>${escapeHtml(cs.located_method)}</strong>
+        </div>
+      ` : ''}
 
       <div class="heatmap-disclosures-box">
         <div style="font-size: 12.5px; color: var(--slate-800);">
@@ -5299,7 +5503,51 @@ async function renderAmbiguityRadarView() {
               <div class="insight-card-body">
                 ${loopClosure ? `
                   <div class="loop-closure-banner" style="padding: 10px 12px; background: var(--status-success-bg); border: 1px solid var(--status-success-border); border-radius: var(--radius-control); font-size: 13px; color: var(--slate-800);">
-                    <strong>Loop closure:</strong> ${escapeHtml(loopClosure.display)}
+                    <div><strong>Loop closure:</strong> ${escapeHtml(loopClosure.display)}</div>
+                    <div class="loop-closure-caveat" style="margin-top: 4px; font-size: 12px; color: var(--slate-700);">
+                      <strong>Sample status:</strong> ${escapeHtml(loopClosure.minimum_sample_caveat || '')}
+                    </div>
+                    <div class="loop-closure-side-by-side" style="margin-top: 8px; overflow-x: auto;">
+                      <table class="data-table" style="width: 100%; font-size: 12px; background: #FFFFFF; border-radius: 4px;">
+                        <thead>
+                          <tr>
+                            <th scope="col" style="padding: 4px 8px;">Metric</th>
+                            <th scope="col" style="padding: 4px 8px;">Before Approval (&le; ${escapeHtml(loopClosure.revised_date || '')})</th>
+                            <th scope="col" style="padding: 4px 8px;">After Approval (&gt; ${escapeHtml(loopClosure.revised_date || '')})</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td style="padding: 4px 8px;">Audits counted</td>
+                            <td class="mono-id" style="padding: 4px 8px;">${loopClosure.before ? loopClosure.before.audits_counted : 0}</td>
+                            <td class="mono-id" style="padding: 4px 8px;">${loopClosure.after ? loopClosure.after.audits_counted : 0}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding: 4px 8px;">Violations</td>
+                            <td class="mono-id" style="padding: 4px 8px;">${loopClosure.before ? loopClosure.before.violations : 0}</td>
+                            <td class="mono-id" style="padding: 4px 8px;">${loopClosure.after ? loopClosure.after.violations : 0}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding: 4px 8px;">Reviewer overrides</td>
+                            <td class="mono-id" style="padding: 4px 8px;">${loopClosure.before ? loopClosure.before.overrides : 0}</td>
+                            <td class="mono-id" style="padding: 4px 8px;">${loopClosure.after ? loopClosure.after.overrides : 0}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding: 4px 8px;">Dismissals</td>
+                            <td class="mono-id" style="padding: 4px 8px;">${loopClosure.before ? loopClosure.before.dismissals : 0}</td>
+                            <td class="mono-id" style="padding: 4px 8px;">${loopClosure.after ? loopClosure.after.dismissals : 0}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding: 4px 8px;">Override rate</td>
+                            <td class="mono-id" style="padding: 4px 8px;"><strong>${loopClosure.before ? escapeHtml(loopClosure.before.override_rate_display) : '—'}</strong></td>
+                            <td class="mono-id" style="padding: 4px 8px;"><strong>${loopClosure.after ? escapeHtml(loopClosure.after.override_rate_display) : '—'}</strong></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div class="scoring-disclosure" style="margin-top: 6px; font-size: 11px; color: var(--slate-600); font-style: italic;">
+                      ${escapeHtml(loopClosure.scoring_factors_disclosure || 'Score evaluates vagueness indicators, missing measurable criteria, override and dismissal rates, and accepted corrections.')}
+                    </div>
                   </div>
                 ` : ''}
 
@@ -6162,7 +6410,7 @@ function initCommandPalette() {
 
   function getCommands() {
     const list = [
-      { type: 'Action', label: 'New audit', detail: 'Start auditing new document copy or files', run: () => { AppState.auditStage = 'input'; switchView('new-audit'); } },
+      { type: 'Action', label: 'New audit', detail: 'Start auditing new document copy or files', run: () => { AppState.auditStage = 'input'; AppState.wizardMode = true; AppState.wizardStep = 1; switchView('new-audit'); } },
       { type: 'Navigation', label: 'Go to Overview', detail: 'Workspace dashboard and recent audits', run: () => switchView('overview') },
       { type: 'Navigation', label: 'Go to Brand guidelines', detail: 'Tone, preferred words, facts, colours, accessibility', run: () => switchView('brand-vault') },
       { type: 'Navigation', label: 'Go to Review queue', detail: 'Track audits awaiting sign-off and approval', run: () => switchView('review-queue') },
@@ -6393,6 +6641,15 @@ async function signInAsDemoUser(userId) {
     } else if (AppState.activeView === 'review-queue') {
       await renderReviewQueueView();
     }
+    try {
+      sessionStorage.setItem('loomshield_demo_session', JSON.stringify({
+        token: AppState.demoToken,
+        userId: AppState.userId,
+        userName: AppState.userName,
+        userInitials: AppState.userInitials,
+        activeRole: AppState.activeRole,
+      }));
+    } catch (_e) {}
     showToast(`Signed in as ${AppState.userName} (${AppState.activeRole}).`);
   } catch (err) {
     showToast(`Demo sign-in failed: ${err.message}`);
@@ -6454,6 +6711,10 @@ async function openCertificateModal(auditId) {
               <div class="certificate-field-box">
                 <div class="certificate-field-label">Document &amp; Audit ID</div>
                 <div class="certificate-field-value">${escapeHtml(payload.document_name)} (<span class="mono-id">${escapeHtml(payload.audit_id)}</span>)</div>
+              </div>
+              <div class="certificate-field-box">
+                <div class="certificate-field-label">Submitted By</div>
+                <div class="certificate-field-value">${escapeHtml((payload.submitted_by && payload.submitted_by.name) || 'Content Creator')} (<span class="mono-id">${escapeHtml((payload.submitted_by && payload.submitted_by.user_id) || '—')}</span> &bull; ${escapeHtml((payload.submitted_by && payload.submitted_by.role) || 'Content Creator')})</div>
               </div>
               <div class="certificate-field-box">
                 <div class="certificate-field-label">Brand Guideline Version</div>
@@ -6681,10 +6942,11 @@ async function runCertificateVerification() {
       body: JSON.stringify({ certificate: parsedEnvelope }),
     });
 
-    const isValid = Boolean(res.valid);
+    const isRevoked = Boolean(res.is_revoked || res.status === 'revoked');
+    const isValid = Boolean(res.valid && !isRevoked);
     const reasonText = Array.isArray(res.reasons) && res.reasons.length > 0
       ? res.reasons.join(' ')
-      : (res.reason || (isValid ? 'Ed25519 signature and canonical JSON payload verified.' : 'Certificate verification failed.'));
+      : (res.reason || (isValid ? 'Ed25519 signature and canonical JSON payload verified.' : (isRevoked ? 'Certificate was revoked by administrator.' : 'Certificate verification failed.')));
     const isEph = Boolean(res.ephemeral_key ?? res.is_ephemeral_key);
     const keyNotice = isEph ? (res.key_notice || res.ephemeral_warning || 'ephemeral demo key: valid only until the server restarts') : '';
 
@@ -6696,20 +6958,27 @@ async function runCertificateVerification() {
         : 'MISMATCH: Stored audit content hash on this server does not match the certificate.';
     }
 
+    const badgeLabel = isRevoked ? 'Revoked (Signature Valid)' : (isValid ? 'Valid' : `Not valid (${escapeHtml(res.status || 'invalid')})`);
+    const badgeClass = isRevoked ? 'badge-error' : (isValid ? 'badge-passed' : 'badge-error');
     const badgeSvg = isValid
       ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>'
       : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
 
     box.style.display = 'block';
     box.innerHTML = `
-      <div class="card" style="border-left: 4px solid ${isValid ? 'var(--status-success)' : 'var(--status-error)'};">
+      <div class="card" style="border-left: 4px solid ${isRevoked ? '#B42318' : (isValid ? 'var(--status-success)' : 'var(--status-error)')};">
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px;">
-          <h3 class="card-title" id="verifyResultHeading">Verification Result: ${isValid ? 'Valid' : 'Not valid'}</h3>
-          <span class="status-badge ${isValid ? 'badge-passed' : 'badge-error'}" id="verifyResultBadge">
+          <h3 class="card-title" id="verifyResultHeading">Verification Result: ${isRevoked ? 'Revoked' : (isValid ? 'Valid' : 'Not valid')}</h3>
+          <span class="status-badge ${badgeClass}" id="verifyResultBadge">
             ${badgeSvg}
-            <span>${isValid ? 'Valid' : `Not valid (${escapeHtml(res.status || 'invalid')})`}</span>
+            <span>${badgeLabel}</span>
           </span>
         </div>
+        ${isRevoked ? `
+          <div class="alert alert-error" style="margin-bottom: 10px; background: #FEF3F2; border: 1px solid #FECDCA; color: #B42318; padding: 8px 12px; border-radius: 4px; font-size: 13px;">
+            <strong>REVOCATION NOTICE:</strong> This certificate was revoked on ${escapeHtml(res.revoked_at || '—')} by ${escapeHtml(res.revoked_by || 'Brand Administrator')}: "${escapeHtml(res.revocation_reason || 'Administrative revocation')}". The cryptographic signature remains mathematically valid.
+          </div>
+        ` : ''}
         <p style="font-size: 14px; font-weight: 600; color: var(--primary-ink); margin-bottom: 8px;" id="verifyResultReason">${escapeHtml(reasonText)}</p>
         <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
           <div><strong>Server Content Hash Check:</strong> ${escapeHtml(serverHashText)}</div>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" width="400" height="240">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#17191C"/>
+      <stop offset="100%" stop-color="#134074"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="400" height="240" fill="#FFFFFF"/>
+  <rect id="logo" data-loomshield-logo="true" x="40" y="40" width="80" height="36" fill="#17191C"/>
+  <text x="40" y="130" fill="url(#grad1)" font-size="18">Gradient Text Unresolvable As Single Hex</text>
+</svg>

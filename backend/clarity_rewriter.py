@@ -122,7 +122,10 @@ def score_rule_ambiguity(
     dont_example: str = "",
     lexicon: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Deterministically score a guideline rule from 0 (completely clear) to 100 (highly ambiguous)."""
+    """Deterministically score a guideline rule from 0 (completely clear) to 100 (highly ambiguous).
+
+    Score evaluates vagueness indicators, missing measurable criteria, override and dismissal rates, and accepted corrections.
+    """
     text = str(rule_text or "").strip()
     do_ex = str(do_example or "").strip()
     dont_ex = str(dont_example or "").strip()
@@ -196,7 +199,10 @@ def correlate_ambiguity_and_overrides(
     ambiguity_score: int = 0,
     is_vague: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """Combine deterministic ambiguity score with override telemetry respecting the minimum sample threshold."""
+    """Combine deterministic ambiguity score with override telemetry respecting the minimum sample threshold.
+
+    Score evaluates vagueness indicators, missing measurable criteria, override and dismissal rates, and accepted corrections.
+    """
     if min_sample is None:
         try:
             min_sample = max(1, int(os.environ.get("LOOMSHIELD_MIN_AUDIT_SAMPLE", "5") or "5"))

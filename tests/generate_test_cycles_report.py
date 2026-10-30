@@ -23,7 +23,7 @@ from PIL import Image
 from fastapi.testclient import TestClient
 from backend.database import init_db, reset_demo_workspace
 from backend.engine import inspect_raster_image, run_six_pillar_audit
-from backend.main import app, get_brand_vault_bundle
+from backend.main import app, audit_rate_limiter, get_brand_vault_bundle
 
 
 def percentile_95(values):
@@ -117,6 +117,7 @@ def run_measurements():
         failures = 0
 
         for i in range(15):
+            audit_rate_limiter.reset()
             t_start = time.perf_counter()
             eng_out = run_six_pillar_audit(
                 content=text_input,
