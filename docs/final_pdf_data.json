@@ -1,0 +1,82 @@
+{
+  "git": {
+    "commit": "d2e471108f2d122ee84d38251abde354b2bfacfb",
+    "short_commit": "d2e4711",
+    "branch": "final-docs"
+  },
+  "pytest": {
+    "summary_line": "188 passed, 1 warning in 192.29s (0:03:12)",
+    "total_collected": 188,
+    "per_file": {
+      "tests/e2e/test_ui_e2e.py": 3,
+      "tests/test_certificates_and_identities.py": 24,
+      "tests/test_clarity_rewriter.py": 13,
+      "tests/test_day3_final_hardening.py": 6,
+      "tests/test_heatmap_inspector.py": 18,
+      "tests/test_loomshield_api.py": 10,
+      "tests/test_loomshield_cycles_0_to_9.py": 43,
+      "tests/test_loomshield_pdf.py": 15,
+      "tests/test_loomshield_trust_safety.py": 40,
+      "tests/test_wizard.py": 16
+    },
+    "full_output": "........................................................................ [ 38%]\n........................................................................ [ 76%]\n............................................                             [100%]\n============================== warnings summary ===============================\nC:\\Users\\acer\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\fastapi\\testclient.py:1\n  C:\\Users\\acer\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\fastapi\\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n    from starlette.testclient import TestClient as TestClient  # noqa\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n188 passed, 1 warning in 192.29s (0:03:12)\n"
+  },
+  "fixtures": {
+    "total_checks": 28,
+    "hits": 25,
+    "misses": 3,
+    "pass_rate_pct": 89.3,
+    "reported_misses": [
+      "06_low_contrast_svg_text.svg: contrast finding reported under General / Brand Consistency instead of Typography & Hierarchy due to SVG DOM rule grouping",
+      "08_unresolvable_css_var_fill.svg: unresolved CSS var fill logged as Info finding instead of warning/error",
+      "14_template_match_1_5x.png: template matching score 0.738 fell below strict 0.800 threshold due to 1.5x upscaling interpolation artifacts"
+    ]
+  },
+  "benchmarks": {
+    "latency_500_chars_ms": 192.42,
+    "latency_5000_chars_ms": 414.25,
+    "latency_25000_chars_ms": 2287.89,
+    "subtimers_25000_chars": {
+      "tier2_nlp_ms": 1493.93,
+      "tier2_nlp_pct": 65.3,
+      "sqlite_db_ms": 658.36,
+      "sqlite_db_pct": 28.8,
+      "deterministic_rules_ms": 203.85,
+      "deterministic_rules_pct": 8.9
+    },
+    "peak_rss_12mp_windows_mb": 109.11,
+    "pixel_cap_mp": 12,
+    "template_matching_latencies_ms": {
+      "avg_ms": 70.67,
+      "min_ms": 62.25,
+      "max_ms": 85.36,
+      "scales_tested": 6
+    },
+    "peak_memory_harness_mb": 10.12
+  },
+  "engine_and_cert": {
+    "engine_operating_mode": "Local-only processing (Deterministic checks + Local NLP)",
+    "tier1_status": "Available",
+    "tier2_status": "Available",
+    "cloud_fallback_status": "Disabled / Not configured",
+    "honest_limitations": [
+      "TF-IDF cosine similarity measures lexical/term overlap to retrieve candidate facts; it is not a factual probability score.",
+      "Claims without a matching Verified Fact in the Brand Vault are marked 'Needs Review' for human verification rather than automatically declared false.",
+      "Visual palette checks compare dominant/configured colours via CIE Delta-E and do not by themselves certify full artistic lockup compliance.",
+      "Visual and layout brand checks do not render PDF pages; Visual and Logo Consistency is reported as Not Checked for text-based PDF uploads unless visual assets/colors are separately supplied.",
+      "Accessibility checks evaluate WCAG 2.1 contrast ratios, HTML heading hierarchy, image alt-text metadata, and Flesch-Kincaid readability on supported formats.",
+      "Local PDF processing extracts selectable text streams page-by-page. Scanned or image-only PDFs contain no selectable text and require OCR, which is not currently supported.",
+      "PDF location references map findings to page numbers and paragraph indices (e.g. Page 1, P2) based on extracted text streams. Exact coordinate bounding boxes on rendered visual pages are not generated without visual rendering."
+    ],
+    "key_algorithm": "Ed25519",
+    "key_id": "ca6fdb7453a49b5b",
+    "public_key_b64": "Lz+0zTRzCmYiTrIOpNTEIQqnpEerQLebreAs7ktrrFY=",
+    "ephemeral_key": true,
+    "key_notice": "ephemeral demo key: valid only until the server restarts"
+  },
+  "unverified_environments": [
+    "Render cloud proxy behavior under live production traffic (simulated locally with forged XFF tests)",
+    "Vercel serverless edge proxy headers under live production traffic",
+    "High-concurrency multi-tenant performance under distributed cloud load"
+  ]
+}

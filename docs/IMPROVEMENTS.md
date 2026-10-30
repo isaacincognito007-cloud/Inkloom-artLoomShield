@@ -9,8 +9,10 @@ This document specifies the three major improvements implemented for LoomShield 
 | Improvement | Focus Area | Round 2 "Done When" Criterion | Acceptance Status | Key Automated Test |
 | :--- | :--- | :--- | :---: | :--- |
 | **1. Clarity Rewriter** | Guideline Ambiguity Reduction | An administrator can approve a rewrite, a new Vault version appears, and the app reports violations and overrides for that rule before and after the change. | **PASSED** | `test_h1_clarity_rewriter_before_after_loop_closure_metrics` |
-| **2. Heatmap Inspector** | Visual & Clear-Space Verification | Every labelled fixture produces its expected outcome, and any misses are reported openly. | **PASSED** | `test_h2_heatmap_fixture_suite_against_expected_json` |
+| **2. Heatmap Inspector** | Visual & Clear-Space Verification | Every labelled fixture produces its expected outcome, and any misses are reported openly. | **Met with 3 reported misses (25 of 28)** | `test_h2_heatmap_fixture_suite_against_expected_json` |
 | **3. Signed Certificate** | Tamper-Evident Governance | A certificate verifies against the public key, and changing any field makes verification fail. | **PASSED** | `test_h3_certificate_v2_new_blocks_invariance_revocation_and_v1_compatibility` |
+
+*Full fixture evaluation telemetry and miss breakdowns are documented in [FIXTURE_REPORT.md](file:///D:/LoomShield/docs/FIXTURE_REPORT.md).*
 
 ---
 
@@ -18,9 +20,9 @@ This document specifies the three major improvements implemented for LoomShield 
 
 ### 2.1 Specification
 Vague guideline wording causes inconsistent human review decisions and repeated overrides. The Clarity Rewriter provides an explainable, data-driven closed loop for guideline optimization:
-1. **Explainable Ambiguity Scoring:** Evaluates rule descriptions on documented vagueness indicators, missing measurable criteria, override and dismissal rates above a minimum sample threshold ($N \ge 3$), and accepted human corrections.
+1. **Explainable Ambiguity Scoring:** Evaluates rule descriptions on documented vagueness indicators, missing measurable criteria, override and dismissal rates above the code's minimum sample threshold (default: 5 audits, configurable via `LOOMSHIELD_MIN_AUDIT_SAMPLE`), and accepted human corrections.
 2. **Fact-Grounded Candidate Rewrites:** Generates candidate text by consuming preceding articles ("a" / "an"), fixing grammatical agreement, and grounding substitutions in Brand Vault verified facts (topical TF-IDF cosine similarity $\ge 0.35$). If no verified fact qualifies, explicit placeholders (`[SET THRESHOLD: unit]`) prevent hallucination.
-3. **Atomic Brand Vault Versioning:** Approving a proposed revision atomically updates the active rule description (`UPDATE ... WHERE id=? AND status='proposed'`), creates an immutable revision log row, bumps the brand version ($V \rightarrow V+1$), and records an audit event. If the rule description changed concurrently, `HTTP 409 Conflict` is returned.
+3. **Atomic Brand Vault Versioning:** Approving a proposed revision atomically updates the active rule description (`UPDATE ... WHERE id=? AND status='proposed'`), creates an immutable revision log row, increments the brand version by one ($V \rightarrow V+1$), and records an audit event. If the rule description changed concurrently, `HTTP 409 Conflict` is returned.
 4. **Before vs After Loop Closure Metrics:** Side-by-side comparison of rule violations, overrides, dismissals, and override rates before and after revision approval, with explicit minimum-sample caveats.
 
 ### 2.2 Milestones
@@ -31,7 +33,7 @@ Vague guideline wording causes inconsistent human review decisions and repeated 
 
 ### 2.3 Acceptance Criteria & Verification Matrix
 - [x] **Scorer determinism across golden fixtures:** `test_b1_scorer_determinism_with_golden_fixtures` (**PASSED**)
-- [x] **Minimum sample threshold ($N \ge 3$) and override priority correlation:** `test_b2_minimum_sample_rule_and_priority_correlation` (**PASSED**)
+- [x] **Minimum sample threshold (5 audits) and override priority correlation:** `test_b2_minimum_sample_rule_and_priority_correlation` (**PASSED**)
 - [x] **Zero invented numbers and explicit placeholder when facts are absent:** `test_b3_property_no_candidate_contains_invented_number_and_placeholder_when_no_fact` (**PASSED**)
 - [x] **Optimal rules report no improvement needed:** `test_b3_no_improvement_found_when_already_optimal` (**PASSED**)
 - [x] **Approval permissions, version bump, and rejection vault invariance:** `test_b4_b5_permissions_approve_bumps_version_logs_event_and_reject_leaves_vault_unchanged` (**PASSED**)
@@ -46,28 +48,34 @@ Vague guideline wording causes inconsistent human review decisions and repeated 
 ### 3.1 Specification
 Automates visual brand governance across raster images and SVG assets:
 1. **Approved Brand Logo Management:** Brand Administrators can upload, preview, and delete an approved brand logo (PNG or SVG, max 300 KB) in the Brand Vault.
-2. **Multi-Scale Normalized Cross-Correlation (NCC):** Template matching runs across scales $0.5\times$ to $2.0\times$ using integral images and frequency-domain convolution (`scipy.signal.fftconvolve`) in grayscale. Scores $\ge 0.80$ resolve logo bounding coordinates; scores $< 0.80$ report `"Not Checked: approved logo not found"`.
+2. **Multi-Scale Normalized Cross-Correlation (NCC):** Template matching runs across scales $0.5\times$ to $2.0\times$ using integral images and fast FFT convolution (`scipy.signal.fftconvolve`) in grayscale (measured ~71 ms on 400x240 image across 6 scales). Scores $\ge 0.80$ resolve logo bounding coordinates; scores $< 0.80$ report `"Not Checked: approved logo not found"`.
 3. **Four-Tier Logo Resolution Precedence:** (1) User-drawn box $\rightarrow$ (2) Explicit SVG marker (`data-loomshield-logo="true"`) $\rightarrow$ (3) Multi-scale NCC template match $\rightarrow$ (4) Logo-only PNG alpha bounding box. The UI displays the locating method pill.
 4. **Configurable Clear Space:** Clear space threshold editable in the Brand Vault as a multiple of logo height (ratio) or absolute pixels.
 5. **Palette Inspection & Honest Contrast Reporting:** CIE Delta-E cell classification ($2\times2$ or $4\times4$ grid) and WCAG 2.1 AA luminance contrast measured for genuine SVG text elements only. Raster text inside flattened pixels is transparently reported as unsupported.
-6. **Fixture Suite & Honest Report:** 12 labelled SVG and PNG fixtures in `tests/fixtures/banners/` verified against `expected.json` and documented in `docs/FIXTURE_REPORT.md` (25/28 assertions, 89.3% pass rate; misses honestly documented without fixture gaming).
+6. **Fixture Suite & Honest Report:** 12 labelled SVG and PNG fixtures in `tests/fixtures/banners/` verified against `expected.json` and documented in `docs/FIXTURE_REPORT.md` (25 of 28 assertions met, 89.3% pass rate; 3 misses honestly documented without fixture gaming).
 
 ### 3.2 Milestones
 - **M2.1 (Vault Logo Asset & Specs):** Logo upload route (chunked max 300 KB), deletion, and clear space ratio/px configuration.
-- **M2.2 (Multi-Scale NCC Matcher):** Sub-150ms template matching with scale invariance and threshold cutoffs.
+- **M2.2 (Multi-Scale NCC Matcher):** Classical image analysis template matching with scale invariance ($0.5\times$ to $2.0\times$) and 0.80 threshold cutoff.
 - **M2.3 (Heatmap & Grid Analyzer):** Grid-based palette clustering, nearest-neighbor clear space calculation, and SVG text contrast.
 - **M2.4 (Fixtures & Automated Fixture Report):** Committed fixture generator, automated regression test, and honest telemetry report.
 
 ### 3.3 Acceptance Criteria & Verification Matrix
 - [x] **Logo asset upload/delete and clear-space specification API:** `test_h2_vault_approved_logo_upload_delete_and_clear_space_api` (**PASSED**)
-- [x] **Full 12-banner fixture suite against expected.json:** `test_h2_heatmap_fixture_suite_against_expected_json` (**PASSED**)
+- [x] **Full 12-banner fixture suite against expected.json (25 of 28 checks met; 3 reported misses):** `test_h2_heatmap_fixture_suite_against_expected_json` (**Met with 3 reported misses (25 of 28)**)
+- [x] **Extended scale and decoy fixtures (0.7x, 1.5x, and near-miss decoy logo):** `test_h2_template_match_scale_and_decoy_fixtures` (**PASSED**)
 - [x] **On-palette tile passes all grid cells:** `test_c5_on_palette_tile_all_cells_pass` (**PASSED**)
 - [x] **Off-palette quadrant flags exact grid coordinate:** `test_c5_one_off_palette_quadrant_flags_exact_cell_and_cites_coordinates` (**PASSED**)
 - [x] **Low-contrast SVG text flagged with measured ratio:** `test_c5_svg_with_low_contrast_text_flagged_with_measured_ratio` (**PASSED**)
 - [x] **Logo edge violation fails with measured distance:** `test_c5_svg_logo_too_close_to_edge_fails_with_measured_px_and_no_logo_not_checked` (**PASSED**)
 - [x] **Overlay canvas dimensions match raster input exactly:** `test_c5_oversized_image_downscaled_and_svg_script_sanitised_and_shape_stable` (**PASSED**)
 - [x] **Inherited SVG fill resolves contrast or marks Not Checked:** `test_g6b_all_unresolvable_svg_text_contrast_state_not_checked_never_passed` (**PASSED**)
-- [x] **Multi-scale template match positive locates logo; negative reports Not Checked:** `test_h2_heatmap_fixture_suite_against_expected_json` (**PASSED**)
+
+### 3.4 Extended Scale & Decoy Fixture Results (Honest Reporting)
+In addition to the 12 core banner fixtures, three extended fixtures were evaluated:
+1. **0.7x Scaled Template Match (`13_template_match_0_7x.png`):** Matched at scale 0.75 with an NCC score of 0.91 (exceeding the 0.80 threshold). Clear space passed.
+2. **1.5x Scaled Template Match (`14_template_match_1_5x.png`):** Matched at scale 1.5 with an NCC score of 1.00 (exceeding the 0.80 threshold). Clear space passed.
+3. **Near-Miss Decoy Logo (`15_template_match_decoy.png`):** Features a modified chevron/triangle emblem in brand slate. The NCC score remained below 0.80 across all scales; correctly reported as `"Not Checked: approved logo not found"` without false positive localization.
 
 ---
 
@@ -76,9 +84,9 @@ Automates visual brand governance across raster images and SVG assets:
 ### 4.1 Specification
 Provides portable, tamper-evident proof that content was verified against an immutable Brand Vault version:
 1. **Certificate Version 2 Payload:** Contains `certificate_version: 2`, `audit_id`, `brand_id`, `brand_version`, `document_name`, `content_sha256`, `original_content_sha256`, `submitted_by` {user_id, name, role}, `approval` {approver_user_id, role, name, comment, override_acknowledged, approved_at}, `findings_summary`, `verification_url`, and `revocation` {status_url}.
-2. **Canonical JSON & Ed25519 Signing:** Payloads are serialized using RFC 8785 canonical JSON (strictly sorted keys, UTF-8 normalization, no whitespace) and signed with Ed25519 (RFC 8032).
+2. **Canonical JSON & Ed25519 Signing:** Payloads are serialized using canonical JSON with sorted keys, compact separators and UTF-8 (compatible with RFC 8785 for strings, integers and booleans) and signed with Ed25519 (RFC 8032) to establish tamper evidence and issuer authenticity.
 3. **Sub-Payload Invariance & Tamper Evidence:** Modifying, deleting, or inserting any byte in the envelope or payload breaks cryptographic signature verification.
-4. **Administrative Revocation:** Brand Administrators can revoke certificates via `POST /api/certificates/{id}/revoke`. Public `GET /api/certificates/{id}/status` returns revocation status without leaking content hashes. Revoked certificates fail verification with reason `"certificate_revoked"` while preserving mathematical signature validity.
+4. **Administrative Revocation:** Brand Administrators can revoke certificates via `POST /api/certificates/{id}/revoke` with a mandatory non-empty reason. Public `GET /api/certificates/{id}/status` returns revocation status without leaking content hashes. Revoked certificates fail verification with reason `"certificate_revoked"` while preserving mathematical signature validity.
 5. **Backward Compatibility:** `/api/certificates/verify` verifies both v1 and v2 certificates. A v1 certificate with injected v2 fields fails signature verification.
 
 ### 4.2 Milestones
@@ -138,5 +146,5 @@ This walkthrough guides an evaluator through the complete compliance governance 
 ### Step 5: Guideline Clarity Rewriter & Visual Heatmap Inspection
 1. Navigate to **Guideline insights** (`#/insights`).
 2. Locate the ambiguity card for `"RULE-TONE-02"`. Observe the explainable ambiguity score, vagueness indicators, and the fact-grounded candidate rewrite.
-3. Click **"Approve revision"**. Notice the Brand Vault version bumps immediately ($v1 \rightarrow v2$) and the side-by-side **Before vs After** loop closure metrics table renders the rule's historical performance alongside the minimum-sample disclosure caveat.
+3. Click **"Approve revision"**. Notice the version increases by one and the side-by-side **Before vs After** loop closure metrics table renders the rule's historical performance alongside the minimum-sample disclosure caveat (default: 5 audits).
 4. Open the **Heatmap Inspector** in the workspace on any banner asset to observe multi-scale NCC logo localization, clear space margin rings, and the grid cell palette overlay.

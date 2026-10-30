@@ -228,6 +228,31 @@ def generate_all_fixtures():
         "located_method": "None",
     }
 
+    # 13. Scaled 0.7x template match (PNG)
+    tw, th = tpl_img.size
+    img_13 = Image.new("RGBA", (400, 240), (255, 255, 255, 255))
+    draw_13 = ImageDraw.Draw(img_13)
+    draw_13.rectangle([20, 20, 380, 220], fill=(238, 244, 248, 255))
+    t13 = tpl_img.resize((int(round(tw * 0.7)), int(round(th * 0.7))), Image.Resampling.BILINEAR)
+    img_13.paste(t13, (160, 90), t13)
+    img_13.save(FIXTURES_DIR / "13_template_match_0_7x.png", format="PNG")
+
+    # 14. Scaled 1.5x template match (PNG)
+    img_14 = Image.new("RGBA", (400, 240), (255, 255, 255, 255))
+    draw_14 = ImageDraw.Draw(img_14)
+    draw_14.rectangle([20, 20, 380, 220], fill=(238, 244, 248, 255))
+    t14 = tpl_img.resize((int(round(tw * 1.5)), int(round(th * 1.5))), Image.Resampling.BILINEAR)
+    img_14.paste(t14, (160, 90), t14)
+    img_14.save(FIXTURES_DIR / "14_template_match_1_5x.png", format="PNG")
+
+    # 15. Near-miss decoy logo (PNG)
+    img_15 = Image.new("RGBA", (400, 240), (255, 255, 255, 255))
+    draw_15 = ImageDraw.Draw(img_15)
+    draw_15.rectangle([20, 20, 380, 220], fill=(238, 244, 248, 255))
+    draw_15.polygon([(160, 105), (180, 85), (200, 105), (190, 105), (180, 95), (170, 105)], fill=(23, 25, 28, 255))
+    draw_15.ellipse([(205, 88), (215, 98)], fill=(19, 64, 116, 255))
+    img_15.save(FIXTURES_DIR / "15_template_match_decoy.png", format="PNG")
+
     # Save expected.json
     expected_path = FIXTURES_DIR / "expected.json"
     with open(expected_path, "w", encoding="utf-8") as f:

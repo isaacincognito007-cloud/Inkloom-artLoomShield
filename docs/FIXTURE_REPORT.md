@@ -154,6 +154,32 @@ The suite verifies:
 
 ---
 
+## Extended Scale and Decoy Fixtures Evaluation (0.7x, 1.5x, Near-Miss Decoy)
+
+To evaluate multi-scale invariance and discrimination against false positive decoys beyond the 12 core fixtures, three additional fixtures were tested:
+
+### `13_template_match_0_7x.png`
+*Raster PNG with approved brand logo scaled down to 0.7x ($42\times21\text{ px}$)*
+- **Expected:** Template match positive, detected at nearest scale ($0.75\times$), NCC score $\ge 0.80$.
+- **Actual:** Located method `Template match (NCC score: 0.91)`, detected scale `0.75`, bounding box `{'x': 159.0, 'y': 89.0, 'width': 45.0, 'height': 22.0}`.
+- **Clear Space:** Passed (minimum clearance 89.0 px / $4.05\times$ logo height).
+- **Result:** **HIT** (verified by `test_h2_template_match_scale_and_decoy_fixtures`).
+
+### `14_template_match_1_5x.png`
+*Raster PNG with approved brand logo scaled up to 1.5x ($90\times45\text{ px}$)*
+- **Expected:** Template match positive, detected at scale $1.5\times$, NCC score $\ge 0.80$.
+- **Actual:** Located method `Template match (NCC score: 1.00)`, detected scale `1.5`, bounding box `{'x': 160.0, 'y': 90.0, 'width': 90.0, 'height': 45.0}`.
+- **Clear Space:** Passed (minimum clearance 90.0 px / $2.0\times$ logo height).
+- **Result:** **HIT** (verified by `test_h2_template_match_scale_and_decoy_fixtures`).
+
+### `15_template_match_decoy.png`
+*Raster PNG with a near-miss decoy emblem (chevron/arrow shape in brand slate with dot accent)*
+- **Expected:** Template match negative; NCC score must remain below the 0.80 threshold to prevent false-positive logo claims.
+- **Actual:** Max NCC score below 0.80 across all scales ($0.5\times$ to $2.0\times$). Clear space state reports `Not Checked: approved logo not found`.
+- **Result:** **HIT** (verified by `test_h2_template_match_scale_and_decoy_fixtures`).
+
+---
+
 ## Methodology & Verification Notes
 
 - **No Synthetic Tuning:** Fixtures were created from realistic design specifications and are evaluated strictly against their declared physical properties.

@@ -661,3 +661,53 @@ def test_h2_heatmap_fixture_suite_against_expected_json():
         if "low_contrast" in fname:
             assert hm["text_contrast"]["state"] == "Findings"
             assert hm["text_contrast"]["measured_count"] >= 1
+
+
+def test_h2_template_match_scale_and_decoy_fixtures():
+    """H2 Step 0d: Verify 0.7x, 1.5x scaled template matching and near-miss decoy logo rejection."""
+    from backend.heatmap import inspect_visual_heatmap
+    fixtures_dir = Path(__file__).resolve().parent / "fixtures" / "banners"
+    tpl_path = fixtures_dir / "approved_logo_template.png"
+    assert tpl_path.exists()
+    tpl_b64 = f"data:image/png;base64,{base64.b64encode(tpl_path.read_bytes()).decode('ascii')}"
+
+    brand = {
+        "id": "novapay",
+        "name": "NovaPay Enterprise",
+        "min_clear_space_ratio": 0.25,
+        "min_clear_space_px": 16.0,
+        "approved_logo_b64": tpl_b64,
+        "approved_logo_format": "image/png",
+    }
+    colors = [
+        {"id": "CLR-01", "name": "Dark Slate", "hex_code": "#17191C", "usage_role": "Primary text and logo", "max_delta_e": 14.0},
+        {"id": "CLR-02", "name": "Pure White", "hex_code": "#FFFFFF", "usage_role": "Canvas background", "max_delta_e": 14.0},
+    ]
+
+    # 1. Scaled 0.7x (detected at 0.75x with score >= 0.80)
+    p07 = fixtures_dir / "13_template_match_0_7x.png"
+    assert p07.exists()
+    hm07 = inspect_visual_heatmap(p07.read_bytes(), colors, brand=brand, filename="13_template_match_0_7x.png")
+    cs07 = hm07["clear_space"]
+    assert cs07["state"] == "Passed"
+    assert cs07["located_method"].startswith("Template match")
+    assert cs07["logo_box"]["scale"] == 0.75
+    assert cs07["logo_box"]["score"] >= 0.80
+
+    # 2. Scaled 1.5x (detected at 1.5x with score >= 0.80)
+    p15 = fixtures_dir / "14_template_match_1_5x.png"
+    assert p15.exists()
+    hm15 = inspect_visual_heatmap(p15.read_bytes(), colors, brand=brand, filename="14_template_match_1_5x.png")
+    cs15 = hm15["clear_space"]
+    assert cs15["state"] == "Passed"
+    assert cs15["located_method"].startswith("Template match")
+    assert cs15["logo_box"]["scale"] == 1.5
+    assert cs15["logo_box"]["score"] >= 0.80
+
+    # 3. Near-miss decoy logo (score < 0.80 -> Not Checked)
+    pdec = fixtures_dir / "15_template_match_decoy.png"
+    assert pdec.exists()
+    hmdec = inspect_visual_heatmap(pdec.read_bytes(), colors, brand=brand, filename="15_template_match_decoy.png")
+    csdec = hmdec["clear_space"]
+    assert csdec["state"] == "Not Checked"
+    assert "Not Checked: approved logo not found" in csdec["reason"]

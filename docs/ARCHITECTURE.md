@@ -6,22 +6,29 @@ This document details the architectural design, component subsystems, data flows
 
 ## 1. ARCHITECTURAL OVERVIEW
 
-LoomShield is a brand governance and compliance validation workspace designed for enterprise marketing copy, technical documentation, and visual brand assets. It provides deterministic, zero-cloud verification against immutable Brand Vault rulesets with cryptographic audit trails.
+LoomShield is a brand governance and compliance validation workspace designed for enterprise marketing copy, technical documentation, and visual brand assets. It provides deterministic verification with no third-party AI calls (the hosted demo processes entirely on my server) against immutable Brand Vault rulesets with cryptographic audit trails.
 
 ```mermaid
 graph TD
     UI[Frontend Client: Vanilla ES6 SPA] -->|HTTP / JSON| API[FastAPI Backend: REST API]
     API --> PIPELINE[Six-Pillar Engine Pipeline]
     PIPELINE --> T1[Tier 1: Deterministic Engine]
-    PIPELINE --> T2[Tier 2: Local NLP & Computer Vision]
+    PIPELINE --> T2[Tier 2: Local NLP & Claim Grounding]
     T1 --> LEX[Terminology & Lexicon Matching]
     T1 --> REG[Pattern Regex & Structure Guards]
-    T2 --> TFIDF[TF-IDF Fact Retrieval]
-    T2 --> NCC[Multi-Scale NCC Template Matching]
-    T2 --> A11Y[WCAG 2.1 AA Contrast Analyzer]
+    T1 --> A11Y[WCAG 2.1 AA Contrast Analyzer]
+    T1 --> NCC[Classical Image Analysis: Multi-Scale NCC]
+    T2 --> TFIDF[TF-IDF Clause Vectorisation & Cosine Retrieval]
+    T2 --> NUM[Numerical & Unit Conflict Extraction]
     API --> DB[(SQLite 3 Database: WAL Mode)]
     API --> CRYPTO[Ed25519 Cryptographic Signer]
 ```
+
+### 1.1 Engine Tiers & Model Boundary
+
+- **Tier 1 (Deterministic Engine):** Pure deterministic algorithms including case-sensitive lexicon lookups, word-boundary regexes, WCAG 2.1 AA relative luminance contrast math ($4.5:1$ and $3.0:1$), CIE Delta-E 2000 color clustering, and classical image analysis via multi-scale normalized cross-correlation (NumPy and SciPy fast FFT convolution).
+- **Tier 2 (Embedded NLP):** TF-IDF vectorisation (fitted per request) plus cosine retrieval and numeric comparison plus configured heuristics, with no trained or pretrained model. It dynamically vectorizes active Brand Vault fact statements and draft sentences to retrieve relevant grounding facts without neural network weights.
+- **Tier 3 (Optional Cloud):** Not built. The platform runs 100% locally on-device without external API dependencies.
 
 ---
 
@@ -29,7 +36,7 @@ graph TD
 
 ### 2.1 Frontend Client (Single-Page Application)
 - **Tech Stack:** Vanilla HTML5, CSS3, ES6 JavaScript. Zero external npm build dependencies or CDN runtimes.
-- **Design System:** Soft Glass aesthetic with strict tokenization (`--glass-bg`, `--glass-blur`, `--radius-card`, `--radius-control`). Enforces a maximum of 3 concurrent `backdrop-filter` elements to guarantee 60 FPS rendering on mobile devices.
+- **Design System:** Soft Glass aesthetic with strict tokenization (`--glass-bg`, `--glass-blur`, `--radius-card`, `--radius-control`). Enforces a maximum of 3 concurrent `backdrop-filter` elements to ensure smooth UI rendering without blocking user interactions.
 - **Self-Hosted Typography:** WOFF2 variable fonts (`InterVariable.woff2` for body text, `GeistMono-Variable.woff2` for identifiers, hashes, and versions) served directly by the backend to eliminate external telemetry calls.
 - **SPA Hash Router:** Centralized routing handling `#/overview`, `#/new-audit`, `#/audit/AUD-XXXX`, `#/vault`, `#/queue`, `#/insights`, `#/history`, `#/settings`, and `#/verify`. Prevents hardcoded ID fallbacks and handles browser history gracefully.
 - **Concurrency & Double-Click Guards:** All mission-critical action buttons (Run audit, Workflow transitions, Certificate issuance, Revision approval) employ disable-on-click and `data-busy` locks to eliminate duplicate submissions.
@@ -54,7 +61,7 @@ Every content submission is evaluated across six compliance pillars:
 | **2. Promotional Claims** | Tier 1 + Tier 2 (Pattern + Local NLP) | Number extraction, unit conflict detection, TF-IDF vectorization with cosine similarity against Brand Vault verified facts. | `test_cycle1_B1_approved_numerical_claim` |
 | **3. Tone and Voice** | Tier 1 + Tier 2 (Dictionary + Polarity) | Domain-specific vague lexicon analysis, rule ambiguity scoring, alarmist pattern detection. | `test_b1_scorer_determinism_with_golden_fixtures` |
 | **4. Messaging Principles** | Tier 1 (Deterministic) | Mandatory human-oversight clause checks, prohibited messaging themes, structure enforcement. | `test_cycle1_B10_claims_that_require_human_verification_pending_fact` |
-| **5. Visual Consistency** | Tier 1 + Tier 2 (Math + Template Match) | Multi-scale Normalized Cross-Correlation (NCC) logo matching ($0.5\times$ to $2.0\times$), CIE Delta-E palette clustering, clear space ratio calculation. | `test_h2_heatmap_fixture_suite_against_expected_json` |
+| **5. Visual Consistency** | Tier 1 (Classical Image Analysis) | Multi-scale Normalized Cross-Correlation (NCC) logo matching ($0.5\times$ to $2.0\times$), CIE Delta-E palette clustering, clear space ratio calculation. | `test_h2_heatmap_fixture_suite_against_expected_json` |
 | **6. Accessibility** | Tier 1 (Deterministic Math) | WCAG 2.1 AA relative luminance contrast ratios ($4.5:1$ normal, $3.0:1$ large), heading hierarchy jump detection, image alt-text presence. | `test_cycle1_C1_sufficient_text_contrast` |
 
 ---
@@ -62,9 +69,9 @@ Every content submission is evaluated across six compliance pillars:
 ## 4. SECURITY & CRYPTOGRAPHY SPECIFICATION
 
 ### 4.1 Ed25519 Compliance Certificates (Version 2)
-Approved audits produce immutable compliance certificates:
+Approved audits produce immutable compliance certificates establishing tamper evidence and issuer authenticity:
 - **Signing Algorithm:** Ed25519 (RFC 8032) using pure cryptographic primitives.
-- **Canonical Serialization:** Payloads are canonicalized per RFC 8785 (deterministic key order, strict Unicode escaping, no extraneous whitespace).
+- **Canonical Serialization:** Payloads are serialized as canonical JSON with sorted keys, compact separators and UTF-8; compatible with RFC 8785 for strings, integers and booleans.
 - **Invariance:** Any byte modification to the audit ID, content SHA-256, brand version, approver identity, or submitter identity immediately breaks signature verification (`test_certificate_flipping_any_payload_byte_invalid`).
 - **Revocation Ledger:** Public certificate status lookup (`GET /api/certificates/{id}/status`) allows verifying current validity without exposing sensitive content hashes.
 
@@ -76,5 +83,5 @@ To protect organizational integrity, LoomShield enforces separation of duties:
 ### 4.3 Upload Safety & Memory Budgeting
 - **Chunked Upload Abort:** Large request payloads abort at 5 MB + 1 byte (`test_f2_chunked_upload_aborts_at_5mb_plus_1_byte_on_6mb_body`).
 - **Pixel Cap Guard:** Raster images over 12.0 megapixels ($12,000,000$ pixels) are rejected before full decoding (`test_g2_image_cap_12mp_accepted_and_12mp_plus_1px_rejected`).
-- **Peak RSS Footprint:** Memory usage during image processing stays strictly under 150 MB (`test_g2_image_cap_12mp_accepted_and_12mp_plus_1px_rejected`).
+- **Peak RSS Footprint:** Memory usage during image processing stays strictly at the measured 109 MB at 12 MP on Windows (`test_g2_image_cap_12mp_accepted_and_12mp_plus_1px_rejected`).
 - **XML / SVG Sanitization:** XML external entity (XXE) expansion and script execution are stripped before SVG parsing (`test_cycle6_privacy_and_security_tests_1_to_7`).

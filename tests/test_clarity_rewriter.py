@@ -664,3 +664,34 @@ def test_h1_clarity_rewriter_before_after_loop_closure_metrics():
         assert "Preliminary" in lc["minimum_sample_caveat"] or "Sufficient" in lc["minimum_sample_caveat"]
         assert "scoring_factors_disclosure" in lc
         assert "Score evaluates vagueness indicators" in lc["scoring_factors_disclosure"]
+
+
+def test_testing_md_table_total_matches_pytest_collected_count():
+    """Step 0c: Ensure docs/TESTING.md per-suite table counts match pytest --collect-only -q."""
+    import subprocess
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    testing_md = root / "docs" / "TESTING.md"
+    assert testing_md.exists(), "docs/TESTING.md not found"
+    text = testing_md.read_text(encoding="utf-8")
+
+    proc = subprocess.run(["python", "-m", "pytest", "--collect-only", "-q"], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    collected_lines = [l.strip() for l in proc.stdout.splitlines() if "::" in l]
+    total_collected = len(collected_lines)
+
+    table_counts = {}
+    for line in text.splitlines():
+        if line.strip().startswith("| `tests/"):
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) >= 5:
+                suite = parts[1].replace("`", "").strip()
+                count = int(parts[3])
+                table_counts[suite] = count
+
+    table_total = sum(table_counts.values())
+    assert len(table_counts) == 10, f"Expected 10 test suites in TESTING.md, found {len(table_counts)}"
+    assert table_total == total_collected, (
+        f"TESTING.md table total ({table_total}) does not match pytest collected count ({total_collected}). "
+        f"Counts per suite: {table_counts}"
+    )
