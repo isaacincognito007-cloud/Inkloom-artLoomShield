@@ -915,6 +915,40 @@ def inspect_visual_heatmap(
     raw_text_items: List[Dict[str, Any]] = []
     if is_svg:
         raw_text_items.extend(svg_meta.get("text_elements", []))
+
+    ocr_result = None
+    if not is_svg:
+        try:
+            from backend.ocr_engine import extract_raster_text_and_contrast, is_ocr_available
+            if is_ocr_available():
+                ocr_result = extract_raster_text_and_contrast(
+                    image_input=arr,
+                    min_contrast_normal=min_contrast_req,
+                    min_contrast_large=float(brand.get("min_contrast_large", 3.0)),
+                    grid_size=n_grid,
+                )
+                if ocr_result and ocr_result.get("elements"):
+                    for el in ocr_result["elements"]:
+                        bbox = el.get("bbox", [0, 0, 0, 0])
+                        raw_text_items.append({
+                            "id": el.get("id"),
+                            "text": el.get("text"),
+                            "fg_hex": el.get("fg_hex"),
+                            "bg_hex": el.get("bg_hex"),
+                            "x": float(bbox[0]),
+                            "y": float(bbox[1]),
+                            "width": float(el.get("width", 0.0)),
+                            "height": float(el.get("height", 0.0)),
+                            "cell_id": el.get("cell_id"),
+                            "confidence": el.get("confidence"),
+                            "source": "ocr_text",
+                            "passed": el.get("passed"),
+                            "contrast_ratio": el.get("contrast_ratio"),
+                            "required_ratio": el.get("required_ratio"),
+                        })
+        except Exception as ocr_err:
+            logger.warning(f"Raster OCR text extraction error: {ocr_err}")
+
     for idx, reg in enumerate(text_regions or [], start=1):
         if not isinstance(reg, dict):
             continue
@@ -984,8 +1018,14 @@ def inspect_visual_heatmap(
             continue
 
         measured_contrast_count += 1
-        ratio = wcag_contrast_ratio(fg_h, bg_h)
-        passed = bool(ratio >= min_contrast_req)
+        if item.get("source") == "ocr_text" and item.get("contrast_ratio") is not None:
+            ratio = float(item["contrast_ratio"])
+            req_ratio = float(item.get("required_ratio", min_contrast_req))
+            passed = bool(ratio >= req_ratio)
+        else:
+            ratio = wcag_contrast_ratio(fg_h, bg_h)
+            req_ratio = min_contrast_req
+            passed = bool(ratio >= min_contrast_req)
         if not passed:
             flagged_contrast_count += 1
         contrast_items.append({
@@ -993,16 +1033,22 @@ def inspect_visual_heatmap(
             "cell_id": item.get("cell_id") or f"R{tc_r}C{tc_c}",
             "bg_hex": bg_h,
             "contrast_ratio": ratio,
-            "min_required": min_contrast_req,
-            "required_ratio": min_contrast_req,
+            "min_required": req_ratio,
+            "required_ratio": req_ratio,
             "passed": passed,
             "flagged": not passed,
             "status": "pass" if passed else "fail",
         })
 
-    contrast_disclosure = (
-        f"Contrast measured for {measured_contrast_count} text elements; text inside raster images is not detected."
-    )
+    has_ocr_elements = any(item.get("source") == "ocr_text" for item in raw_text_items)
+    if is_svg or not has_ocr_elements:
+        contrast_disclosure = (
+            f"Contrast measured for {measured_contrast_count} text elements; text inside raster images is not detected."
+        )
+    else:
+        contrast_disclosure = (
+            f"Contrast measured for {measured_contrast_count} text elements using on-device ONNX OCR."
+        )
 
     # C3: Logo Clear Space
     required_ratio = float(brand.get("min_clear_space_ratio", 0.25))
@@ -1210,6 +1256,10 @@ def inspect_visual_heatmap(
             "elements": contrast_items,
         },
         "clear_space": clear_space,
+        "ocr_applied": bool(ocr_result and ocr_result.get("elements")),
+        "ocr_text": ocr_result.get("extracted_text", "") if ocr_result else "",
+        "ocr_engine": ocr_result.get("ocr_engine", "") if ocr_result else "",
+        "ocr_execution_ms": ocr_result.get("execution_time_ms", 0.0) if ocr_result else 0.0,
         "svg_sanitized": bool(svg_meta.get("svg_sanitized", False)),
         "sanitized_actions": svg_meta.get("sanitized_actions", []),
         "sanitized_svg": svg_meta.get("sanitized_svg") if is_svg else None,

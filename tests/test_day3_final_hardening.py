@@ -546,3 +546,156 @@ def test_production_user_authentication():
     logout_res = client.post("/api/auth/logout")
     assert logout_res.status_code == 200
     assert logout_res.json()["status"] == "logged_out"
+
+
+# ============================================================================
+# OPTION A: ON-DEVICE QUANTIZED OCR & BITMAP TEXT CONTRAST ENGINE
+# ============================================================================
+
+def test_ocr_status_endpoint():
+    """Verify /api/ocr/status reports on-device ONNX engine availability without external keys."""
+    client = TestClient(app)
+    res = client.get("/api/ocr/status")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["available"] is True
+    assert data["zero_cloud"] is True
+    assert "RapidOCR" in data["engine"]
+    assert data["framework"] == "ONNX Runtime"
+    assert "raster_text_extraction" in data["capabilities"]
+    assert "pixel_wcag_contrast_measurement" in data["capabilities"]
+    assert "scanned_pdf_rendering_ocr" in data["capabilities"]
+
+
+def test_on_device_ocr_raster_image_high_contrast_pass():
+    """Verify on-device OCR extracts raster copy and calculates passing WCAG 2.1 AA luminance contrast."""
+    from PIL import ImageDraw
+    from backend.main import get_brand_vault_bundle
+
+    vault = get_brand_vault_bundle("novapay")
+    img = Image.new("RGB", (400, 120), color=(255, 255, 255))
+    d = ImageDraw.Draw(img)
+    d.text((30, 40), "NovaPay Settlement Core", fill=(0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    hm = inspect_visual_heatmap(
+        raw_bytes=png_bytes,
+        brand_colors=vault["colors"],
+        brand=vault["brand"],
+        filename="high_contrast_banner.png",
+        grid_size=2,
+    )
+    assert hm["inspect_ok"] is True
+    assert hm["ocr_applied"] is True
+    assert "NovaPay" in hm["ocr_text"] or "Settlement" in hm["ocr_text"] or "Core" in hm["ocr_text"]
+    
+    tc = hm["text_contrast"]
+    assert tc["measured_count"] >= 1
+    assert tc["state"] == "Passed"
+    assert "on-device ONNX OCR" in tc["disclosure"]
+    passed_elements = [el for el in tc["elements"] if el["passed"]]
+    assert len(passed_elements) >= 1
+    assert passed_elements[0]["contrast_ratio"] >= 4.5
+
+
+def test_on_device_ocr_raster_image_low_contrast_flagged():
+    """Verify on-device OCR detects low-contrast raster text and surfaces high-severity Accessibility finding."""
+    from PIL import ImageDraw
+    from backend.main import get_brand_vault_bundle
+
+    vault = get_brand_vault_bundle("novapay")
+    img = Image.new("RGB", (400, 120), color=(255, 255, 255))
+    d = ImageDraw.Draw(img)
+    # Very light gray #C8C8C8 on white #FFFFFF produces contrast ratio ~1.6:1 (< 4.5:1)
+    d.text((30, 40), "Unreadable Low Contrast Headline", fill=(200, 200, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    hm = inspect_visual_heatmap(
+        raw_bytes=png_bytes,
+        brand_colors=vault["colors"],
+        brand=vault["brand"],
+        filename="low_contrast_banner.png",
+        grid_size=2,
+    )
+    assert hm["inspect_ok"] is True
+    assert hm["ocr_applied"] is True
+    tc = hm["text_contrast"]
+    assert tc["measured_count"] >= 1
+    assert tc["flagged_count"] >= 1
+    assert tc["state"] == "Findings"
+
+    # Audit via upload endpoint and ensure Accessibility finding is generated
+    client = TestClient(app)
+    upload_res = client.post(
+        "/api/audits/upload",
+        data={
+            "brand_id": "novapay",
+            "document_name": "Low Contrast Test Banner",
+            "grid_size": "2",
+        },
+        files={"file": ("low_contrast.png", png_bytes, "image/png")},
+    )
+    assert upload_res.status_code == 200
+    audit_data = upload_res.json()
+    assert audit_data["pillar_states"]["Accessibility"] == "Findings"
+    contrast_findings = [
+        f for f in audit_data["findings"]
+        if f["pillar"] == "Accessibility" and "Contrast" in f["issue_type"]
+    ]
+    assert len(contrast_findings) >= 1
+    assert contrast_findings[0]["detection_method"] == "Tier 1: On-Device OCR Bitmap WCAG 2.1 Contrast"
+
+
+def test_scanned_image_pdf_ocr_and_prohibited_terminology_check():
+    """Verify scanned/raster PDF rendering, OCR text extraction, and downstream six-pillar audit."""
+    import fitz
+    from PIL import ImageDraw, ImageFont
+    from backend.engine import parse_uploaded_file
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 26)
+    except Exception:
+        font = None
+
+    img = Image.new("RGB", (750, 140), color=(255, 255, 255))
+    d = ImageDraw.Draw(img)
+    # "synergetic paradigm shift" is an explicit prohibited buzzword for NovaPay in TERM-07
+    d.text((40, 45), "NovaPay delivers a synergetic paradigm shift in treasury", fill=(0, 0, 0), font=font)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    doc = fitz.open()
+    page = doc.new_page(width=750, height=140)
+    page.insert_image(page.rect, stream=png_bytes)
+    pdf_bytes = doc.tobytes()
+
+    # Verify parse_uploaded_file runs OCR and succeeds
+    parsed = parse_uploaded_file("scanned_terms.pdf", pdf_bytes)
+    assert parsed["parse_ok"] is True
+    assert parsed.get("ocr_applied") is True
+    assert "synergetic paradigm shift" in parsed["extracted_text"].lower()
+
+    # Verify upload audit catches the prohibited term in the scanned PDF
+    client = TestClient(app)
+    res = client.post(
+        "/api/audits/upload",
+        data={
+            "brand_id": "novapay",
+            "document_name": "Scanned Prohibited Term Agreement",
+        },
+        files={"file": ("scanned_terms.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert res.status_code == 200
+    res_data = res.json()
+    assert res_data["pillar_states"]["Terminology"] == "Findings"
+    term_findings = [
+        f for f in res_data["findings"]
+        if f["pillar"] == "Terminology" and "synergetic paradigm shift" in f.get("flagged_text", "").lower()
+    ]
+    assert len(term_findings) >= 1
+    assert term_findings[0]["rule_or_fact_id"] == "RULE-TERM-01"

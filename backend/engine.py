@@ -206,7 +206,7 @@ def get_engine_status() -> Dict[str, Any]:
         "Visual palette checks compare dominant/configured colours via CIE Delta-E and do not by themselves certify full artistic lockup compliance.",
         "Visual and layout brand checks do not render PDF pages; Visual and Logo Consistency is reported as Not Checked for text-based PDF uploads unless visual assets/colors are separately supplied.",
         "Accessibility checks evaluate WCAG 2.1 contrast ratios, HTML heading hierarchy, image alt-text metadata, and Flesch-Kincaid readability on supported formats.",
-        "Local PDF processing extracts selectable text streams page-by-page. Scanned or image-only PDFs contain no selectable text and require OCR, which is not currently supported.",
+        "Local PDF processing extracts selectable text streams page-by-page. Scanned or image-only PDFs are rendered locally and processed with on-device quantized ONNX OCR when selectable text is absent.",
         "PDF location references map findings to page numbers and paragraph indices (e.g. Page 1, P2) based on extracted text streams. Exact coordinate bounding boxes on rendered visual pages are not generated without visual rendering.",
     ]
     supported_fmts = ["text", "txt", "md", "html", "docx", "pdf", "png", "jpg", "svg"]
@@ -229,6 +229,17 @@ def get_engine_status() -> Dict[str, Any]:
         "supported_formats": supported_fmts,
         "honest_limitations_disclosure": limitations,
         "honest_limitations": limitations,
+        "ocr_engine": {
+            "name": "On-Device Quantized OCR Engine",
+            "type": "ONNX Runtime (RapidOCR)",
+            "status": "Available",
+            "capabilities": [
+                "Raster image text extraction (PNG, JPEG)",
+                "Bitmap WCAG 2.1 AA luminance contrast measurement",
+                "Scanned and image-only PDF page rendering and OCR",
+            ],
+            "zero_cloud": True,
+        },
         "tier1_engine": {
             "name": "Tier 1: Deterministic Engine",
             "type": "Rule-Based & Mathematical Verification",
@@ -543,12 +554,30 @@ def parse_uploaded_file(filename: str, raw_bytes: bytes) -> Dict[str, Any]:
         full_extracted_text = "".join(combined_parts)
 
         if not full_extracted_text.strip():
+            try:
+                from backend.ocr_engine import extract_text_from_scanned_pdf, is_ocr_available
+                if is_ocr_available():
+                    ocr_res = extract_text_from_scanned_pdf(raw_bytes, max_pages=max_pdf_pages)
+                    if ocr_res.get("success") and ocr_res.get("extracted_text", "").strip():
+                        return {
+                            "parse_ok": True,
+                            "input_format": "pdf",
+                            "extracted_text": ocr_res["extracted_text"],
+                            "structural_findings": [],
+                            "error": None,
+                            "page_count": ocr_res.get("page_count", total_pages),
+                            "page_spans": ocr_res.get("page_spans", page_spans),
+                            "ocr_applied": True,
+                        }
+            except Exception as ocr_exc:
+                logger.warning(f"On-device OCR fallback for scanned PDF failed: {ocr_exc}")
+
             return {
                 "parse_ok": False,
                 "input_format": "pdf",
                 "extracted_text": "",
                 "structural_findings": [],
-                "error": "The uploaded PDF contains no usable selectable text. The document may be scanned or image-only. Local OCR (optical character recognition) is not currently supported.",
+                "error": "The uploaded PDF contains no usable selectable text. The document may be scanned or image-only. On-device local OCR found no readable text.",
                 "page_count": total_pages,
                 "page_spans": page_spans,
             }
@@ -1752,10 +1781,21 @@ def run_six_pillar_audit(
             for tc_el in (tc_block.get("elements") or []):
                 if tc_el.get("passed") is False:
                     c_ref = tc_el.get("cell_id") or tc_el.get("element_id") or "Cell R1C1"
+                    is_ocr = tc_el.get("source") == "ocr_text"
+                    issue_title = (
+                        "Insufficient Raster/OCR Text Contrast Ratio"
+                        if is_ocr
+                        else "Insufficient SVG/Visual Text Contrast Ratio"
+                    )
+                    det_method = (
+                        "Tier 1: On-Device OCR Bitmap WCAG 2.1 Contrast"
+                        if is_ocr
+                        else "Tier 1: SVG/Region WCAG 2.1 Relative Luminance Contrast"
+                    )
                     findings.append({
                         "id": next_finding_id(),
                         "pillar": "Accessibility",
-                        "issue_type": "Insufficient SVG/Visual Text Contrast Ratio",
+                        "issue_type": issue_title,
                         "severity": "high",
                         "flagged_text": f"'{tc_el.get('text', 'Text')}' ({tc_el.get('fg_hex')} on {tc_el.get('bg_hex')}, {tc_el.get('contrast_ratio')}:1)",
                         "paragraph_ref": f"Cell {c_ref}" if not str(c_ref).startswith("Cell") else str(c_ref),
@@ -1771,7 +1811,7 @@ def run_six_pillar_audit(
                             f"produces a relative luminance contrast ratio of {tc_el.get('contrast_ratio')}:1, below the required minimum of {tc_el.get('required_ratio', 4.5)}:1."
                         ),
                         "suggested_correction": "#17191C",
-                        "detection_method": "Tier 1: SVG/Region WCAG 2.1 Relative Luminance Contrast",
+                        "detection_method": det_method,
                         "engine_source": "Tier 1: Deterministic Engine",
                         "similarity_score": None,
                         "review_state": "open",

@@ -688,6 +688,31 @@ def engine_status_endpoint():
     return status
 
 
+@app.get("/api/ocr/status")
+def ocr_status_endpoint():
+    try:
+        from backend.ocr_engine import is_ocr_available
+        avail = is_ocr_available()
+        return {
+            "available": avail,
+            "engine": "RapidOCR ONNX Quantized Local Engine" if avail else "Unavailable",
+            "zero_cloud": True,
+            "capabilities": [
+                "raster_text_extraction",
+                "pixel_wcag_contrast_measurement",
+                "scanned_pdf_rendering_ocr",
+            ],
+            "framework": "ONNX Runtime",
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "engine": "Error",
+            "error": str(exc),
+            "zero_cloud": True,
+        }
+
+
 @app.post("/api/engine-selftest")
 def run_engine_selftest_endpoint(role: str = Depends(current_role)):
     global _LAST_SELFTEST_RESULT, _LAST_SELFTEST_TIME
@@ -1839,8 +1864,14 @@ async def create_audit_from_upload(
             if vis_info.get("inspect_ok")
             else ""
         )
+        extracted_ocr_content = vis_info.get("ocr_text", "").strip() if vis_info.get("inspect_ok") else ""
+        audit_content = (
+            f"[Visual Asset Audit: {fname}]\n\n{extracted_ocr_content}"
+            if extracted_ocr_content
+            else f"[Visual Asset Audit: {fname}]"
+        )
         audit_output = run_six_pillar_audit(
-            content=f"[Visual Asset Audit: {fname}]",
+            content=audit_content,
             brand=vault["brand"],
             rules=vault["rules"],
             terminology_rows=vault["terminology"],
@@ -1856,7 +1887,7 @@ async def create_audit_from_upload(
             brand_id=brand_id,
             document_name=safe_doc_name,
             input_format=ext.lstrip("."),
-            content=f"[Visual Asset Audit: {fname}]",
+            content=audit_content,
             fg_color=fg_color,
             bg_color=bg_color,
             image_alt_text=image_alt_text,
